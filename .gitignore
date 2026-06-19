@@ -4,6 +4,8 @@ heses-*.png
 heses-dom.txt
 free-cooling-*.png
 free-cooling-*.html
+!public/system-images/free-cooling-*.png
+!public/images/systems/free-cooling-*.png
 .tmp-*
 npm-debug.log*
 yarn-debug.log*
