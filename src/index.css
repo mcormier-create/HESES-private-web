@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.hvac-system-image {
+  width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+  display: block;
+  background: #fff;
+}
+
+.hvac-system-image--free-cooling {
+  max-height: 620px;
+}

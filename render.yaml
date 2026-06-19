@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: heses-private
+    env: node
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    autoDeploy: false
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HESES_ACCESS_CODE
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: HESES_OPENAI_MODEL
+        value: gpt-4.1-mini

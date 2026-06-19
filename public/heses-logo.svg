@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 88" role="img" aria-labelledby="title desc">
+  <title id="title">HESES</title>
+  <desc id="desc">HESES HVAC energy optimization logo</desc>
+  <rect width="280" height="88" rx="14" fill="#0f172a"/>
+  <path d="M23 60V28h8v12h16V28h8v32h-8V47H31v13h-8Z" fill="#f8fafc"/>
+  <path d="M66 60V28h27v7H74v5h17v7H74v6h20v7H66Z" fill="#f8fafc"/>
+  <path d="M105 61c-5 0-10-1-15-4l3-7c4 2 8 4 12 4 4 0 6-1 6-3 0-1-1-2-2-3-1 0-4-1-8-2-4-1-7-2-9-4-2-2-3-4-3-7 0-3 1-6 4-8 3-2 6-3 11-3 5 0 9 1 13 3l-3 7c-4-2-7-3-10-3-4 0-6 1-6 3 0 1 1 2 2 3 1 0 4 1 8 2 4 1 7 2 9 4 2 2 3 4 3 7 0 4-1 6-4 8-3 2-7 3-12 3Z" fill="#22d3ee"/>
+  <path d="M128 60V28h27v7h-19v5h17v7h-17v6h20v7h-28Z" fill="#f8fafc"/>
+  <path d="M172 61c-5 0-10-1-15-4l3-7c4 2 8 4 12 4 4 0 6-1 6-3 0-1-1-2-2-3-1 0-4-1-8-2-4-1-7-2-9-4-2-2-3-4-3-7 0-3 1-6 4-8 3-2 6-3 11-3 5 0 9 1 13 3l-3 7c-4-2-7-3-10-3-4 0-6 1-6 3 0 1 1 2 2 3 1 0 4 1 8 2 4 1 7 2 9 4 2 2 3 4 3 7 0 4-1 6-4 8-3 2-7 3-11 3Z" fill="#22d3ee"/>
+  <path d="M205 25h43v7h-43v-7Zm0 15h43v7h-43v-7Zm0 15h43v7h-43v-7Z" fill="#38bdf8"/>
+  <path d="M251 29l11 15-11 15h-9l11-15-11-15h9Z" fill="#f8fafc"/>
+  <text x="24" y="76" fill="#94a3b8" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="700" letter-spacing="2">HVAC ENERGY SYSTEMS</text>
+</svg>
