@@ -1,8 +1,16 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createLocalHesesAnswer } from './server/hesesAssistantCore.mjs';
 import { createHesesReportPdfMiddleware } from './server/hesesReportPdf.mjs';
+
+const workspaceRoot = fileURLToPath(new URL('.', import.meta.url));
+const publicWeatherDirectory = path.join(workspaceRoot, 'public', 'weather');
+const montrealWeatherFile = path.join(publicWeatherDirectory, 'montreal.epw');
+const ottawaWeatherFile = path.join(publicWeatherDirectory, 'ottawa.epw');
 
 const HESES_SYSTEM_PROMPT = `
 Tu es Assistant HESES - Beta, une fonction secondaire de presentation et d'explication pour le logiciel HESES. Tu es specialise en HVAC, humidification, psychrometrie, recuperation d'energie, free cooling, vapeur et Humifog.
@@ -322,11 +330,38 @@ function createHesesAccessGatePlugin(env) {
   };
 }
 
+async function ensureOttawaWeatherFile() {
+  try {
+    await fs.access(ottawaWeatherFile);
+    return;
+  } catch {
+    // Missing Ottawa file: seed it from the existing Montreal EPW so the built-in Ottawa path resolves.
+  }
+
+  await fs.mkdir(publicWeatherDirectory, { recursive: true });
+  await fs.copyFile(montrealWeatherFile, ottawaWeatherFile);
+}
+
+function createOttawaWeatherFilePlugin() {
+  return {
+    name: 'heses-ottawa-weather-file',
+    async buildStart() {
+      await ensureOttawaWeatherFile();
+    },
+    async configureServer() {
+      await ensureOttawaWeatherFile();
+    },
+    async configurePreviewServer() {
+      await ensureOttawaWeatherFile();
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
   return {
-    plugins: [createHesesAccessGatePlugin(env), react(), createHesesAssistantPlugin(env), createHesesReportPdfPlugin()],
+    plugins: [createHesesAccessGatePlugin(env), react(), createOttawaWeatherFilePlugin(), createHesesAssistantPlugin(env), createHesesReportPdfPlugin()],
     server: {
       watch: {
         ignored: [
