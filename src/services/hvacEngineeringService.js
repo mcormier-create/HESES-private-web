@@ -24,6 +24,7 @@ export function calculateHvacDashboardMetrics({
   selectedCity,
   economizerTargetTemp,
   is100OA,
+  scheduleFactor = 1,
 }) {
   const selectedRecovery = selectedRecoveries[0]
   const isNoRecovery = Boolean(selectedRecovery?.noRecovery)
@@ -94,7 +95,7 @@ export function calculateHvacDashboardMetrics({
   const atmosphericGasHumidifierInputKW = Math.round(steamEnergyKW / (atmosphericGasHumidifierEfficiency / 100))
   const atmosphericGasHumidifierM3PerHour = Number((atmosphericGasHumidifierInputKW / 10.35).toFixed(1))
   const climateSeverityFactor = Math.max(0.4, Math.abs(selectedCity.hiver) / 23)
-  const annualHumidificationHours = Math.round(4300 * climateSeverityFactor)
+  const annualHumidificationHours = Math.round(4300 * climateSeverityFactor * scheduleFactor)
 
   const annualSteamCost = Math.round(steamEnergyKW * electricityRate * annualHumidificationHours)
   const annualNaturalGasCost = Math.round(naturalGasM3PerHour * naturalGasRate * annualHumidificationHours)

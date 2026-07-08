@@ -1,0 +1,256 @@
+﻿  const [ventilationMode, setVentilationMode] = useState(() => getInitialVentilationMode(language, initialProjectSettings.ventilationModeType))
+  const openVentilationMode = (mode) => {
+    setVentilationMode(mode)
+    updateVentilationModeUrl(mode)
+  }
+  const [economizerTargetTemp, setEconomizerTargetTemp] = useState(() => finiteSetting(initialProjectSettings, 'economizerTargetTemp', 18))
+  const [minimumOutsideAirPercent, setMinimumOutsideAirPercent] = useState(() => finiteSetting(initialProjectSettings, 'minimumOutsideAirPercent', 20))
+  const [scheduleMode, setScheduleMode] = useState(() => {
+    const saved = initialProjectSettings.scheduleMode
+    return saved === '24-7' ? '24-7' : 'custom'
+  })
+  const [calculationMethod, setCalculationMethod] = useState(() => {
+    const saved = initialProjectSettings.calculationMethod
+    return saved === 'hourly' ? 'hourly' : 'bin'
+  })
+  const [hourlyWeatherFileName, setHourlyWeatherFileName] = useState(() => initialProjectSettings.hourlyWeatherFileName || '')
+  const [hourlyWeatherFileLocation, setHourlyWeatherFileLocation] = useState('')
+  const [hourlyWeatherRecordsLoaded, setHourlyWeatherRecordsLoaded] = useState(0)
+  const [hourlyWeatherOperatingHoursUsed, setHourlyWeatherOperatingHoursUsed] = useState(0)
+  const [hourlyWeatherSummary, setHourlyWeatherSummary] = useState(null)
+  const [hourlyWeatherParseError, setHourlyWeatherParseError] = useState('')
+  const [hourlyWeatherSourceType, setHourlyWeatherSourceType] = useState('none')
+  const [hourlyWeatherLoading, setHourlyWeatherLoading] = useState(false)
+  const [scheduleStartTime, setScheduleStartTime] = useState(() => initialProjectSettings.scheduleStartTime || '06:00')
+  const [scheduleEndTime, setScheduleEndTime] = useState(() => initialProjectSettings.scheduleEndTime || '18:00')
+  const [scheduleDaysOption, setScheduleDaysOption] = useState(() => {
+    const saved = initialProjectSettings.scheduleDaysOption
+    return ['mon-fri', 'mon-sat', 'seven-days', 'custom'].includes(saved) ? saved : 'mon-fri'
+  })
+  const [scheduleCustomDays, setScheduleCustomDays] = useState(() => parseObjectSetting(initialProjectSettings, 'scheduleCustomDays', DEFAULT_SCHEDULE_CUSTOM_DAYS))
+  const [useMeasuredMixedAirTemperature, setUseMeasuredMixedAirTemperature] = useState(() => booleanSetting(initialProjectSettings, 'useMeasuredMixedAirTemperature', false))
+  const [measuredMixedAirTemperature, setMeasuredMixedAirTemperature] = useState(() => finiteSetting(initialProjectSettings, 'measuredMixedAirTemperature', 18))
+  const economizerTargetOptions = units === 'imperial'
+    ? [55, 57, 61, 64, 68]
+    : [13, 14, 16, 18, 20]
+
+  const buildProjectSettingsSnapshot = () => ({
+    language,
+    units,
+    outsideAirCFM,
+    roomTemperature,
+    roomRelativeHumidity,
+    supplyAirTemperature,
+    heatPumpCOP,
+    selectedRecoveryName: selectedRecoveries[0]?.nom || '',
+    selectedRecoveryType: selectedRecoveries[0]?.type || '',
+    wheelEfficiency,
+    selectedCityName: selectedCity.nom,
+    electricityRate,
+    naturalGasRate,
+    steamBoilerEfficiency,
+    atmosphericGasHumidifierEfficiency,
+    electricSteamInstalledCost,
+    naturalGasSteamInstalledCost,
+    atmosphericGasHumidifierInstalledCost,
+    humifogInstalledCost,
+    freeCoolingControlsInstalledCost,
+    heatRecoveryInstalledCost,
+    selectedReheatName: selectedReheatSystem?.nom || '',
+    selectedReheatEnergy: selectedReheatSystem?.energie || '',
+    ventilationModeType: ventilationMode.type,
+    economizerTargetTemp,
+    minimumOutsideAirPercent,
+    scheduleMode,
+    calculationMethod,
+    hourlyWeatherFileName,
+    scheduleStartTime,
+    scheduleEndTime,
+    scheduleDaysOption,
+    scheduleCustomDays,
+    useMeasuredMixedAirTemperature,
+    measuredMixedAirTemperature,
+    savedAt: new Date().toISOString(),
+  })
+
+  const persistProjectLocally = () => {
+    if (typeof window === 'undefined') return
+
+    try {
+      window.localStorage.setItem(HESES_PROJECT_PROFILE_STORAGE_KEY, JSON.stringify(projectProfile))
+      window.localStorage.setItem(HESES_PROJECT_SETTINGS_STORAGE_KEY, JSON.stringify(buildProjectSettingsSnapshot()))
+    } catch {
+      // Local storage can be unavailable in restricted browser modes.
+    }
+  }
+
+  useEffect(() => {
+    persistProjectLocally()
+  }, [
+    language,
+    units,
+    projectProfile,
+    outsideAirCFM,
+    roomTemperature,
+    roomRelativeHumidity,
+    supplyAirTemperature,
+    heatPumpCOP,
+    selectedRecoveries,
+    wheelEfficiency,
+    selectedCity,
+    electricityRate,
+    naturalGasRate,
+    steamBoilerEfficiency,
+    atmosphericGasHumidifierEfficiency,
+    electricSteamInstalledCost,
+    naturalGasSteamInstalledCost,
+    atmosphericGasHumidifierInstalledCost,
+    humifogInstalledCost,
+    freeCoolingControlsInstalledCost,
+    heatRecoveryInstalledCost,
+    selectedReheatSystem,
+    ventilationMode,
+    economizerTargetTemp,
+    minimumOutsideAirPercent,
+    scheduleMode,
+    calculationMethod,
+    hourlyWeatherFileName,
+    scheduleStartTime,
+    scheduleEndTime,
+    scheduleDaysOption,
+    scheduleCustomDays,
+    useMeasuredMixedAirTemperature,
+    measuredMixedAirTemperature,
+  ])
+
+  const handleHourlyWeatherFileChange = (file) => {
+    if (!file) {
+setHourlyWeatherSourceType('none')
+    setHourlyWeatherFileName('')
+    setHourlyWeatherFileLocation('')
+    setHourlyWeatherRecordsLoaded(0)
+    setHourlyWeatherOperatingHoursUsed(0)
+    setHourlyWeatherSummary(null)
+    setHourlyWeatherParseError('')
+    return
+  }
+
+  setHourlyWeatherSourceType('custom')
+    setHourlyWeatherFileName(file.name)
+    setHourlyWeatherParseError('')
+    setHourlyWeatherSummary(null)
+    setHourlyWeatherRecordsLoaded(0)
+    setHourlyWeatherOperatingHoursUsed(0)
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const text = String(reader.result || '')
+        const { weatherLocation, records } = epwTextToRecords(text)
+        const summary = calculateHourlySimulation(records, {
+          scheduleMode,
+          scheduleStartTime,
+          scheduleEndTime,
+          scheduleDaysOption,
+          scheduleCustomDays,
+          outsideAirCFM,
+          activeFraction,
+          roomTemperature,
+          roomRelativeHumidity,
+          selectedRecoveries: activeSelectedRecoveries,
+          wheelEfficiency,
+          supplyAirTemperature: effectiveSupplyAirTemperature,
+          selectedReheatSystem,
+          heatPumpCOP,
+          steamBoilerEfficiency,
+          atmosphericGasHumidifierEfficiency,
+          electricityRate,
+          naturalGasRate,
+        })
+
+        setHourlyWeatherFileLocation(weatherLocation || '')
+        setHourlyWeatherRecordsLoaded(summary.recordsLoaded)
+        setHourlyWeatherOperatingHoursUsed(summary.operatingHoursUsed)
+        setHourlyWeatherSummary(summary)
+      } catch (error) {
+        setHourlyWeatherParseError(error?.message || 'Unable to parse hourly weather file.')
+      }
+    }
+    reader.onerror = () => {
+      setHourlyWeatherParseError('Failed to read the selected file.')
+    }
+    reader.readAsText(file)
+  }
+
+  const outsideWinterTemp = selectedCity.hiver
+
+  // Free Cooling is only available with the evaporative/atomization mode.
+  const isFreeCoolingMode = ventilationMode.type === 'free-cooling-evaporative'
+  const showFreeCoolingTables = isFreeCoolingMode && ventilationMode.type !== 'outside-air'
+  const economizerActive = isFreeCoolingMode && outsideWinterTemp < economizerTargetTemp
+  const activeFraction = isFreeCoolingMode ? minimumOutsideAirPercent / 100 : ventilationMode.fraction
+  const effectiveOutsideAirCFM = Math.round(outsideAirCFM * activeFraction)
+  const calculatedReturnAirCFM = Math.max(0, outsideAirCFM - effectiveOutsideAirCFM)
+  const noRecoverySelection = heatRecoverySystems[language][0]
+  const displayedHeatRecoverySystems = isFreeCoolingMode
+    ? [noRecoverySelection]
+    : heatRecoverySystems[language]
+  const activeSelectedRecoveries = isFreeCoolingMode
+    ? [noRecoverySelection]
+    : selectedRecoveries
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (calculationMethod !== 'hourly') return
+    if (hourlyWeatherSourceType === 'custom') return
+
+    const builtInPath = getBuiltInHourlyWeatherFilePath(selectedCity.nom)
+    if (!builtInPath) {
+      setHourlyWeatherSourceType('none')
+      setHourlyWeatherFileName('')
+      setHourlyWeatherFileLocation('')
+      setHourlyWeatherRecordsLoaded(0)
+      setHourlyWeatherOperatingHoursUsed(0)
+      setHourlyWeatherSummary(null)
+      setHourlyWeatherParseError(t.noBuiltInWeatherAvailable)
+      return
+    }
+
+    setHourlyWeatherLoading(true)
+    setHourlyWeatherParseError('')
+
+    fetch(builtInPath)
+      .then((response) => {
+        if (!response.ok) throw new Error('Failed to load built-in hourly weather file.')
+        return response.text()
+      })
+      .then((text) => {
+        const { weatherLocation, records } = epwTextToRecords(text)
+        const summary = calculateHourlySimulation(records, {
+          scheduleMode,
+          scheduleStartTime,
+          scheduleEndTime,
+          scheduleDaysOption,
+          scheduleCustomDays,
+          outsideAirCFM,
+          activeFraction,
+          roomTemperature,
+          roomRelativeHumidity,
+          selectedRecoveries: activeSelectedRecoveries,
+          wheelEfficiency,
+          supplyAirTemperature: effectiveSupplyAirTemperature,
+          selectedReheatSystem,
+          heatPumpCOP,
+          steamBoilerEfficiency,
+          atmosphericGasHumidifierEfficiency,
+          electricityRate,
+          naturalGasRate,
+        })
+
+        setHourlyWeatherSourceType('builtin')
+        setHourlyWeatherFileName(builtInPath.split('/').pop() || builtInPath)
+        setHourlyWeatherFileLocation(builtInPath)
+        setHourlyWeatherRecordsLoaded(summary.recordsLoaded)
+        setHourlyWeatherOperatingHoursUsed(summary.operatingHoursUsed)
+        setHourlyWeatherSummary(summary)
+        setHourlyWeatherParseError('')

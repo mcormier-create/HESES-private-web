@@ -5,7 +5,7 @@ import PsychrometricChart from './components/PsychrometricChart'
 import HvacEnergyOptimizationReport from './reports/HvacEnergyOptimizationReport'
 import { calculateFreeCoolingHumifogComparison } from './services/freeCoolingHumifogService'
 import { calculateHvacDashboardMetrics } from './services/hvacEngineeringService'
-import { mixAirStates, psychrometricState, sensibleHeatingKw, stateFromDbW } from './calculations/psychrometrics'
+import { humidityRatioFromRH, mixAirStates, psychrometricState, sensibleHeatingKw, stateFromDbW } from './calculations/psychrometrics'
 import { getSystemSchematic, resolveSystemSchematicId, systemImages } from './utils/systemImages'
 import {
   ResponsiveContainer,
@@ -21,6 +21,48 @@ import {
 } from 'recharts'
 
 const monthlyFactors = [1, 0.95, 0.83, 0.64, 0.44, 0.28, 0.18, 0.2, 0.36, 0.58, 0.82, 0.96]
+const DEFAULT_SCHEDULE_CUSTOM_DAYS = {
+  mon: true,
+  tue: true,
+  wed: true,
+  thu: true,
+  fri: true,
+  sat: false,
+  sun: false,
+}
+
+const builtInWeatherFiles = {
+  Montreal: '/weather/montreal.epw',
+  Quebec: '/weather/quebec.epw',
+  Toronto: '/weather/toronto.epw',
+  Vancouver: '/weather/vancouver.epw',
+  Calgary: '/weather/calgary.epw',
+  Winnipeg: '/weather/winnipeg.epw',
+}
+
+const builtInWeatherFilesByCityKey = {
+  [normalizeCityKey('Montreal')]: builtInWeatherFiles.Montreal,
+  [normalizeCityKey('Montréal')]: builtInWeatherFiles.Montreal,
+  [normalizeCityKey('Quebec')]: builtInWeatherFiles.Quebec,
+  [normalizeCityKey('Québec')]: builtInWeatherFiles.Quebec,
+  [normalizeCityKey('Toronto')]: builtInWeatherFiles.Toronto,
+  [normalizeCityKey('Vancouver')]: builtInWeatherFiles.Vancouver,
+  [normalizeCityKey('Calgary')]: builtInWeatherFiles.Calgary,
+  [normalizeCityKey('Winnipeg')]: builtInWeatherFiles.Winnipeg,
+}
+
+function normalizeCityKey(cityName) {
+  return String(cityName || '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+}
+
+function getBuiltInHourlyWeatherFilePath(cityName) {
+  return builtInWeatherFilesByCityKey[normalizeCityKey(cityName)] || ''
+}
+
 const HESES_ASSISTANT_ENDPOINT = '/api/heses-assistant'
 const HESES_ASSISTANT_HEALTH_ENDPOINT = '/api/heses-assistant/health'
 const FREE_COOLING_ROUTE = '/'
@@ -31,6 +73,242 @@ const HESES_PRINT_REPORT_STORAGE_KEY = 'heses-print-report-html'
 function returnToHesesApp() {
   if (typeof window === 'undefined') return
   window.location.assign(`${window.location.origin}/`)
+}
+
+function parseObjectSetting(settings, key, fallback) {
+  const value = settings?.[key]
+  return value && typeof value === 'object'
+    ? { ...fallback, ...value }
+    : fallback
+}
+
+function getScheduleDaysPerWeek(option, customDays) {
+  if (option === 'mon-sat') return 6
+  if (option === 'seven-days') return 7
+  if (option === 'custom') return Object.values(customDays).filter(Boolean).length
+  return 5
+}
+
+function computeScheduleDailyHours(startTime, endTime, mode) {
+  if (mode === '24-7') return 24
+  const [startHours, startMinutes] = startTime.split(':').map(Number)
+  const [endHours, endMinutes] = endTime.split(':').map(Number)
+  const start = startHours * 60 + startMinutes
+  const end = endHours * 60 + endMinutes
+  if (start === end) return 24
+  if (end > start) return (end - start) / 60
+  return ((24 * 60 - start) + end) / 60
+}
+
+function epwTextToRecords(text) {
+  const lines = text.split(/\r?\n/)
+  let weatherLocation = ''
+  const records = []
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('!')) continue
+    const parts = line.split(',').map((item) => item.trim())
+    const keyword = parts[0]?.toUpperCase()
+
+    if (keyword === 'LOCATION') {
+      weatherLocation = parts.slice(1).join(', ').trim()
+      continue
+    }
+
+    if (parts.length < 10) continue
+    const [yearText, monthText, dayText, hourText, minuteText, , dryBulbText, dewPointText, rhText, pressureText] = parts
+    const year = Number(yearText)
+    const month = Number(monthText)
+    const day = Number(dayText)
+    const hour = Number(hourText)
+    const minute = Number(minuteText)
+    const dryBulbC = Number(dryBulbText)
+    const dewPointC = Number(dewPointText)
+    const relativeHumidity = Number(rhText)
+    const pressurePa = Number(pressureText)
+
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day) || !Number.isFinite(hour)) continue
+    if (!Number.isFinite(dryBulbC) || !Number.isFinite(relativeHumidity) || !Number.isFinite(pressurePa)) continue
+
+    records.push({ year, month, day, hour, minute: Number.isFinite(minute) ? minute : 0, dryBulbC, dewPointC, relativeHumidity, pressurePa, weatherLocation })
+  }
+
+  if (!records.length) {
+    throw new Error('EPW file did not contain any valid hourly records.')
+  }
+
+  return { weatherLocation, records }
+}
+
+function epwRecordHour(hour) {
+  return ((hour + 23) % 24)
+}
+
+function isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays) {
+  if (scheduleMode === '24-7') return true
+
+  const recordHour = epwRecordHour(record.hour)
+  const recordMinute = record.minute || 0
+  const date = new Date(record.year, record.month - 1, record.day, recordHour, recordMinute)
+  const dayOfWeek = date.getDay()
+  const dayName = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][dayOfWeek]
+
+  let enabledDay = false
+  if (scheduleDaysOption === 'mon-fri') {
+    enabledDay = dayOfWeek >= 1 && dayOfWeek <= 5
+  } else if (scheduleDaysOption === 'mon-sat') {
+    enabledDay = dayOfWeek >= 1 && dayOfWeek <= 6
+  } else if (scheduleDaysOption === 'seven-days') {
+    enabledDay = true
+  } else {
+    enabledDay = Boolean(scheduleCustomDays[dayName])
+  }
+
+  if (!enabledDay) return false
+
+  const [startHours, startMinutes] = scheduleStartTime.split(':').map(Number)
+  const [endHours, endMinutes] = scheduleEndTime.split(':').map(Number)
+  const start = startHours * 60 + startMinutes
+  let end = endHours * 60 + endMinutes
+  if (end === 0) end = 24 * 60
+  const recordMinutes = recordHour * 60 + recordMinute
+
+  if (start === end) return true
+  if (start < end) return recordMinutes >= start && recordMinutes < end
+  return recordMinutes >= start || recordMinutes < end
+}
+
+function calculateHourlySimulation(records, options) {
+  const {
+    scheduleMode,
+    scheduleStartTime,
+    scheduleEndTime,
+    scheduleDaysOption,
+    scheduleCustomDays,
+    outsideAirCFM,
+    activeFraction,
+    roomTemperature,
+    roomRelativeHumidity,
+    selectedRecoveries,
+    wheelEfficiency,
+    supplyAirTemperature,
+    selectedReheatSystem,
+    heatPumpCOP,
+    steamBoilerEfficiency,
+    atmosphericGasHumidifierEfficiency,
+    electricityRate,
+    naturalGasRate,
+  } = options
+
+  const indoorHumidityRatio = humidityRatioFromRH(roomTemperature, roomRelativeHumidity)
+  const selectedRecovery = selectedRecoveries[0]
+  const latentRecoveryEffect = getLatentRecoveryEffect(selectedRecovery)
+  const isNoRecovery = Boolean(selectedRecovery?.noRecovery)
+  const effectiveOutsideAirCFM = Math.round(outsideAirCFM * activeFraction)
+  const reheatEnergySource = String(selectedReheatSystem?.energie || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+  const usesHeatPumpReheat = reheatEnergySource.includes('thermopompe') || reheatEnergySource.includes('heat pump')
+
+  const filtered = records.filter((record) => isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays))
+
+  const hourlyRows = filtered.map((record) => {
+    const pressureKPa = record.pressurePa / 1000
+    const outdoorHumidityRatio = humidityRatioFromRH(record.dryBulbC, record.relativeHumidity, pressureKPa)
+    const deltaW = Math.max(0.00001, indoorHumidityRatio - outdoorHumidityRatio)
+    const steamHumidificationLoad = Math.max(0, Math.round(4.5 * effectiveOutsideAirCFM * deltaW))
+    const correctedHumidificationLoad = Math.max(0, Math.round(steamHumidificationLoad * (1 - Math.min(latentRecoveryEffect, 45) / 100)))
+    const steamEnergyKW = Math.round(correctedHumidificationLoad * 0.345)
+    const adiabaticLoad = correctedHumidificationLoad
+    const adiabaticPumpKW = Math.max(1, Math.round(adiabaticLoad * 0.0009))
+    const grossReheatKW = Math.round(sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, supplyAirTemperature - (supplyAirTemperature - Math.max(0.3, Math.min(12, deltaW * 7000 * 0.22))))) )
+    const cassetteBoostFactor = isEnthalpyCassette(selectedRecovery) ? 1.18 : 1
+    const recoveryEnergyReductionKW = Math.round(grossReheatKW * (Math.min(selectedRecovery?.efficacite ?? 0, 95) / 100) * 0.18 * cassetteBoostFactor)
+    const netReheatKW = Math.max(0, grossReheatKW - recoveryEnergyReductionKW)
+    const reheatEnergyKW = usesHeatPumpReheat
+      ? Math.round(netReheatKW / Math.max(heatPumpCOP, 0.1))
+      : Math.round(netReheatKW * (selectedReheatSystem.facteur ?? 1))
+    const adiabaticEnergyKW = Math.max(2, adiabaticPumpKW + reheatEnergyKW)
+    const naturalGasSteamInputKW = Math.round(steamEnergyKW / Math.max(steamBoilerEfficiency / 100, 0.01))
+    const atmosphericGasHumidifierInputKW = Math.round(steamEnergyKW / Math.max(atmosphericGasHumidifierEfficiency / 100, 0.01))
+    const atmosphericGasHumidifierM3PerHour = Number((atmosphericGasHumidifierInputKW / 10.35).toFixed(1))
+    const naturalGasM3PerHour = Number((naturalGasSteamInputKW / 10.35).toFixed(1))
+    const steamCost = Math.round(steamEnergyKW * electricityRate)
+    const adiabaticCost = Math.round(adiabaticEnergyKW * electricityRate)
+    const gasCost = Math.round((naturalGasM3PerHour + atmosphericGasHumidifierM3PerHour) * naturalGasRate)
+    const naturalGasGES = Number(((naturalGasSteamInputKW * 0.182) / 1000).toFixed(6))
+    const atmosphericGasHumidifierGES = Number(((atmosphericGasHumidifierInputKW * 0.182) / 1000).toFixed(6))
+    const adiabaticGES = usesHeatPumpReheat ? Number(((reheatEnergyKW * 0.182) / 1000).toFixed(6)) : 0
+    const waterKg = Number((correctedHumidificationLoad * 0.453592).toFixed(3))
+
+    return {
+      date: new Date(record.year, record.month - 1, record.day, epwRecordHour(record.hour), record.minute || 0),
+      dryBulbC: record.dryBulbC,
+      relativeHumidity: record.relativeHumidity,
+      steamEnergyKW,
+      adiabaticEnergyKW,
+      naturalGasSteamInputKW,
+      atmosphericGasHumidifierInputKW,
+      annualGasKwh: naturalGasSteamInputKW + atmosphericGasHumidifierInputKW,
+      steamCost,
+      adiabaticCost,
+      gasCost,
+      naturalGasGES,
+      atmosphericGasHumidifierGES,
+      adiabaticGES,
+      waterKg,
+    }
+  })
+
+  const orderedAll = records.map((record) => ({
+    ...record,
+    date: new Date(record.year, record.month - 1, record.day, epwRecordHour(record.hour), record.minute || 0),
+  })).sort((a, b) => a.date - b.date)
+  const firstDate = orderedAll[0].date
+  const lastDate = orderedAll[orderedAll.length - 1].date
+
+  const operatingCount = hourlyRows.length
+  const outdoorTemps = hourlyRows.map((row) => row.dryBulbC)
+  const outdoorRhs = hourlyRows.map((row) => row.relativeHumidity)
+
+  const totalSteamKwh = hourlyRows.reduce((sum, row) => sum + row.steamEnergyKW, 0)
+  const totalGasKwh = hourlyRows.reduce((sum, row) => sum + row.annualGasKwh, 0)
+  const totalHumifogKwh = hourlyRows.reduce((sum, row) => sum + row.adiabaticEnergyKW, 0)
+  const totalCost = hourlyRows.reduce((sum, row) => sum + row.adiabaticCost, 0)
+  const totalSteamCost = hourlyRows.reduce((sum, row) => sum + row.steamCost, 0)
+  const totalNaturalGasGES = hourlyRows.reduce((sum, row) => sum + row.naturalGasGES, 0)
+  const totalAtmosphericGasGES = hourlyRows.reduce((sum, row) => sum + row.atmosphericGasHumidifierGES, 0)
+  const totalAdiabaticGES = hourlyRows.reduce((sum, row) => sum + row.adiabaticGES, 0)
+  const totalWaterKg = hourlyRows.reduce((sum, row) => sum + row.waterKg, 0)
+
+  return {
+    weatherLocation: records[0]?.weatherLocation || '',
+    recordsLoaded: records.length,
+    operatingHoursUsed: operatingCount,
+    firstDate,
+    lastDate,
+    averageOutdoorTemp: operatingCount ? outdoorTemps.reduce((sum, value) => sum + value, 0) / operatingCount : 0,
+    minOutdoorTemp: operatingCount ? Math.min(...outdoorTemps) : 0,
+    maxOutdoorTemp: operatingCount ? Math.max(...outdoorTemps) : 0,
+    averageOutdoorRh: operatingCount ? outdoorRhs.reduce((sum, value) => sum + value, 0) / operatingCount : 0,
+    annualSteamKwh: totalSteamKwh,
+    annualGasKwh: totalGasKwh,
+    annualHumifogKwh: totalHumifogKwh,
+    annualCost: totalCost,
+    annualSavings: totalSteamCost - totalCost,
+    annualGhgReduction: Math.max(0, totalNaturalGasGES + totalAtmosphericGasGES - totalAdiabaticGES),
+    annualWaterConsumptionKg: totalWaterKg,
+  }
+}
+
+function getLatentRecoveryEffect(recovery) {
+  const name = String(recovery?.nom || '').toLowerCase()
+  if (!recovery) return 0
+  if (name.includes('roue') || name.includes('thermal wheel')) return recovery.efficacite * 0.55
+  if (name.includes('cassette') && (name.includes('enthalpique') || name.includes('enthalpy'))) return 38
+  return 0
 }
 
 function blobToBase64(blob) {
@@ -1293,6 +1571,43 @@ const translations = {
     economizerAvgOutsideAir: 'Air extérieur moyen',
     economizerOAReductionLabel: 'Réduction air extérieur',
     perYear: 'h/an',
+    operatingSchedule: 'Plan d exploitation',
+    operationMode24_7: 'Heures BIN complètes / 24/7',
+    operationModeOffice: 'Horaire bureau',
+    operationModeCustom: 'Horaire personnalisé',
+    startTime: 'Heure de début',
+    endTime: 'Heure de fin',
+    operatingDays: 'Jours d exploitation',
+    mondayToFriday: 'Lundi à vendredi',
+    mondayToSaturday: 'Lundi à samedi',
+    sevenDaysWeek: '7 jours/semaine',
+    customDays: 'Personnalisé',
+    originalBinHours: 'Heures BIN originales',
+    effectiveBinHours: 'Heures BIN effectives',
+    dailyOperatingHours: 'Heures d exploitation par jour',
+    weeklyOperatingHours: 'Heures d exploitation par semaine',
+    annualOperatingHours: 'Heures d exploitation annuelles',
+    scheduleFactor: 'Facteur d exploitation',
+    calculationMode: 'Mode de calcul',
+    methodSelection: 'Méthode de calcul',
+    binHoursMethod: 'Méthode heures BIN',
+    hourlyWeatherMethod: 'Simulation météo horaire',
+    hourlyWeatherPlaceholder: 'Hourly weather simulation will use built-in 8760 weather files in a future update. For now, HESES continues using the BIN hours method.',
+    optionalHourlyWeatherFileLabel: 'Fichier météo personnalisé optionnel',
+    weatherSource: 'Source météo',
+    customUploadedWeatherFile: 'Fichier météo téléchargé personnalisé',
+    builtInWeatherFile: 'Fichier météo intégré',
+    noBuiltInWeatherAvailable: 'Aucun fichier météo horaire intégré n est disponible pour cette ville. Veuillez télécharger un fichier EPW ou utiliser la méthode heures BIN.',
+    hourlyWeatherFileLabel: 'Fichier météo horaire',
+    loadedFile: 'Fichier chargé',
+    scheduleNote: 'HESES utilise les heures BIN annuelles. En mode BIN complet, les heures BIN originales sont utilisées. En mode horaire personnalisé, les heures BIN sont ajustées selon l horaire sélectionné. Le filtrage exact heure par heure nécessite un fichier météo horaire 8760.',
+    mon: 'Lun',
+    tue: 'Mar',
+    wed: 'Mer',
+    thu: 'Jeu',
+    fri: 'Ven',
+    sat: 'Sam',
+    sun: 'Dim',
     schOA: 'OA damper',
     schMix: 'Mélange FC',
     schFilter: 'Filtres',
@@ -1419,9 +1734,22 @@ const translations = {
     economizerHoursLabel: 'Economizer hours',
     economizerAvgOutsideAir: 'Average outside air',
     economizerOAReductionLabel: 'Outside air reduction',
+    originalBinHours: 'Original BIN hours',
+    effectiveBinHours: 'Effective BIN hours',
     perYear: 'h/yr',
+    calculationMode: 'Calculation mode',
+    methodSelection: 'Calculation method',
+    binHoursMethod: 'BIN hours method',
+    hourlyWeatherMethod: 'Hourly weather file method',
+    hourlyWeatherPlaceholder: 'Hourly weather simulation will use built-in 8760 weather files in a future update. For now, HESES continues using the BIN hours method.',
+    optionalHourlyWeatherFileLabel: 'Optional custom weather file',
+    weatherSource: 'Weather source',
+    customUploadedWeatherFile: 'Custom uploaded weather file',
+    builtInWeatherFile: 'Built-in weather file',
+    noBuiltInWeatherAvailable: 'No built-in hourly weather file is available for this city. Please upload an EPW file or use the BIN hours method.',
+    hourlyWeatherFileLabel: 'Hourly weather file',
+    loadedFile: 'Loaded file',
     schOA: 'Volet OA',
-    schMix: 'Mix FC',
     schFilter: 'Filters',
     schWheel: 'Roue ERW',
     schAtomization: 'Humifog',
@@ -1994,6 +2322,29 @@ function HvacDashboardApp() {
   }
   const [economizerTargetTemp, setEconomizerTargetTemp] = useState(() => finiteSetting(initialProjectSettings, 'economizerTargetTemp', 18))
   const [minimumOutsideAirPercent, setMinimumOutsideAirPercent] = useState(() => finiteSetting(initialProjectSettings, 'minimumOutsideAirPercent', 20))
+  const [scheduleMode, setScheduleMode] = useState(() => {
+    const saved = initialProjectSettings.scheduleMode
+    return saved === '24-7' ? '24-7' : 'custom'
+  })
+  const [calculationMethod, setCalculationMethod] = useState(() => {
+    const saved = initialProjectSettings.calculationMethod
+    return saved === 'hourly' ? 'hourly' : 'bin'
+  })
+  const [hourlyWeatherFileName, setHourlyWeatherFileName] = useState(() => initialProjectSettings.hourlyWeatherFileName || '')
+  const [hourlyWeatherFileLocation, setHourlyWeatherFileLocation] = useState('')
+  const [hourlyWeatherRecordsLoaded, setHourlyWeatherRecordsLoaded] = useState(0)
+  const [hourlyWeatherOperatingHoursUsed, setHourlyWeatherOperatingHoursUsed] = useState(0)
+  const [hourlyWeatherSummary, setHourlyWeatherSummary] = useState(null)
+  const [hourlyWeatherParseError, setHourlyWeatherParseError] = useState('')
+  const [hourlyWeatherSourceType, setHourlyWeatherSourceType] = useState('none')
+  const [hourlyWeatherLoading, setHourlyWeatherLoading] = useState(false)
+  const [scheduleStartTime, setScheduleStartTime] = useState(() => initialProjectSettings.scheduleStartTime || '06:00')
+  const [scheduleEndTime, setScheduleEndTime] = useState(() => initialProjectSettings.scheduleEndTime || '18:00')
+  const [scheduleDaysOption, setScheduleDaysOption] = useState(() => {
+    const saved = initialProjectSettings.scheduleDaysOption
+    return ['mon-fri', 'mon-sat', 'seven-days', 'custom'].includes(saved) ? saved : 'mon-fri'
+  })
+  const [scheduleCustomDays, setScheduleCustomDays] = useState(() => parseObjectSetting(initialProjectSettings, 'scheduleCustomDays', DEFAULT_SCHEDULE_CUSTOM_DAYS))
   const [useMeasuredMixedAirTemperature, setUseMeasuredMixedAirTemperature] = useState(() => booleanSetting(initialProjectSettings, 'useMeasuredMixedAirTemperature', false))
   const [measuredMixedAirTemperature, setMeasuredMixedAirTemperature] = useState(() => finiteSetting(initialProjectSettings, 'measuredMixedAirTemperature', 18))
   const economizerTargetOptions = units === 'imperial'
@@ -2027,6 +2378,13 @@ function HvacDashboardApp() {
     ventilationModeType: ventilationMode.type,
     economizerTargetTemp,
     minimumOutsideAirPercent,
+    scheduleMode,
+    calculationMethod,
+    hourlyWeatherFileName,
+    scheduleStartTime,
+    scheduleEndTime,
+    scheduleDaysOption,
+    scheduleCustomDays,
     useMeasuredMixedAirTemperature,
     measuredMixedAirTemperature,
     savedAt: new Date().toISOString(),
@@ -2071,9 +2429,37 @@ function HvacDashboardApp() {
     ventilationMode,
     economizerTargetTemp,
     minimumOutsideAirPercent,
+    scheduleMode,
+    calculationMethod,
+    hourlyWeatherFileName,
+    scheduleStartTime,
+    scheduleEndTime,
+    scheduleDaysOption,
+    scheduleCustomDays,
     useMeasuredMixedAirTemperature,
     measuredMixedAirTemperature,
   ])
+
+  const handleHourlyWeatherFileChange = (file) => {
+    if (!file) {
+      setHourlyWeatherSourceType('none')
+      setHourlyWeatherFileName('')
+      setHourlyWeatherFileLocation('')
+      setHourlyWeatherRecordsLoaded(0)
+      setHourlyWeatherOperatingHoursUsed(0)
+      setHourlyWeatherSummary(null)
+      setHourlyWeatherParseError('')
+      return
+    }
+
+    setHourlyWeatherSourceType('custom')
+    setHourlyWeatherFileName(file.name)
+    setHourlyWeatherFileLocation('')
+    setHourlyWeatherParseError('')
+    setHourlyWeatherSummary(null)
+    setHourlyWeatherRecordsLoaded(0)
+    setHourlyWeatherOperatingHoursUsed(0)
+  }
 
   const outsideWinterTemp = selectedCity.hiver
 
@@ -2092,6 +2478,11 @@ function HvacDashboardApp() {
     ? [noRecoverySelection]
     : selectedRecoveries
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    setHourlyWeatherLoading(false)
+  }, [calculationMethod])
+
   const is100OA = ventilationMode.type === 'outside-air'
   const selectedReheatEnergySource = String(selectedReheatSystem?.energie || '')
     .normalize('NFD')
@@ -2105,6 +2496,14 @@ function HvacDashboardApp() {
       : thermalKw * (selectedReheatSystem?.facteur ?? 1)
   )
   const effectiveSupplyAirTemperature = is100OA ? roomTemperature : supplyAirTemperature
+  const operatingDaysPerWeek = scheduleMode === '24-7'
+    ? 7
+    : getScheduleDaysPerWeek(scheduleDaysOption, scheduleCustomDays)
+  const dailyOperatingHours = computeScheduleDailyHours(scheduleStartTime, scheduleEndTime, scheduleMode)
+  const weeklyOperatingHours = dailyOperatingHours * operatingDaysPerWeek
+  const scheduleFactor = scheduleMode === '24-7'
+    ? 1
+    : Number((weeklyOperatingHours / 168).toFixed(4))
 
   const metrics = calculateHvacDashboardMetrics({
     outsideAirCFM,
@@ -2124,6 +2523,7 @@ function HvacDashboardApp() {
     selectedCity,
     economizerTargetTemp,
     is100OA,
+    scheduleFactor,
   })
 
   const {
@@ -2246,14 +2646,28 @@ function HvacDashboardApp() {
   }
 
   const selectedBinData = binDataByCity[selectedCity.nom] || binDataByCity['Montr\u00E9al']
-  const totalBinHours = selectedBinData.reduce((total, item) => total + item[1], 0)
-  const dominantBin = selectedBinData.reduce((max, item) => (item[1] > max[1] ? item : max), selectedBinData[0])
+  const binOperatingDaysPerWeek = scheduleMode === '24-7'
+    ? 7
+    : getScheduleDaysPerWeek(scheduleDaysOption, scheduleCustomDays)
+  const binDailyOperatingHours = computeScheduleDailyHours(scheduleStartTime, scheduleEndTime, scheduleMode)
+  const binWeeklyOperatingHours = binDailyOperatingHours * binOperatingDaysPerWeek
+  const originalBinHours = selectedBinData.reduce((total, [, hours]) => total + hours, 0)
+  const binScheduleFactor = scheduleMode === '24-7'
+    ? 1
+    : Number((binWeeklyOperatingHours / 168).toFixed(4))
+  const annualOperatingHours = scheduleMode === '24-7'
+    ? originalBinHours
+    : Math.round(8760 * binScheduleFactor)
+  const effectiveBinData = selectedBinData.map(([tempC, hours]) => [tempC, Number((hours * binScheduleFactor).toFixed(3))])
+  const totalBinHours = Math.round(effectiveBinData.reduce((total, item) => total + item[1], 0))
+  const dominantBin = effectiveBinData.reduce((max, item) => (item[1] > max[1] ? item : max), effectiveBinData[0])
   // Convert BIN temperature labels to the active unit system for display
-  const displayedBinData = selectedBinData.map(([tempC, hours]) => ({
+  const displayedBinData = effectiveBinData.map(([tempC, hours], index) => ({
     temperature: `${displayTemp(tempC)}${tempUnit}`,
-    heures: hours,
+    originalHours: Number(selectedBinData[index][1].toFixed(1)),
+    heures: Number(hours.toFixed(1)),
   }))
-  const selectedBinWeatherData = selectedBinData.map(([tempC, hours]) => ({
+  const selectedBinWeatherData = effectiveBinData.map(([tempC, hours]) => ({
     tempC,
     hours,
     rh: Math.round(Math.max(35, Math.min(90, selectedCity.humidite + (10 - tempC) * 0.45))),
@@ -2334,10 +2748,10 @@ function HvacDashboardApp() {
     const seasonalFactor = monthlyFactors[index]
     return {
       mois,
-      vapeur: Math.round(steamEnergyKW * seasonalFactor * climateSeverityFactor),
-      gaz: Math.round(naturalGasSteamInputKW * seasonalFactor * climateSeverityFactor),
-      humidificateurGaz: Math.round(atmosphericGasHumidifierInputKW * seasonalFactor * climateSeverityFactor),
-    adiabatique: Math.round(adiabaticEnergyKW * seasonalFactor * climateSeverityFactor),
+      vapeur: Math.round(steamEnergyKW * seasonalFactor * climateSeverityFactor * scheduleFactor),
+      gaz: Math.round(naturalGasSteamInputKW * seasonalFactor * climateSeverityFactor * scheduleFactor),
+      humidificateurGaz: Math.round(atmosphericGasHumidifierInputKW * seasonalFactor * climateSeverityFactor * scheduleFactor),
+      adiabatique: Math.round(adiabaticEnergyKW * seasonalFactor * climateSeverityFactor * scheduleFactor),
     }
   })
 
@@ -2558,6 +2972,10 @@ function HvacDashboardApp() {
       ]
       : []),
   ]
+  const scheduleDescriptionText = scheduleMode === '24-7'
+    ? t.operationMode24_7
+    : `${scheduleStartTime} to ${scheduleEndTime}, ${scheduleDaysOption === 'mon-fri' ? t.mondayToFriday : scheduleDaysOption === 'mon-sat' ? t.mondayToSaturday : scheduleDaysOption === 'seven-days' ? t.sevenDaysWeek : Object.entries(scheduleCustomDays).filter(([, value]) => value).map(([day]) => t[day]).join(', ')}`
+
   const reportData = {
     language,
     units,
@@ -2567,6 +2985,12 @@ function HvacDashboardApp() {
       showFreeCoolingTables,
       includesFreeCoolingAnalysis: showFreeCoolingTables && !is100OA,
       ventilationModeName: ventilationMode.nom,
+      selectedCalculationMethod: calculationMethod === 'hourly' ? t.hourlyWeatherMethod : t.binHoursMethod,
+      hourlyWeatherFileName,
+      hourlyWeatherFileLocation,
+      hourlyWeatherRecordsLoaded,
+      hourlyWeatherOperatingHoursUsed,
+      hourlyWeatherParseError,
     },
     project: {
       name: reportProjectName,
@@ -2615,8 +3039,10 @@ function HvacDashboardApp() {
     annualBreakdownRows: freeCoolingHumifogAnalysis.annualBreakdownRows,
     netSavings: freeCoolingHumifogAnalysis.netSavings,
     message: freeCoolingHumifogAnalysis.message,
-    psychrometricPoints: psychrometricChartPoints,
     metrics: {
+      ...freeCoolingHumifogAnalysis.metrics,
+      scheduleFactor,
+      scheduleDescription: scheduleDescriptionText,
       recoveryEnergyReductionKW,
       annualHumidificationHours,
       naturalGasGES,
@@ -2625,6 +3051,7 @@ function HvacDashboardApp() {
       eliminatedGES,
       savings,
     },
+    psychrometricPoints: psychrometricChartPoints,
     energySummary: {
       annualHumidificationHours,
       steam: {
@@ -4566,6 +4993,169 @@ function HvacDashboardApp() {
               </div>
             </div>
 
+            <div className="grid grid-cols-1 gap-3 mb-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                <div>
+                  <div className="font-semibold text-slate-800 mb-1">{t.operatingSchedule}</div>
+                  <div className="mb-3 text-sm text-slate-500">
+                    {t.calculationMode}: {scheduleMode === '24-7' ? t.operationMode24_7 : t.operationModeCustom}
+                  </div>
+                  <div className="mb-3 text-sm text-slate-500">
+                    {t.methodSelection}: {calculationMethod === 'bin' ? t.binHoursMethod : t.hourlyWeatherMethod}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setScheduleMode('24-7')}
+                      className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${scheduleMode === '24-7' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
+                    >
+                      {t.operationMode24_7}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setScheduleMode('custom')}
+                      className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${scheduleMode === 'custom' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
+                    >
+                      {t.operationModeCustom}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-800 mb-1">{t.methodSelection}</div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setCalculationMethod('bin')}
+                      className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${calculationMethod === 'bin' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
+                    >
+                      {t.binHoursMethod}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCalculationMethod('hourly')}
+                      className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${calculationMethod === 'hourly' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
+                    >
+                      {t.hourlyWeatherMethod}
+                    </button>
+                  </div>
+                  {calculationMethod === 'hourly' && (
+                    <div className="mt-4 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+                      <div>{t.hourlyWeatherPlaceholder}</div>
+                      <label className="mt-3 block text-sm font-semibold text-slate-800">{t.optionalHourlyWeatherFileLabel}</label>
+                      <input
+                        type="file"
+                        accept=".epw,.csv"
+                        onChange={(event) => handleHourlyWeatherFileChange(event.target.files?.[0])}
+                        className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 shadow-sm focus:border-cyan-500 focus:outline-none"
+                      />
+                      <div className="mt-3 text-sm text-slate-700 font-semibold">
+                        {t.weatherSource}: {hourlyWeatherSourceType === 'custom'
+                          ? t.customUploadedWeatherFile
+                          : (language === 'fr' ? 'Méthode heures BIN (active)' : 'BIN hours method (active)')}
+                      </div>
+                      {hourlyWeatherFileName && (
+                        <div className="mt-2 text-sm text-slate-700">{t.loadedFile}: {hourlyWeatherFileName}</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="block">
+                    <div className="mb-2 text-sm font-semibold text-slate-800">{t.startTime}</div>
+                    <input
+                      type="time"
+                      value={scheduleStartTime}
+                      onChange={(event) => setScheduleStartTime(event.target.value)}
+                      disabled={scheduleMode === '24-7'}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 shadow-sm focus:border-cyan-500 focus:outline-none"
+                    />
+                  </label>
+                  <label className="block">
+                    <div className="mb-2 text-sm font-semibold text-slate-800">{t.endTime}</div>
+                    <input
+                      type="time"
+                      value={scheduleEndTime}
+                      onChange={(event) => setScheduleEndTime(event.target.value)}
+                      disabled={scheduleMode === '24-7'}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 shadow-sm focus:border-cyan-500 focus:outline-none"
+                    />
+                  </label>
+                </div>
+              </div>
+              <div>
+                <div className="mb-2 font-semibold text-slate-800">{t.operatingDays}</div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setScheduleDaysOption('mon-fri')}
+                    className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${scheduleDaysOption === 'mon-fri' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
+                    disabled={scheduleMode === '24-7'}
+                  >
+                    {t.mondayToFriday}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setScheduleDaysOption('mon-sat')}
+                    className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${scheduleDaysOption === 'mon-sat' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
+                    disabled={scheduleMode === '24-7'}
+                  >
+                    {t.mondayToSaturday}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setScheduleDaysOption('seven-days')}
+                    className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${scheduleDaysOption === 'seven-days' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
+                    disabled={scheduleMode === '24-7'}
+                  >
+                    {t.sevenDaysWeek}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setScheduleDaysOption('custom')}
+                    className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${scheduleDaysOption === 'custom' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
+                    disabled={scheduleMode === '24-7'}
+                  >
+                    {t.customDays}
+                  </button>
+                </div>
+                {scheduleDaysOption === 'custom' && scheduleMode !== '24-7' && (
+                  <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    {['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((day) => (
+                      <label key={day} className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm">
+                        <input
+                          type="checkbox"
+                          checked={scheduleCustomDays[day]}
+                          onChange={() => setScheduleCustomDays((current) => ({ ...current, [day]: !current[day] }))}
+                        />
+                        {t[day]}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className="rounded-2xl bg-white p-4 shadow-sm">
+                  <div className="text-sm text-slate-500">{t.dailyOperatingHours}</div>
+                  <div className="text-2xl font-bold text-slate-800">{dailyOperatingHours.toFixed(1)} h/day</div>
+                </div>
+                <div className="rounded-2xl bg-white p-4 shadow-sm">
+                  <div className="text-sm text-slate-500">{t.weeklyOperatingHours}</div>
+                  <div className="text-2xl font-bold text-slate-800">{weeklyOperatingHours.toFixed(1)} h/week</div>
+                </div>
+                <div className="rounded-2xl bg-white p-4 shadow-sm">
+                  <div className="text-sm text-slate-500">{t.annualOperatingHours}</div>
+                  <div className="text-2xl font-bold text-slate-800">{annualOperatingHours.toLocaleString()} h/year</div>
+                </div>
+                <div className="rounded-2xl bg-white p-4 shadow-sm">
+                  <div className="text-sm text-slate-500">{t.scheduleFactor}</div>
+                  <div className="text-2xl font-bold text-slate-800">{(scheduleFactor * 100).toFixed(1)}%</div>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              {t.scheduleNote}
+            </div>
+
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={displayedBinData}>
                 <XAxis dataKey="temperature" />
@@ -4580,7 +5170,8 @@ function HvacDashboardApp() {
                 <thead>
                   <tr className="bg-slate-800 text-white">
                     <th className="p-4 text-left">{t.binTemperature}</th>
-                    <th className="p-4 text-center">{t.annualHours}</th>
+                    <th className="p-4 text-center">{t.originalBinHours}</th>
+                    <th className="p-4 text-center">{t.effectiveBinHours}</th>
                     <th className="p-4 text-center">{t.correctedRecoveryLoad}</th>
                     <th className="p-4 text-center">{t.adiabaticLoad}</th>
                   </tr>
@@ -4592,6 +5183,7 @@ function HvacDashboardApp() {
                       className={`${index % 2 === 0 ? 'bg-slate-50' : 'bg-white'} border-b border-slate-200`}
                     >
                       <td className="p-4 font-semibold text-slate-700">{item.temperature}</td>
+                      <td className="p-4 text-center font-semibold text-slate-800">{item.originalHours} h</td>
                       <td className="p-4 text-center font-bold text-slate-800">{item.heures} h</td>
                       <td className="p-4 text-center text-red-700 font-bold">
                         {Math.round(item.heures * steamEnergyKW * 0.001)} kWh

@@ -649,6 +649,12 @@ export default function HvacEnergyOptimizationReport({ data }) {
     ['Project location', project.location || '-'],
     ['Report mode', includesFreeCoolingAnalysis ? 'Free Cooling' : '100% Outdoor Air'],
     ['Ventilation mode selected', mode.ventilationModeName || '-'],
+    ['Calculation method selected', mode.selectedCalculationMethod || '-'],
+    ['Hourly weather file', mode.hourlyWeatherFileName || '-'],
+    ['Hourly weather location', mode.hourlyWeatherFileLocation || '-'],
+    ['Hourly weather records loaded', `${mode.hourlyWeatherRecordsLoaded || 0}`],
+    ['Hourly operating hours used', `${mode.hourlyWeatherOperatingHoursUsed || 0}`],
+    ['Hourly weather file status', mode.hourlyWeatherParseError ? `Error: ${mode.hourlyWeatherParseError}` : 'OK'],
     ['Airflow entered in software', formatFlow(system.supplyAirflowCfm, data.units)],
     [includesFreeCoolingAnalysis ? 'Minimum OA entered in software' : 'OA entered in software', `${formatNumber(selectedOaPercent, 0)}%`],
     [includesFreeCoolingAnalysis ? 'RA available from software input' : 'RA shown in report', `${formatNumber(selectedRaPercent, 0)}%`],
@@ -660,6 +666,8 @@ export default function HvacEnergyOptimizationReport({ data }) {
     ['Reheat / preheat method selected', selectedReheatName],
     ['Electricity rate entered', `${formatNumber(economics.electricityRate, 2)} $/kWh`],
     ['Natural gas rate entered', `${formatNumber(economics.naturalGasRate, 2)} $/m3`],
+    ['Operating schedule', `${data.metrics?.scheduleDescription || ''}`],
+    ['Schedule factor', `${formatNumber(data.metrics?.scheduleFactor * 100, 1)}%`],
     ['Annual humidification hours used', `${formatNumber(energySummary.annualHumidificationHours, 0)} h`],
     ...(includesFreeCoolingAnalysis
       ? [
