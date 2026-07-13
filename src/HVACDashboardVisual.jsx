@@ -2799,7 +2799,7 @@ function HvacDashboardApp() {
         setHourlyWeatherFileLocation(weatherLocation || selectedCity.nom)
         setHourlyWeatherRecords(records)
         setHourlyWeatherMetadata(metadata)
-        setHourlyWeatherValidationWarning(metadata?.validationStatus === 'official' ? '' : WEATHER_UNVERIFIED_WARNING)
+        setHourlyWeatherValidationWarning('')
         setHourlyWeatherParseError('')
       })
       .catch(() => {
