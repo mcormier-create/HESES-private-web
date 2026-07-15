@@ -23,16 +23,16 @@ const pointColors = {
 }
 
 const labelOffsets = {
-  oa: { dx: -30, dy: 36, align: 'right' },
-  ra: { dx: 34, dy: -88, align: 'left' },
-  mixed: { dx: -34, dy: 62, align: 'right' },
-  recovered: { dx: 34, dy: -90, align: 'left' },
-  recovery: { dx: 34, dy: -90, align: 'left' },
-  heating: { dx: 70, dy: 42, align: 'left' },
-  heatingCoil: { dx: 42, dy: 48, align: 'left' },
-  humifog: { dx: 42, dy: -94, align: 'left' },
-  supply: { dx: 42, dy: -36, align: 'left' },
-  room: { dx: -184, dy: -116, align: 'right' },
+  oa: { dx: -30, dy: 48, align: 'right' },
+  ra: { dx: 34, dy: 52, align: 'left' },
+  mixed: { dx: -34, dy: 68, align: 'right' },
+  recovered: { dx: 34, dy: 54, align: 'left' },
+  recovery: { dx: 34, dy: 54, align: 'left' },
+  heating: { dx: 70, dy: 56, align: 'left' },
+  heatingCoil: { dx: 42, dy: 56, align: 'left' },
+  humifog: { dx: 42, dy: 56, align: 'left' },
+  supply: { dx: 42, dy: 54, align: 'left' },
+  room: { dx: -184, dy: 52, align: 'right' },
 }
 
 const markerOffsets = {
@@ -56,6 +56,7 @@ export default function PsychrometricChart({
   gains = [],
   language = 'fr',
   units = 'metric',
+  referencePointKey = '',
 }) {
   const cleanPoints = (points || [])
     .filter((point) => point?.state && Number.isFinite(point.state.db) && Number.isFinite(point.state.w))
@@ -80,6 +81,16 @@ export default function PsychrometricChart({
   const pointByKey = new Map(cleanPoints.map((point) => [point.key, point]))
   const orderedKeys = processOrder || ['oa', 'mixed', 'recovered', 'humifog', 'heating', 'room']
   const processPath = pathForKeys(orderedKeys, pointByKey, xScale, yScale)
+  const referencePath = referencePointKey
+    ? pathForKeys([orderedKeys[orderedKeys.length - 1], referencePointKey], pointByKey, xScale, yScale)
+    : ''
+  const referenceLabelPosition = referencePathLabelPosition(
+    orderedKeys[orderedKeys.length - 1],
+    referencePointKey,
+    pointByKey,
+    xScale,
+    yScale
+  )
   const returnPath = pathForKeys(['ra', 'mixed'], pointByKey, xScale, yScale)
   const pointLayouts = buildPointLayouts(cleanPoints, xScale, yScale)
   const humidificationGain = gains.find((item) => item.key === 'humidification')
@@ -166,6 +177,21 @@ export default function PsychrometricChart({
 
           {processPath && (
             <path d={processPath} fill="none" stroke="#dc2626" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" markerEnd="url(#psychroArrow)" />
+          )}
+          {referencePath && (
+            <path d={referencePath} fill="none" stroke="#64748b" strokeWidth="2" strokeLinecap="round" strokeDasharray="7 6" opacity="0.9" />
+          )}
+          {referenceLabelPosition && (
+            <text
+              x={referenceLabelPosition.x}
+              y={referenceLabelPosition.y}
+              textAnchor="middle"
+              fontSize="11"
+              fill="#334155"
+              fontWeight="700"
+            >
+              {language === 'fr' ? 'Cible pièce - référence seulement' : 'Room target - reference only'}
+            </text>
           )}
           {returnPath && (
             <path d={returnPath} fill="none" stroke="#f97316" strokeWidth="2.2" strokeLinecap="round" strokeDasharray="8 7" />
@@ -342,15 +368,37 @@ function buildPointLayouts(points, xScale, yScale) {
   })
 
   distributeCloseMarkers(layouts)
+  lockRoomMarkerNearHumifog(layouts)
 
   const placedLabels = []
+  let humifogLabelBox = null
   return layouts.map((layout) => {
     const labelOffset = offsetForPoint(layout.point)
     const preferredX = labelOffset.align === 'right'
       ? layout.markerX + labelOffset.dx - labelWidth
       : layout.markerX + labelOffset.dx
     const preferredY = layout.markerY + labelOffset.dy
-    const labelBox = placeLabel(preferredX, preferredY, labelWidth, labelHeight, layout.markerX, placedLabels)
+    let labelBox = layout.point.key === 'humifog'
+      ? {
+        labelX: clamp(CHART_WIDTH - PLOT.right - labelWidth - 24, 8, CHART_WIDTH - labelWidth - 8),
+        labelY: clamp(PLOT.top + 86, 8, CHART_HEIGHT - labelHeight - 58),
+        labelWidth,
+        labelHeight,
+      }
+      : placeLabel(preferredX, preferredY, labelWidth, labelHeight, layout.markerX, placedLabels)
+
+    if (layout.point.key === 'room' && humifogLabelBox) {
+      labelBox = {
+        labelX: clamp(humifogLabelBox.labelX + 8, 8, CHART_WIDTH - labelWidth - 8),
+        labelY: clamp(humifogLabelBox.labelY + labelHeight + 10, 8, CHART_HEIGHT - labelHeight - 58),
+        labelWidth,
+        labelHeight,
+      }
+    }
+
+    if (layout.point.key === 'humifog') {
+      humifogLabelBox = labelBox
+    }
 
     placedLabels.push(labelBox)
 
@@ -362,28 +410,63 @@ function buildPointLayouts(points, xScale, yScale) {
   })
 }
 
+function lockRoomMarkerNearHumifog(layouts) {
+  const humifogLayout = layouts.find((layout) => layout.point.key === 'humifog')
+  const roomLayout = layouts.find((layout) => layout.point.key === 'room')
+  if (!humifogLayout || !roomLayout) return
+
+  const sameAirState = distance(
+    humifogLayout.baseX,
+    humifogLayout.baseY,
+    roomLayout.baseX,
+    roomLayout.baseY
+  ) < 6
+
+  if (!sameAirState) return
+
+  roomLayout.markerX = clamp(humifogLayout.markerX - 20, PLOT.left + 8, CHART_WIDTH - PLOT.right - 8)
+  roomLayout.markerY = clamp(humifogLayout.markerY, PLOT.top + 8, CHART_HEIGHT - PLOT.bottom - 8)
+  roomLayout.hasMarkerOffset = true
+}
+
 function markerOffsetForPoint(point) {
+  if (point.key === 'room') {
+    return { dx: -18, dy: -12 }
+  }
+
+  if (point.key === 'humifog') {
+    return { dx: 12, dy: 20 }
+  }
+
   if (point.number === 2) {
-    return { dx: -32, dy: -12 }
+    return { dx: -32, dy: 8 }
   }
 
   if (point.number === 5) {
-    return { dx: 34, dy: -14 }
+    return { dx: 34, dy: 10 }
   }
 
   return markerOffsets[point.key] || { dx: 0, dy: 0 }
 }
 
 function offsetForPoint(point) {
+  if (point.key === 'room') {
+    return { dx: -70, dy: -64, align: 'right' }
+  }
+
+  if (point.key === 'humifog') {
+    return { dx: 42, dy: 126, align: 'left' }
+  }
+
   if (point.number === 2) {
-    return { dx: -52, dy: -88, align: 'right' }
+    return { dx: -52, dy: 54, align: 'right' }
   }
 
   if (point.number === 5) {
-    return { dx: 72, dy: -94, align: 'left' }
+    return { dx: 72, dy: 58, align: 'left' }
   }
 
-  return labelOffsets[point.key] || { dx: 16, dy: -44, align: 'left' }
+  return labelOffsets[point.key] || { dx: 16, dy: 52, align: 'left' }
 }
 
 function distributeCloseMarkers(layouts) {
@@ -416,7 +499,7 @@ function distributeCloseMarkers(layouts) {
 }
 
 function placeLabel(preferredX, preferredY, labelWidth, labelHeight, markerX, placedLabels) {
-  const verticalCandidates = [0, 26, -26, 52, -52, 78, -78, 104, -104, 132, -132]
+  const verticalCandidates = [0, 26, 52, 78, 104, -26, -52, -78, -104, 132, -132]
   const horizontalStep = markerX > CHART_WIDTH / 2 ? -34 : 34
   const horizontalCandidates = [0, horizontalStep, -horizontalStep, horizontalStep * 2, -horizontalStep * 2]
 
@@ -497,6 +580,7 @@ function translatePoint(point, language) {
     'After thermal wheel': 'Après roue thermique',
     'After recovery': 'Après récupération',
     'After Humifog': 'Après Humifog',
+    'After preheat Humifog': 'Après préchauffage Humifog',
     'After heating': 'Après chauffage',
     'After heating coil': 'Après serpentin',
     'Supply air': "Air d'alimentation",
@@ -509,6 +593,7 @@ function translatePoint(point, language) {
     'After thermal wheel': 'After thermal wheel',
     'After recovery': 'After recovery',
     'After Humifog': 'After Humifog',
+    'After preheat Humifog': 'After Humifog preheat',
     'After heating': 'After heating',
     'After heating coil': 'After heating coil',
     'Supply air': 'Supply air',
@@ -559,6 +644,22 @@ function range(start, end, step) {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max)
+}
+
+function referencePathLabelPosition(fromKey, toKey, pointByKey, xScale, yScale) {
+  const fromPoint = pointByKey.get(fromKey)
+  const toPoint = pointByKey.get(toKey)
+  if (!fromPoint || !toPoint) return null
+
+  const fromX = xScale(fromPoint.state.db)
+  const fromY = yScale(fromPoint.state.w)
+  const toX = xScale(toPoint.state.db)
+  const toY = yScale(toPoint.state.w)
+
+  return {
+    x: (fromX + toX) / 2,
+    y: (fromY + toY) / 2 - 8,
+  }
 }
 
 function round(value) {

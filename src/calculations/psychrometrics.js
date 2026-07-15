@@ -73,6 +73,14 @@ export function moistAirEnthalpyBtuLb(tempC, humidityRatio) {
   return 0.24 * tempF + humidityRatio * (1061 + 0.444 * tempF)
 }
 
+export function dryBulbFromEnthalpyHumidityRatio(enthalpyKjKg, humidityRatio) {
+  const safeW = Math.max(0, Number(humidityRatio) || 0)
+  const safeH = Number(enthalpyKjKg) || 0
+  const denominator = 1.006 + 1.86 * safeW
+  if (Math.abs(denominator) < 1e-9) return 0
+  return (safeH - 2501 * safeW) / denominator
+}
+
 export function dewPointC(tempC, relativeHumidity, pressureKPa = STANDARD_PRESSURE_KPA) {
   const humidityRatio = humidityRatioFromRH(tempC, relativeHumidity, pressureKPa)
   return dewPointFromHumidityRatioC(humidityRatio, pressureKPa, tempC)
@@ -160,13 +168,21 @@ export function applyHumifogCooling(airState, effectiveness = 0.85) {
 export function applySteamHumidification(airState, targetRh = 45) {
   const targetW = humidityRatioFromRH(airState.db, targetRh)
   const humidifiedW = Math.max(airState.w, targetW)
+  const humidityIncrease = Math.max(0, humidifiedW - airState.w)
+
+  if (humidityIncrease <= 1e-9) {
+    return {
+      ...airState,
+      addedWaterGKg: 0,
+    }
+  }
 
   return {
     ...stateFromDbW({
       dryBulbC: airState.db,
       humidityRatio: humidifiedW,
     }),
-    addedWaterGKg: Math.max(0, (humidifiedW - airState.w) * 1000),
+    addedWaterGKg: humidityIncrease * 1000,
   }
 }
 

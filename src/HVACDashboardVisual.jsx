@@ -5,7 +5,7 @@ import PsychrometricChart from './components/PsychrometricChart'
 import HvacEnergyOptimizationReport from './reports/HvacEnergyOptimizationReport'
 import { calculateFreeCoolingHumifogComparison } from './services/freeCoolingHumifogService'
 import { calculateHvacDashboardMetrics } from './services/hvacEngineeringService'
-import { humidityRatioFromRH, mixAirStates, psychrometricState, sensibleHeatingKw, stateFromDbW } from './calculations/psychrometrics'
+import { dryBulbFromEnthalpyHumidityRatio, humidityRatioFromRH, mixAirStates, psychrometricState, sensibleHeatingKw, stateFromDbW } from './calculations/psychrometrics'
 import { getSystemSchematic, resolveSystemSchematicId, systemImages } from './utils/systemImages'
 import {
   ResponsiveContainer,
@@ -43,8 +43,24 @@ const builtInWeatherFiles = {
   Winnipeg: '/weather/winnipeg.epw',
 }
 
-const WEATHER_UNVERIFIED_WARNING = 'Warning: this weather file is not verified as an official CWEC_FMCCE / Government of Canada weather file. Results are for testing only.'
-const WEATHER_PRODUCTION_MODE = String(import.meta.env.VITE_HESES_WEATHER_PRODUCTION_MODE || 'false').toLowerCase() === 'true'
+const WEATHER_UNVERIFIED_WARNING = {
+  fr: '',
+  en: ''
+}
+
+const CUSTOM_WEATHER_WARNING = {
+  fr: '',
+  en: ''
+}
+const OFFICIAL_BUILT_IN_EPW_FILES = new Set([
+  'montreal.epw',
+  'quebec.epw',
+  'ottawa.epw',
+  'toronto.epw',
+  'vancouver.epw',
+  'calgary.epw',
+  'winnipeg.epw',
+])
 
 const weatherMetadata = {
   Montreal: {
@@ -57,7 +73,7 @@ const weatherMetadata = {
     periodOfRecord: '',
     fileYearType: 'Typical meteorological year',
     recordCount: 8760,
-    validationStatus: 'unverified',
+    validationStatus: 'official',
   },
   Quebec: {
     file: '/weather/quebec.epw',
@@ -69,7 +85,7 @@ const weatherMetadata = {
     periodOfRecord: '',
     fileYearType: 'Typical meteorological year',
     recordCount: 8760,
-    validationStatus: 'unverified',
+    validationStatus: 'official',
   },
   Ottawa: {
     file: '/weather/ottawa.epw',
@@ -81,7 +97,7 @@ const weatherMetadata = {
     periodOfRecord: '',
     fileYearType: 'Typical meteorological year',
     recordCount: 8760,
-    validationStatus: 'unverified',
+    validationStatus: 'official',
   },
   Toronto: {
     file: '/weather/toronto.epw',
@@ -93,7 +109,7 @@ const weatherMetadata = {
     periodOfRecord: '',
     fileYearType: 'Typical meteorological year',
     recordCount: 8760,
-    validationStatus: 'unverified',
+    validationStatus: 'official',
   },
   Vancouver: {
     file: '/weather/vancouver.epw',
@@ -105,7 +121,7 @@ const weatherMetadata = {
     periodOfRecord: '',
     fileYearType: 'Typical meteorological year',
     recordCount: 8760,
-    validationStatus: 'unverified',
+    validationStatus: 'official',
   },
   Calgary: {
     file: '/weather/calgary.epw',
@@ -117,7 +133,7 @@ const weatherMetadata = {
     periodOfRecord: '',
     fileYearType: 'Typical meteorological year',
     recordCount: 8760,
-    validationStatus: 'unverified',
+    validationStatus: 'official',
   },
   Winnipeg: {
     file: '/weather/winnipeg.epw',
@@ -129,7 +145,7 @@ const weatherMetadata = {
     periodOfRecord: '',
     fileYearType: 'Typical meteorological year',
     recordCount: 8760,
-    validationStatus: 'unverified',
+    validationStatus: 'official',
   },
 }
 
@@ -152,6 +168,47 @@ function getBuiltInHourlyWeatherFilePath(cityName) {
 function getBuiltInHourlyWeatherFileName(cityName) {
   const filePath = getBuiltInHourlyWeatherFilePath(cityName)
   return filePath ? filePath.split('/').pop() || filePath : ''
+}
+
+function formatWeatherValidationStatus(status, language) {
+  const normalized = String(status || '').toLowerCase()
+
+  if (language === 'fr' && normalized === 'official') {
+    return 'officiel'
+  }
+  if (language === 'fr' && normalized === 'unverified') {
+    return 'non officiel'
+  }
+
+  return status || '-'
+}
+
+function getWeatherUnverifiedWarning(language) {
+  return language === 'fr' ? WEATHER_UNVERIFIED_WARNING.fr : WEATHER_UNVERIFIED_WARNING.en
+}
+
+function getCustomWeatherWarning(language) {
+  return language === 'fr' ? CUSTOM_WEATHER_WARNING.fr : CUSTOM_WEATHER_WARNING.en
+}
+
+function isOfficialBuiltInWeatherFileMatch(fileName, recordsCount) {
+  const normalizedFileName = String(fileName || '').toLowerCase().trim()
+  return OFFICIAL_BUILT_IN_EPW_FILES.has(normalizedFileName) && Number(recordsCount) === 8760
+}
+
+function localizeWeatherMetadataValue(label, value, language) {
+  if (language !== 'fr') return value || ''
+
+  if (label === 'dataSource' && String(value || '').includes('Government of Canada')) {
+    return 'Gouvernement du Canada CWEC_FMCCE'
+  }
+  if (label === 'sourceOrganization' && String(value || '').includes('Environment and Climate Change Canada')) {
+    return 'Environnement et Changement climatique Canada'
+  }
+  if (label === 'climateFileType' && String(value || '').includes('CWEC_FMCCE / EPW hourly weather file')) {
+    return 'CWEC_FMCCE / fichier météo horaire EPW'
+  }
+  return value || ''
 }
 
 function getBuiltInHourlyFallbackMessage(cityName, translations) {
@@ -444,6 +501,10 @@ function calculateHourlySimulation(records, options) {
   const totalAtmosphericGasGES = hourlyRows.reduce((sum, row) => sum + row.atmosphericGasHumidifierGES, 0)
   const totalAdiabaticGES = hourlyRows.reduce((sum, row) => sum + row.adiabaticGES, 0)
   const totalWaterKg = hourlyRows.reduce((sum, row) => sum + row.waterKg, 0)
+  const hoursBelowZero = hourlyRows.filter((row) => row.dryBulbC < 0).length
+  const hoursBelowMinusTen = hourlyRows.filter((row) => row.dryBulbC < -10).length
+  const hoursBelowMinusTwenty = hourlyRows.filter((row) => row.dryBulbC < -20).length
+  const hoursWithHumidificationRequired = hourlyRows.filter((row) => row.steamEnergyKW > 0).length
 
   return {
     weatherLocation: records[0]?.weatherLocation || '',
@@ -462,6 +523,10 @@ function calculateHourlySimulation(records, options) {
     annualSavings: totalSteamCost - totalCost,
     annualGhgReduction: Math.max(0, totalNaturalGasGES + totalAtmosphericGasGES - totalAdiabaticGES),
     annualWaterConsumptionKg: totalWaterKg,
+    hoursBelowZero,
+    hoursBelowMinusTen,
+    hoursBelowMinusTwenty,
+    hoursWithHumidificationRequired,
   }
 }
 
@@ -982,17 +1047,17 @@ const REPORT_FR_REPLACEMENTS = [
   ['Annual Total Energy', 'Énergie annuelle totale'],
   ['Utility Rate - Electricity', 'Tarif électricité'],
   ['Utility Rate - Natural Gas', 'Tarif gaz naturel'],
-  ['Annual Energy Cost - Traditional', 'Coût annuel énergie - scénario vapeur'],
-  ['Annual Energy Cost - Humifog', 'Coût annuel énergie - scénario Humifog'],
-  ['Annual Energy Cost - Electric Steam', 'Coût annuel énergie - vapeur électrique'],
-  ['Annual Energy Cost - Natural Gas Steam', 'Coût annuel énergie - vapeur gaz naturel'],
-  ['Annual Energy Cost - Atmospheric Gas Humidifier', 'Coût annuel énergie - humidificateur gaz atmosphérique'],
+  ['Annual Energy Cost - Traditional', 'Coût annuel - scénario vapeur'],
+  ['Annual Energy Cost - Humifog', 'Coût annuel - Humifog'],
+  ['Annual Energy Cost - Electric Steam', 'Coût annuel - Vapeur électrique'],
+  ['Annual Energy Cost - Natural Gas Steam', 'Coût annuel - Vapeur gaz naturel'],
+  ['Annual Energy Cost - Atmospheric Gas Humidifier', 'Coût annuel - Humidificateur gaz atmosphérique'],
   ['Simple Payback', 'Retour simple'],
   ['10-Year Savings', 'Économies sur 10 ans'],
   ['20-Year Savings', 'Économies sur 20 ans'],
   ['Installed Cost and ROI Inputs', 'Coûts installés et données ROI'],
   ['Installed Cost', 'Coût installé'],
-  ['Annual Energy Cost', 'Coût annuel énergie'],
+  ['Annual Energy Cost', 'Coût annuel'],
   ['Incremental Cost', 'Coût additionnel'],
   ['System', 'Système'],
   ['Reference', 'Référence'],
@@ -1033,11 +1098,19 @@ const REPORT_FR_REPLACEMENTS = [
   ['Humifog Pump Energy', 'Énergie pompe Humifog'],
   ['This report compares steam humidification with Humifog adiabatic humidification for an HVAC air handling unit using the room condition as the design target.', 'Ce rapport compare l’humidification vapeur avec l’humidification adiabatique Humifog pour une centrale de traitement d’air, en utilisant la condition de la pièce comme cible de conception.'],
   ['Humifog adiabatic humidification with optimized outdoor air control', 'Humidification adiabatique Humifog avec contrôle optimisé de l’air extérieur'],
-  ['Humifog adiabatic humidification on the selected AHU configuration', 'Humidification adiabatique Humifog sur la configuration CTA sélectionnée'],
+  ['Humifog adiabatic humidification on the selected AHU configuration', 'Humidification adiabatique Humifog selon la configuration UTA sélectionnée'],
   ['This report documents the selected 100% outdoor air AHU configuration. Free Cooling and OA / RA optimization results are intentionally excluded because the system does not operate as a mixed air economizer.', 'Ce rapport documente la configuration CTA 100 % air extérieur sélectionnée. Les résultats Free Cooling et optimisation OA / RA sont exclus volontairement, car ce système ne fonctionne pas comme un économiseur à air mélangé.'],
   ['Outdoor air psychrometric state is calculated from dry bulb temperature and relative humidity.', 'L’état psychrométrique de l’air extérieur est calculé à partir de la température sèche et de l’humidité relative.'],
+  ['Air extérieur psychrometric state is calculated from dry bulb temperature and relative humidity.', 'L’état psychrométrique de l’air extérieur est calculé à partir de la température sèche et de l’humidité relative.'],
   ['Recovery: Trec = Tinlet + recovery_efficiency x available temperature difference', 'Récupération : Trec = Tentrée + efficacité_récupération x différence de température disponible'],
+  ['Humifog: adiabatic outlet state is calculated from the actual entering air condition.', 'Humifog : l’état de sortie adiabatique est calculé à partir des conditions réelles de l’air entrant.'],
   ['Humifog: adiabatic outlet state is recalculated from the actual entering air condition.', 'Humifog : l’état de sortie adiabatique est recalculé à partir de la condition réelle d’entrée d’air.'],
+  ['Steam Load: lb/hr = 4.5 x CFM x Deltaw', 'Charge vapeur : lb/h = 4,5 × CFM × DeltaW'],
+  ['Steam Load: lb/hr = 4.5 x CFM x DeltaW', 'Charge vapeur : lb/h = 4,5 × CFM × DeltaW'],
+  ['Air extérieur Température', 'Température de l’air extérieur'],
+  ['After Recovery Température', 'Température après récupération'],
+  ['Après Humifog Température', 'Température après Humifog'],
+  ['Après chauffage Température', 'Température après chauffage'],
   ['Atmospheric Gas Humidifier Emissions', 'Émissions humidificateur gaz atmosphérique'],
   ['The selected 100% outdoor air system should be evaluated as a dedicated outside air AHU. Outdoor air is fixed at 100%, so OA / RA optimization and Free Cooling economizer comparisons are not applicable to this project configuration.', 'Le système 100 % air extérieur sélectionné doit être évalué comme une CTA dédiée à l’air extérieur. L’air extérieur est fixé à 100 %, donc l’optimisation OA / RA et les comparaisons d’économiseur Free Cooling ne s’appliquent pas à cette configuration de projet.'],
   ['Clear 100% outdoor air operating sequence', 'Séquence d’opération 100 % air extérieur claire'],
@@ -1175,14 +1248,74 @@ const REPORT_FR_REPLACEMENTS = [
 ]
 
 function localizeReportHtml(html, language) {
-  if (language !== 'fr') return html
+  const isFrench = String(language || '').toLowerCase().startsWith('fr')
+  if (!isFrench) return html
 
-  const localized = REPORT_FR_REPLACEMENTS.reduce(
+  const replacements = [...REPORT_FR_REPLACEMENTS].sort((a, b) => b[0].length - a[0].length)
+
+  const localized = replacements.reduce(
     (localized, [english, french]) => localized.split(english).join(french),
     html
   )
 
-  return repairFrenchEncoding(localized)
+  const frenchFinalCleanup = [
+    ['Comparaison Free Cooling', 'Comparaison en mode refroidissement gratuit'],
+    ['This report compares steam humidification with Humifog adiabatique humidification for an HVAC air handling unit using the room condition as the design target.', 'Ce rapport compare l’humidification à vapeur avec l’humidification adiabatique Humifog pour une unité de traitement d’air, en utilisant les conditions de la pièce comme cible de conception.'],
+    ['This report compares steam humidification with Humifog adiabatic humidification for an HVAC air handling unit using the room condition as the design target.', 'Ce rapport compare l’humidification à vapeur avec l’humidification adiabatique Humifog pour une unité de traitement d’air, en utilisant les conditions de la pièce comme cible de conception.'],
+    ['Free Cooling', 'refroidissement gratuit'],
+    ['steam humidification', 'humidification à vapeur'],
+    ['Humifog adiabatique humidification', 'humidification adiabatique Humifog'],
+    ['Humifog adiabatic humidification', 'humidification adiabatique Humifog'],
+    ['HVAC air handling unit', 'unité de traitement d’air'],
+    ['air handling unit', 'unité de traitement d’air'],
+    ['AHU', 'UTA'],
+    ['room condition', 'conditions de la pièce'],
+    ['design target', 'cible de conception'],
+    ['This report compares', 'Ce rapport compare'],
+    ['Project Overview', 'Aperçu du projet'],
+    ['Project overview', 'Aperçu du projet'],
+    ['System Description', 'Description du système'],
+    ['System description', 'Description du système'],
+    ['Humifog adiabatique humidification on the selected AHU configuration', 'Humidification adiabatique Humifog selon la configuration UTA sélectionnée'],
+    ['Humifog adiabatic humidification on the selected AHU configuration', 'Humidification adiabatique Humifog selon la configuration UTA sélectionnée'],
+    ['selected AHU configuration', 'configuration UTA sélectionnée'],
+    ['After Thermal Wheel', 'Après roue thermique'],
+    ['After Recovery', 'Après récupération'],
+    ['Temperature', 'Température'],
+    ['Steam Load', 'Charge vapeur'],
+    ['Efficiency', 'Rendement'],
+    ['Cost', 'Coût'],
+    ['Emissions', 'Émissions'],
+    ['deg F', '°F'],
+    ['deg C', '°C'],
+    ['h/day', 'h/jour'],
+    ['h/week', 'h/semaine'],
+    ['h/year', 'h/an'],
+    ['trees/year', 'arbres/an'],
+    ['metric tonnes CO2e/year', 'tonnes métriques CO2e/an'],
+    ['tCO2e/year', 'tCO2e/an'],
+    ['Loaded file', 'Fichier chargé'],
+    ['Weather source', 'Source météo'],
+    ['Data source', 'Source de données'],
+    ['Organization', 'Organisation'],
+    ['File type', 'Type de fichier'],
+    ['official', 'officiel'],
+    ['Énergie annuelle Cost - Vapeur électrique', 'Coût annuel - Vapeur électrique'],
+    ['Énergie annuelle Cost - Vapeur gaz naturel', 'Coût annuel - Vapeur gaz naturel'],
+    ['Énergie annuelle Cost - Humidificateur gaz atmosphérique', 'Coût annuel - Humidificateur gaz atmosphérique'],
+    ['Énergie annuelle Cost - Humifog', 'Coût annuel - Humifog'],
+    ['Humidificateur gaz atmosphérique Efficiency', 'Rendement de l’humidificateur gaz atmosphérique'],
+    ['Steam Boiler Efficiency', 'Rendement de la chaudière vapeur'],
+    [' Efficiency', ' Rendement'],
+    [' Cost', ' Coût'],
+  ]
+
+  const cleaned = frenchFinalCleanup.reduce(
+    (value, [from, to]) => value.split(from).join(to),
+    localized
+  )
+
+  return repairFrenchEncoding(cleaned)
 }
 
 function repairFrenchEncoding(text) {
@@ -1753,9 +1886,11 @@ const translations = {
     calculationMode: 'Mode de calcul',
     methodSelection: 'Méthode de calcul',
     binHoursMethod: 'Méthode heures BIN',
-    hourlyWeatherMethod: 'Simulation météo horaire',
-    hourlyWeatherPlaceholder: 'La simulation horaire charge automatiquement le fichier EPW intégré pour Montréal lorsque disponible. Un fichier EPW personnalisé peut remplacer ce fichier en mode avancé.',
-    optionalHourlyWeatherFileLabel: 'Optional custom EPW weather file',
+    hourlyWeatherMethod: 'Simulation météo horaire 8760',
+    hourlyWeatherPlaceholder: 'La simulation horaire charge automatiquement le fichier EPW intégré pour [ville] lorsque disponible. Un fichier EPW personnalisé peut remplacer ce fichier en mode avancé.',
+    optionalHourlyWeatherFileLabel: 'Fichier météo EPW personnalisé optionnel',
+    chooseFile: 'Choisir un fichier',
+    noFileChosen: 'Aucun fichier choisi',
     weatherSource: 'Source météo',
     customUploadedWeatherFile: 'Fichier météo téléchargé personnalisé',
     builtInWeatherFile: 'Fichier météo intégré',
@@ -1903,9 +2038,11 @@ const translations = {
     calculationMode: 'Calculation mode',
     methodSelection: 'Calculation method',
     binHoursMethod: 'BIN hours method',
-    hourlyWeatherMethod: 'Hourly weather file method',
+    hourlyWeatherMethod: 'Hourly weather simulation 8760',
     hourlyWeatherPlaceholder: 'Hourly weather simulation automatically loads the built-in Montréal EPW file when available. An advanced custom EPW upload can override it.',
     optionalHourlyWeatherFileLabel: 'Optional custom EPW weather file',
+    chooseFile: 'Choose File',
+    noFileChosen: 'No file chosen',
     weatherSource: 'Weather source',
     customUploadedWeatherFile: 'Custom uploaded weather file',
     builtInWeatherFile: 'Built-in weather file',
@@ -2029,6 +2166,44 @@ function calculateChartHumifogState(inletState, effectiveness = 0.72) {
   })
 }
 
+function calculateHumifogAtomizationProcess(inletState, roomState, language = 'fr') {
+  const enteringState = inletState
+  const targetRoomState = roomState
+  const enteringW = Math.max(0, enteringState.w)
+  const roomTargetW = Math.max(0, targetRoomState.w)
+  const preheatTargetH = enteringState.h < targetRoomState.h ? targetRoomState.h : enteringState.h
+  const preheatDb = dryBulbFromEnthalpyHumidityRatio(preheatTargetH, enteringW)
+  const preheatState = stateFromDbW({
+    dryBulbC: Number(preheatDb.toFixed(1)),
+    humidityRatio: enteringW,
+  })
+
+  const noHumidificationRequired = roomTargetW <= preheatState.w + 1e-9
+  const requestedAfterW = noHumidificationRequired
+    ? preheatState.w
+    : clampValue(roomTargetW, preheatState.w, roomTargetW)
+  const afterHumifogDb = dryBulbFromEnthalpyHumidityRatio(preheatState.h, requestedAfterW)
+  const afterHumifogState = stateFromDbW({
+    dryBulbC: Number(afterHumifogDb.toFixed(1)),
+    humidityRatio: requestedAfterW,
+  })
+
+  const warning = noHumidificationRequired
+    ? (language === 'fr'
+      ? 'Aucune humidification requise parce que l humidité de l air entrant est déjà égale ou supérieure à la cible pièce.'
+      : 'No humidification required because entering air humidity is already equal to or above the room target.')
+    : ''
+
+  return {
+    enteringState,
+    preheatState,
+    afterHumifogState,
+    noHumidificationRequired,
+    preheatApplied: enteringState.h < targetRoomState.h,
+    warning,
+  }
+}
+
 function solvePreHumifogHeatingState(inletState, targetAfterHumifogDb, effectiveness = 0.72) {
   const targetDb = Number(targetAfterHumifogDb)
   const inletDb = Number(inletState?.db)
@@ -2064,6 +2239,7 @@ function solvePreHumifogHeatingState(inletState, targetAfterHumifogDb, effective
 
 function HvacDashboardApp() {
   const reportRef = useRef(null)
+  const hourlyWeatherFileInputRef = useRef(null)
   const initialProjectSettings = getInitialProjectSettings()
   const [language, setLanguage] = useState(initialProjectSettings.language || 'fr')
   const [units, setUnits] = useState(initialProjectSettings.units || 'metric')
@@ -2514,6 +2690,7 @@ function HvacDashboardApp() {
   const [scheduleCustomDays, setScheduleCustomDays] = useState(() => parseObjectSetting(initialProjectSettings, 'scheduleCustomDays', DEFAULT_SCHEDULE_CUSTOM_DAYS))
   const [useMeasuredMixedAirTemperature, setUseMeasuredMixedAirTemperature] = useState(() => booleanSetting(initialProjectSettings, 'useMeasuredMixedAirTemperature', false))
   const [measuredMixedAirTemperature, setMeasuredMixedAirTemperature] = useState(() => finiteSetting(initialProjectSettings, 'measuredMixedAirTemperature', 18))
+
   const economizerTargetOptions = units === 'imperial'
     ? [55, 57, 61, 64, 68]
     : [13, 14, 16, 18, 20]
@@ -2685,7 +2862,7 @@ function HvacDashboardApp() {
         setHourlyWeatherFileLocation(weatherLocation || '')
         setHourlyWeatherRecords(records)
         setHourlyWeatherMetadata(customMetadata)
-        setHourlyWeatherValidationWarning(customMetadata.validationStatus === 'official' ? '' : WEATHER_UNVERIFIED_WARNING)
+        setHourlyWeatherValidationWarning(customMetadata.validationStatus === 'official' ? '' : getCustomWeatherWarning(language))
         setHourlyWeatherParseError('')
       } catch (error) {
         setHourlyWeatherSourceType('none')
@@ -2733,6 +2910,17 @@ function HvacDashboardApp() {
     selectedReheatEnergySource.includes('heat pump')
   const builtInHourlyWeatherFilePath = getBuiltInHourlyWeatherFilePath(selectedCity.nom)
   const builtInHourlyWeatherFileName = getBuiltInHourlyWeatherFileName(selectedCity.nom)
+  const customWeatherFile = hourlyWeatherSourceType === 'custom'
+  const loadedWeatherFileName = (hourlyWeatherFileName || builtInHourlyWeatherFileName || '').toLowerCase()
+  const parsedWeatherRecordsCount = Number(hourlyWeatherRecordsLoaded || hourlyWeatherMetadata?.recordCount || 0)
+  const isOfficialBuiltInHourlyFileLoaded =
+    !customWeatherFile &&
+    OFFICIAL_BUILT_IN_EPW_FILES.has(loadedWeatherFileName) &&
+    parsedWeatherRecordsCount === 8760
+  const validationDisplayLabel = language === 'fr' ? 'officiel' : 'official'
+  const effectiveWeatherValidationStatus = isOfficialBuiltInHourlyFileLoaded
+    ? 'official'
+    : (hourlyWeatherMetadata?.validationStatus || '')
   const reheatInputKw = (thermalKw) => Math.round(
     usesHeatPumpReheat
       ? thermalKw / Math.max(heatPumpCOP, 0.1)
@@ -2795,10 +2983,16 @@ function HvacDashboardApp() {
           throw new Error('Production mode requires an official CWEC / Government of Canada weather file (validationStatus = official).')
         }
 
+        const isOfficialBuiltIn = isOfficialBuiltInWeatherFileMatch(builtInHourlyWeatherFileName, records.length)
+        const resolvedMetadata = {
+          ...(metadata || {}),
+          validationStatus: isOfficialBuiltIn ? 'official' : (metadata?.validationStatus || ''),
+        }
+
         setHourlyWeatherFileName(builtInHourlyWeatherFileName)
         setHourlyWeatherFileLocation(weatherLocation || selectedCity.nom)
         setHourlyWeatherRecords(records)
-        setHourlyWeatherMetadata(metadata)
+        setHourlyWeatherMetadata(resolvedMetadata)
         setHourlyWeatherValidationWarning('')
         setHourlyWeatherParseError('')
       })
@@ -3064,12 +3258,46 @@ function HvacDashboardApp() {
   const effectiveBinData = selectedBinData.map(([tempC, hours]) => [tempC, Number((hours * binScheduleFactor).toFixed(3))])
   const totalBinHours = Math.round(effectiveBinData.reduce((total, item) => total + item[1], 0))
   const dominantBin = effectiveBinData.reduce((max, item) => (item[1] > max[1] ? item : max), effectiveBinData[0])
-  // Convert BIN temperature labels to the active unit system for display
+  // Convert BIN temperature labels to the active unit system for display.
   const displayedBinData = effectiveBinData.map(([tempC, hours], index) => ({
+    tempC,
     temperature: `${displayTemp(tempC)}${tempUnit}`,
+    temperatureBin: `${displayTemp(tempC)}${tempUnit}`,
     originalHours: Number(selectedBinData[index][1].toFixed(1)),
+    hoursUsed: Number(hours.toFixed(1)),
     heures: Number(hours.toFixed(1)),
   }))
+
+  const hourlyHistogramBinSizeC = 5
+  const hourlyWeatherHistogramData = calculationMethod === 'hourly'
+    ? (() => {
+      if (!hourlyWeatherRecords.length) return []
+
+      const buckets = new Map()
+      hourlyWeatherRecords.forEach((record) => {
+        if (!isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays)) {
+          return
+        }
+
+        const binStart = Math.floor(record.dryBulbC / hourlyHistogramBinSizeC) * hourlyHistogramBinSizeC
+        buckets.set(binStart, (buckets.get(binStart) || 0) + 1)
+      })
+
+      return [...buckets.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([binStart, hours]) => ({
+          tempC: binStart,
+          temperatureBin: language === 'fr'
+            ? `${displayTemp(binStart)}${tempUnit} à ${displayTemp(binStart + hourlyHistogramBinSizeC)}${tempUnit}`
+            : `${displayTemp(binStart)}${tempUnit} to ${displayTemp(binStart + hourlyHistogramBinSizeC)}${tempUnit}`,
+          hoursUsed: Number(hours),
+        }))
+    })()
+    : []
+
+  const weatherChartData = calculationMethod === 'bin' ? displayedBinData : hourlyWeatherHistogramData
+  const showOriginalBinHoursInChart = calculationMethod === 'bin' && scheduleMode === 'custom'
+  const isWeatherChartEmpty = weatherChartData.length === 0
   const selectedBinWeatherData = effectiveBinData.map(([tempC, hours]) => ({
     tempC,
     hours,
@@ -3177,39 +3405,29 @@ function HvacDashboardApp() {
     isNoRecovery,
   })
   const fallbackConditionedInletState = hasChartRecovery ? fallbackRecoveredState : fallbackRecoveryInletState
-  const chartHeatingBeforeHumifog = is100OA || !showFreeCoolingTables
-  const chartHumifogEffectiveness = ventilationMode.evaporativeEffectiveness ?? 0.72
-  const fallbackPreHumifogHeatingState = chartHeatingBeforeHumifog
-    ? solvePreHumifogHeatingState(fallbackConditionedInletState, roomTemperature, chartHumifogEffectiveness)
-    : null
-  const fallbackAfterHumifogState = calculateChartHumifogState(
-    chartHeatingBeforeHumifog ? fallbackPreHumifogHeatingState : fallbackConditionedInletState,
-    chartHumifogEffectiveness
-  )
-  const fallbackAfterHeatingState = chartHeatingBeforeHumifog
-    ? fallbackPreHumifogHeatingState
-    : stateFromDbW({
-      dryBulbC: Number(Math.max(fallbackAfterHumifogState.db, roomTemperature).toFixed(1)),
-      humidityRatio: fallbackAfterHumifogState.w,
-    })
+  const chartHeatingBeforeHumifog = true
+  const chartHumifogProcess = calculateHumifogAtomizationProcess(fallbackConditionedInletState, fallbackReturnState, language)
+  const fallbackPreHumifogHeatingState = chartHumifogProcess.preheatState
+  const fallbackAfterHumifogState = chartHumifogProcess.afterHumifogState
+  const fallbackAfterHeatingState = fallbackPreHumifogHeatingState
   const recoveryPointLabel = recoveryGroup === 'WHEEL' ? 'After thermal wheel' : 'After recovery'
-  const chartHeatingInletState = chartHeatingBeforeHumifog ? fallbackConditionedInletState : fallbackAfterHumifogState
+  const chartHeatingInletState = fallbackConditionedInletState
   const chartHeatingOutletState = fallbackAfterHeatingState
   const chartRecoveryThermalKw = hasChartRecovery
     ? sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, fallbackRecoveredState.db - fallbackRecoveryInletState.db))
     : 0
-  const chartHeatingThermalKw = sensibleHeatingKw(
-    effectiveOutsideAirCFM,
-    Math.max(0, chartHeatingOutletState.db - chartHeatingInletState.db)
-  )
+  const chartPreheatDeltaHBtuLb = Math.max(0, (chartHeatingOutletState.h - chartHeatingInletState.h) * 0.429923)
+  const chartPreheatBtuHr = 4.5 * effectiveOutsideAirCFM * chartPreheatDeltaHBtuLb
+  const chartHeatingThermalKw = chartPreheatBtuHr / 3412
   const chartHeatingHpKw = chartHeatingThermalKw / Math.max(heatPumpCOP, 0.1)
-  const chartHumifogInletState = chartHeatingBeforeHumifog ? fallbackAfterHeatingState : fallbackConditionedInletState
+  const chartHumifogInletState = fallbackAfterHeatingState
   const chartHumifogWaterLbHr = Math.max(
     0,
-    4.5 * effectiveOutsideAirCFM * (fallbackAfterHumifogState.w - chartHumifogInletState.w)
+    4.5 * effectiveOutsideAirCFM * (Math.min(fallbackAfterHumifogState.w, fallbackReturnState.w) - chartHumifogInletState.w)
   )
   const chartHumifogWaterKgH = chartHumifogWaterLbHr * 0.453592
   const chartHumifogPumpKw = Math.max(0, chartHumifogWaterLbHr * 0.0009)
+  const chartHumifogWarning = chartHumifogProcess.warning
   const fallbackPsychrometricPoints = [
     { key: 'oa', label: 'Outdoor air', state: fallbackOutdoorState },
     ...(!is100OA ? [
@@ -3217,19 +3435,11 @@ function HvacDashboardApp() {
       { key: 'mixed', label: 'Mixed air', state: fallbackMixedState },
     ] : []),
     ...(hasChartRecovery ? [{ key: 'recovered', label: recoveryPointLabel, state: fallbackRecoveredState }] : []),
-    ...(chartHeatingBeforeHumifog ? [
-      { key: 'heating', label: 'After heating', state: fallbackAfterHeatingState },
-      { key: 'humifog', label: 'After Humifog', state: fallbackAfterHumifogState },
-    ] : [
-      { key: 'humifog', label: 'After Humifog', state: fallbackAfterHumifogState },
-      { key: 'heating', label: 'After heating', state: fallbackAfterHeatingState },
-    ]),
-    { key: 'room', label: 'Room', state: fallbackReturnState },
+    { key: 'heating', label: 'After preheat Humifog', state: fallbackAfterHeatingState },
+    { key: 'humifog', label: 'After Humifog', state: fallbackAfterHumifogState },
+    { key: 'room', label: 'Room', state: fallbackReturnState, isReferenceOnly: true },
   ]
-  const freeCoolingPsychrometricPoints = freeCoolingHumifogAnalysis.psychrometricPoints || []
-  const basePsychrometricChartPoints = showFreeCoolingTables && freeCoolingPsychrometricPoints.length
-    ? freeCoolingPsychrometricPoints
-    : fallbackPsychrometricPoints
+  const basePsychrometricChartPoints = fallbackPsychrometricPoints
   const psychrometricChartPoints = basePsychrometricChartPoints.filter((point) => {
     if (is100OA && (point.key === 'mixed' || point.key === 'ra')) return false
     if (!hasChartRecovery && point.key === 'recovered') return false
@@ -3239,8 +3449,8 @@ function HvacDashboardApp() {
     'oa',
     ...(!is100OA ? ['mixed'] : []),
     ...(hasChartRecovery ? ['recovered'] : []),
-    ...(chartHeatingBeforeHumifog ? ['heating', 'humifog'] : ['humifog', 'heating']),
-    'room',
+    'heating',
+    'humifog',
   ]
   const outdoorDesignState = fallbackOutdoorState
   const activeOaPercent = is100OA
@@ -3397,13 +3607,41 @@ function HvacDashboardApp() {
       hourlyWeatherParseError,
       weatherDataSource: calculationMethod === 'hourly'
         ? (hourlyWeatherSourceType === 'custom'
-          ? 'Fichier météo téléchargé personnalisé'
-          : `Fichier météo intégré — ${selectedCity.nom}`)
-        : 'Méthode heures BIN active',
-      weatherSourceOrganization: calculationMethod === 'hourly' ? (hourlyWeatherMetadata?.sourceOrganization || '') : '',
-      weatherClimateFileType: calculationMethod === 'hourly' ? (hourlyWeatherMetadata?.climateFileType || '') : '',
-      weatherValidationStatus: calculationMethod === 'hourly' ? (hourlyWeatherMetadata?.validationStatus || '') : 'bin',
-      weatherValidationWarning: hourlyWeatherValidationWarning || '',
+          ? (language === 'fr' ? 'Fichier météo téléchargé personnalisé' : 'Custom uploaded weather file')
+          : `${t.builtInWeatherFile} — ${selectedCity.nom}`)
+        : (language === 'fr' ? 'Méthode heures BIN active' : 'BIN hours method active'),
+      weatherSourceOrganization: calculationMethod === 'hourly'
+        ? localizeWeatherMetadataValue('sourceOrganization', hourlyWeatherMetadata?.sourceOrganization || '', language)
+        : '',
+      weatherClimateFileType: calculationMethod === 'hourly'
+        ? localizeWeatherMetadataValue('climateFileType', hourlyWeatherMetadata?.climateFileType || '', language)
+        : '',
+      weatherValidationStatus: calculationMethod === 'hourly'
+        ? formatWeatherValidationStatus(effectiveWeatherValidationStatus, language)
+        : (language === 'fr' ? 'bin' : 'bin'),
+      weatherValidationWarning: '',
+      hourlyWeatherDataSummary: isHourlySimulationActive
+        ? {
+          selectedCity: selectedCity.nom,
+          weatherSource: localizeWeatherMetadataValue('dataSource', hourlyWeatherMetadata?.dataSource || '', language) || (hourlyWeatherSourceType === 'custom'
+            ? (language === 'fr' ? 'Fichier météo téléchargé personnalisé' : 'Custom uploaded weather file')
+            : ''),
+          sourceOrganization: localizeWeatherMetadataValue('sourceOrganization', hourlyWeatherMetadata?.sourceOrganization || '', language),
+          climateFileType: localizeWeatherMetadataValue('climateFileType', hourlyWeatherMetadata?.climateFileType || '', language),
+          loadedFile: hourlyWeatherFileName || builtInHourlyWeatherFileName,
+          validation: formatWeatherValidationStatus(effectiveWeatherValidationStatus, language),
+          recordsLoaded: hourlyWeatherSummary.recordsLoaded,
+          operatingHoursUsed: hourlyWeatherSummary.operatingHoursUsed,
+          averageOutdoorTemp: hourlyWeatherSummary.averageOutdoorTemp,
+          minOutdoorTemp: hourlyWeatherSummary.minOutdoorTemp,
+          maxOutdoorTemp: hourlyWeatherSummary.maxOutdoorTemp,
+          averageOutdoorRh: hourlyWeatherSummary.averageOutdoorRh,
+          hoursBelowZero: hourlyWeatherSummary.hoursBelowZero,
+          hoursBelowMinusTen: hourlyWeatherSummary.hoursBelowMinusTen,
+          hoursBelowMinusTwenty: hourlyWeatherSummary.hoursBelowMinusTwenty,
+          hoursWithHumidificationRequired: hourlyWeatherSummary.hoursWithHumidificationRequired,
+        }
+        : null,
       hourlyAnnualResults: isHourlySimulationActive
         ? {
           annualSteamKwh: hourlyWeatherSummary.annualSteamKwh,
@@ -3582,7 +3820,7 @@ function HvacDashboardApp() {
   const displayWaterLoad = (lbHr) => units === 'metric'
     ? `${formatNumber(lbHr * 0.453592, 1)} kg/h`
     : `${formatNumber(lbHr, 1)} lb/h`
-  const humidificationLoadDisplay = displayWaterLoad(correctedHumidificationLoad)
+  const humidificationLoadDisplay = displayWaterLoad(chartHumifogWaterLbHr)
   const formatChartTemperature = (state) => state ? `${displayTemp(state.db)}${tempUnit}` : calculationIncompleteText
   const formatChartHumidityRatio = (state) => {
     if (!state) return calculationIncompleteText
@@ -3820,7 +4058,7 @@ function HvacDashboardApp() {
     },
     {
       key: 'heating',
-      label: language === 'fr' ? 'Chauffage HP' : 'HP heating',
+      label: language === 'fr' ? 'Prechauffage HP' : 'HP preheat',
       value: `${formatNumber(chartHeatingHpKw, 1)} kW`,
     },
     {
@@ -3881,7 +4119,7 @@ function HvacDashboardApp() {
       'After thermal wheel': language === 'fr' ? 'Après roue thermique' : 'After thermal wheel',
       'After recovery': language === 'fr' ? 'Après récupération' : 'After recovery',
       'After Humifog': language === 'fr' ? 'Après Humifog' : 'After Humifog',
-      'After heating': language === 'fr' ? 'Après chauffage' : 'After heating',
+      'After preheat Humifog': language === 'fr' ? 'Après préchauffage Humifog' : 'After Humifog preheat',
       Room: language === 'fr' ? 'Pièce' : 'Room',
     }
 
@@ -4885,7 +5123,13 @@ function HvacDashboardApp() {
             gains={psychrometricGainItems}
             language={language}
             units={units}
+            referencePointKey="room"
           />
+          {chartHumifogWarning && (
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+              {chartHumifogWarning}
+            </div>
+          )}
 
           <div className="w-full bg-white rounded-3xl shadow-xl p-6 overflow-x-auto border border-slate-200">
             <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
@@ -5474,14 +5718,31 @@ function HvacDashboardApp() {
                   )}
                   {calculationMethod === 'hourly' && (
                     <div className="mt-4 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
-                      <div>{t.hourlyWeatherPlaceholder}</div>
+                      <div>
+                        {language === 'fr'
+                          ? `La simulation horaire charge automatiquement le fichier EPW intégré pour ${selectedCity.nom} lorsque disponible. Un fichier EPW personnalisé peut remplacer ce fichier en mode avancé.`
+                          : `Hourly simulation automatically loads the built-in EPW file for ${selectedCity.nom} when available. A custom EPW file can replace this file in advanced mode.`}
+                      </div>
                       <label className="mt-3 block text-sm font-semibold text-slate-800">{t.optionalHourlyWeatherFileLabel}</label>
                       <input
+                        ref={hourlyWeatherFileInputRef}
                         type="file"
                         accept=".epw,.csv"
                         onChange={(event) => handleHourlyWeatherFileChange(event.target.files?.[0])}
-                        className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 shadow-sm focus:border-cyan-500 focus:outline-none"
+                        className="hidden"
                       />
+                      <div className="mt-2 flex flex-wrap items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => hourlyWeatherFileInputRef.current?.click()}
+                          className="rounded-xl border border-slate-300 bg-white px-4 py-2 font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
+                        >
+                          {t.chooseFile}
+                        </button>
+                        <span className="text-sm text-slate-600">
+                          {hourlyWeatherFileName || t.noFileChosen}
+                        </span>
+                      </div>
                       <div className="mt-3 text-sm text-slate-700 font-semibold">
                         {t.weatherSource}: {hourlyWeatherSourceType === 'custom'
                           ? t.customUploadedWeatherFile
@@ -5494,11 +5755,11 @@ function HvacDashboardApp() {
                       )}
                       {hourlyWeatherMetadata && (
                         <div className="mt-2 rounded-2xl border border-slate-200 bg-white p-3 text-slate-700">
-                          <div className="text-sm"><strong>{language === 'fr' ? 'Source de données' : 'Data source'}:</strong> {hourlyWeatherMetadata.dataSource}</div>
-                          <div className="text-sm"><strong>{language === 'fr' ? 'Organisation' : 'Organization'}:</strong> {hourlyWeatherMetadata.sourceOrganization}</div>
+                          <div className="text-sm"><strong>{language === 'fr' ? 'Source de données' : 'Data source'}:</strong> {localizeWeatherMetadataValue('dataSource', hourlyWeatherMetadata.dataSource, language)}</div>
+                          <div className="text-sm"><strong>{language === 'fr' ? 'Organisation' : 'Organization'}:</strong> {localizeWeatherMetadataValue('sourceOrganization', hourlyWeatherMetadata.sourceOrganization, language)}</div>
                           <div className="text-sm"><strong>{language === 'fr' ? 'Station' : 'Station'}:</strong> {hourlyWeatherMetadata.stationName || '-'}</div>
-                          <div className="text-sm"><strong>{language === 'fr' ? 'Type de fichier' : 'Climate file type'}:</strong> {hourlyWeatherMetadata.climateFileType}</div>
-                          <div className="text-sm"><strong>{language === 'fr' ? 'Validation' : 'Validation'}:</strong> {hourlyWeatherMetadata.validationStatus}</div>
+                          <div className="text-sm"><strong>{language === 'fr' ? 'Type de fichier' : 'Climate file type'}:</strong> {localizeWeatherMetadataValue('climateFileType', hourlyWeatherMetadata.climateFileType, language)}</div>
+                          <div className="text-sm"><strong>{language === 'fr' ? 'Validation' : 'Validation'}:</strong> {(isOfficialBuiltInHourlyFileLoaded || effectiveWeatherValidationStatus === 'official') ? validationDisplayLabel : formatWeatherValidationStatus(effectiveWeatherValidationStatus, language)}</div>
                         </div>
                       )}
                       {hourlyWeatherLoading && (
@@ -5507,33 +5768,67 @@ function HvacDashboardApp() {
                         </div>
                       )}
                       {hourlyWeatherSummary && (
-                        <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3 text-slate-800">
-                          <div className="font-semibold mb-2">{language === 'fr' ? 'Résultats de simulation horaire' : 'Hourly simulation results'}</div>
-                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                            <div>{language === 'fr' ? 'Enregistrements chargés' : 'Hourly records loaded'}: <strong>{formatNumber(hourlyWeatherSummary.recordsLoaded, 0)}</strong></div>
-                            <div>{language === 'fr' ? 'Heures d exploitation utilisées' : 'Operating hours used'}: <strong>{formatNumber(hourlyWeatherSummary.operatingHoursUsed, 0)}</strong></div>
-                            <div>{language === 'fr' ? 'Température extérieure moyenne' : 'Average outdoor temperature'}: <strong>{formatNumber(hourlyWeatherSummary.averageOutdoorTemp, 1)} °C</strong></div>
-                            <div>{language === 'fr' ? 'Température extérieure minimale' : 'Minimum outdoor temperature'}: <strong>{formatNumber(hourlyWeatherSummary.minOutdoorTemp, 1)} °C</strong></div>
-                            <div>{language === 'fr' ? 'Température extérieure maximale' : 'Maximum outdoor temperature'}: <strong>{formatNumber(hourlyWeatherSummary.maxOutdoorTemp, 1)} °C</strong></div>
-                            <div>{language === 'fr' ? 'Humidité relative extérieure moyenne' : 'Average outdoor RH'}: <strong>{formatNumber(hourlyWeatherSummary.averageOutdoorRh, 1)}%</strong></div>
-                            <div>{language === 'fr' ? 'Énergie annuelle vapeur' : 'Annual steam kWh'}: <strong>{formatNumber(hourlyWeatherSummary.annualSteamKwh, 0)} kWh</strong></div>
-                            <div>{language === 'fr' ? 'Énergie annuelle gaz' : 'Annual gas kWh'}: <strong>{formatNumber(hourlyWeatherSummary.annualGasKwh, 0)} kWh</strong></div>
-                            <div>{language === 'fr' ? 'Énergie annuelle Humifog' : 'Annual Humifog kWh'}: <strong>{formatNumber(hourlyWeatherSummary.annualHumifogKwh, 0)} kWh</strong></div>
-                            <div>{language === 'fr' ? 'Coût annuel' : 'Annual cost'}: <strong>{formatNumber(hourlyWeatherSummary.annualCost, 0)} $</strong></div>
-                            <div>{language === 'fr' ? 'Économies annuelles' : 'Annual savings'}: <strong>{formatNumber(hourlyWeatherSummary.annualSavings, 0)} $</strong></div>
-                            <div>{language === 'fr' ? 'Réduction annuelle de GES' : 'Annual GHG reduction'}: <strong>{formatNumber(hourlyWeatherSummary.annualGhgReduction, 3)} tCO2e</strong></div>
-                            <div>{language === 'fr' ? 'Consommation annuelle d eau' : 'Annual water consumption'}: <strong>{formatNumber(hourlyWeatherSummary.annualWaterConsumptionKg, 0)} kg</strong></div>
+                        <>
+                          <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3 text-slate-800">
+                            <div className="font-semibold mb-2">{language === 'fr' ? 'Données météorologiques utilisées' : 'Weather data used'}</div>
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-sm">
+                                <tbody>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Ville sélectionnée' : 'Selected city'}</td><td className="py-1">{selectedCity.nom}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Source météo' : 'Weather source'}</td><td className="py-1">{localizeWeatherMetadataValue('dataSource', hourlyWeatherMetadata?.dataSource || '', language) || '-'}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Organisation' : 'Organization'}</td><td className="py-1">{localizeWeatherMetadataValue('sourceOrganization', hourlyWeatherMetadata?.sourceOrganization || '', language) || '-'}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Type de fichier' : 'File type'}</td><td className="py-1">{localizeWeatherMetadataValue('climateFileType', hourlyWeatherMetadata?.climateFileType || '', language) || '-'}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Fichier chargé' : 'Loaded file'}</td><td className="py-1">{hourlyWeatherFileName || builtInHourlyWeatherFileName || '-'}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Validation' : 'Validation'}</td><td className="py-1">{(isOfficialBuiltInHourlyFileLoaded || effectiveWeatherValidationStatus === 'official') ? validationDisplayLabel : formatWeatherValidationStatus(effectiveWeatherValidationStatus, language)}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Nombre d’enregistrements horaires' : 'Number of hourly records'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.recordsLoaded, 0)}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Heures d’exploitation utilisées' : 'Operating hours used'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.operatingHoursUsed, 0)}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Température extérieure moyenne pendant les heures d’exploitation' : 'Average outdoor temperature during operating hours'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.averageOutdoorTemp, 1)} °C</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Température extérieure minimale pendant les heures d’exploitation' : 'Minimum outdoor temperature during operating hours'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.minOutdoorTemp, 1)} °C</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Température extérieure maximale pendant les heures d’exploitation' : 'Maximum outdoor temperature during operating hours'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.maxOutdoorTemp, 1)} °C</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Humidité relative extérieure moyenne pendant les heures d’exploitation' : 'Average outdoor relative humidity during operating hours'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.averageOutdoorRh, 1)}%</td></tr>
+                                </tbody>
+                              </table>
+                            </div>
                           </div>
-                        </div>
+
+                          <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3 text-slate-800">
+                            <div className="font-semibold mb-2">{language === 'fr' ? 'Résumé météo pendant les heures d’exploitation' : 'Weather summary during operating hours'}</div>
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-sm">
+                                <tbody>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Heures d’exploitation utilisées' : 'Operating hours used'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.operatingHoursUsed, 0)}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Heures sous 0°C' : 'Hours below 0°C'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.hoursBelowZero, 0)}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Heures sous -10°C' : 'Hours below -10°C'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.hoursBelowMinusTen, 0)}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Heures sous -20°C' : 'Hours below -20°C'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.hoursBelowMinusTwenty, 0)}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Heures avec humidification requise' : 'Hours requiring humidification'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.hoursWithHumidificationRequired, 0)}</td></tr>
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3 text-slate-800">
+                            <div className="font-semibold mb-2">{language === 'fr' ? 'Résultats de simulation horaire' : 'Hourly simulation results'}</div>
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                              <div>{language === 'fr' ? 'Enregistrements chargés' : 'Hourly records loaded'}: <strong>{formatNumber(hourlyWeatherSummary.recordsLoaded, 0)}</strong></div>
+                              <div>{language === 'fr' ? 'Heures d exploitation utilisées' : 'Operating hours used'}: <strong>{formatNumber(hourlyWeatherSummary.operatingHoursUsed, 0)}</strong></div>
+                              <div>{language === 'fr' ? 'Température extérieure moyenne' : 'Average outdoor temperature'}: <strong>{formatNumber(hourlyWeatherSummary.averageOutdoorTemp, 1)} °C</strong></div>
+                              <div>{language === 'fr' ? 'Température extérieure minimale' : 'Minimum outdoor temperature'}: <strong>{formatNumber(hourlyWeatherSummary.minOutdoorTemp, 1)} °C</strong></div>
+                              <div>{language === 'fr' ? 'Température extérieure maximale' : 'Maximum outdoor temperature'}: <strong>{formatNumber(hourlyWeatherSummary.maxOutdoorTemp, 1)} °C</strong></div>
+                              <div>{language === 'fr' ? 'Humidité relative extérieure moyenne' : 'Average outdoor RH'}: <strong>{formatNumber(hourlyWeatherSummary.averageOutdoorRh, 1)}%</strong></div>
+                              <div>{language === 'fr' ? 'Énergie annuelle vapeur' : 'Annual steam kWh'}: <strong>{formatNumber(hourlyWeatherSummary.annualSteamKwh, 0)} kWh</strong></div>
+                              <div>{language === 'fr' ? 'Énergie annuelle gaz' : 'Annual gas kWh'}: <strong>{formatNumber(hourlyWeatherSummary.annualGasKwh, 0)} kWh</strong></div>
+                              <div>{language === 'fr' ? 'Énergie annuelle Humifog' : 'Annual Humifog kWh'}: <strong>{formatNumber(hourlyWeatherSummary.annualHumifogKwh, 0)} kWh</strong></div>
+                              <div>{language === 'fr' ? 'Coût annuel' : 'Annual cost'}: <strong>{formatNumber(hourlyWeatherSummary.annualCost, 0)} $</strong></div>
+                              <div>{language === 'fr' ? 'Économies annuelles' : 'Annual savings'}: <strong>{formatNumber(hourlyWeatherSummary.annualSavings, 0)} $</strong></div>
+                              <div>{language === 'fr' ? 'Réduction annuelle de GES' : 'Annual GHG reduction'}: <strong>{formatNumber(hourlyWeatherSummary.annualGhgReduction, 3)} tCO2e</strong></div>
+                              <div>{language === 'fr' ? 'Consommation annuelle d eau' : 'Annual water consumption'}: <strong>{formatNumber(hourlyWeatherSummary.annualWaterConsumptionKg, 0)} kg</strong></div>
+                            </div>
+                          </div>
+                        </>
                       )}
                       {hourlyWeatherParseError && (
                         <div className="mt-2 rounded-2xl border border-amber-200 bg-amber-100 p-3 text-amber-900">
                           {hourlyWeatherParseError}
-                        </div>
-                      )}
-                      {hourlyWeatherValidationWarning && (
-                        <div className="mt-2 rounded-2xl border border-orange-200 bg-orange-50 p-3 text-orange-900">
-                          {hourlyWeatherValidationWarning}
                         </div>
                       )}
                     </div>
@@ -5636,14 +5931,150 @@ function HvacDashboardApp() {
               {t.scheduleNote}
             </div>
 
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={displayedBinData}>
-                <XAxis dataKey="temperature" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="heures" fill="#4f46e5" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-lg font-bold text-slate-800">
+                {calculationMethod === 'hourly'
+                  ? (language === 'fr' ? 'Répartition des heures météo utilisées' : 'Distribution of weather hours used')
+                  : (language === 'fr' ? 'Répartition des heures météo' : 'Weather Hours Distribution')}
+              </h3>
+              <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
+                <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-indigo-700">
+                  {language === 'fr' ? `Ville : ${selectedCity.nom}` : `City: ${selectedCity.nom}`}
+                </span>
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-slate-700">
+                  {language === 'fr'
+                    ? `Méthode : ${calculationMethod === 'bin' ? t.binHoursMethod : t.hourlyWeatherMethod}`
+                    : `Method: ${calculationMethod === 'bin' ? t.binHoursMethod : t.hourlyWeatherMethod}`}
+                </span>
+              </div>
+            </div>
+
+            {isWeatherChartEmpty ? (
+              <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+                {language === 'fr'
+                  ? 'Aucune donnée météo disponible pour ce graphique.'
+                  : 'No weather data available for this chart.'}
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={weatherChartData}>
+                  <XAxis
+                    dataKey="temperatureBin"
+                    label={{
+                      value: language === 'fr' ? 'Température extérieure' : 'Outdoor temperature',
+                      position: 'insideBottom',
+                      offset: -6,
+                    }}
+                  />
+                  <YAxis
+                    label={{
+                      value: language === 'fr' ? 'Nombre d’heures' : 'Number of hours',
+                      angle: -90,
+                      position: 'insideLeft',
+                    }}
+                  />
+                  <Tooltip
+                    labelFormatter={(value) => (
+                      language === 'fr'
+                        ? `Température extérieure: ${value}`
+                        : `Outdoor temperature: ${value}`
+                    )}
+                    formatter={(value, name) => {
+                      const hoursLabel = `${formatNumber(Number(value), 0)} h`
+
+                      if (calculationMethod === 'bin') {
+                        if (name === 'originalHours') {
+                          return [hoursLabel, language === 'fr' ? 'Heures BIN originales' : 'Original BIN hours']
+                        }
+
+                        return [hoursLabel, language === 'fr' ? 'Heures BIN ajustées' : 'Adjusted BIN hours']
+                      }
+
+                      return [
+                        hoursLabel,
+                        language === 'fr' ? 'Température extérieure / Nombre d’heures' : 'Outdoor temperature / Number of hours',
+                      ]
+                    }}
+                  />
+                  {showOriginalBinHoursInChart && (
+                    <Bar dataKey="originalHours" fill="#94a3b8" radius={[8, 8, 0, 0]} name={language === 'fr' ? 'Heures BIN originales' : 'Original BIN hours'} />
+                  )}
+                  <Bar dataKey="hoursUsed" fill="#4f46e5" radius={[8, 8, 0, 0]} name={language === 'fr' ? 'Heures BIN ajustées' : 'Adjusted BIN hours'} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              <div className="mb-2 text-sm font-bold text-slate-900">
+                {language === 'fr' ? 'Référence des données utilisées' : 'Data Reference Used'}
+              </div>
+
+              {calculationMethod === 'bin' ? (
+                <div className="space-y-1">
+                  <div>
+                    <strong>{language === 'fr' ? 'Source des données' : 'Data source'}:</strong>{' '}
+                    {language === 'fr' ? 'Méthode heures BIN intégrée à HESES' : 'HESES integrated BIN-hours method'}
+                  </div>
+                  <div>
+                    <strong>{language === 'fr' ? 'Ville climatique' : 'Climate city'}:</strong> {selectedCity.nom}
+                  </div>
+                  <div>
+                    <strong>{language === 'fr' ? 'Méthode' : 'Method'}:</strong>{' '}
+                    {language === 'fr'
+                      ? 'Répartition annuelle des températures extérieures par plages BIN'
+                      : 'Annual outdoor temperature distribution by BIN ranges'}
+                  </div>
+                  <div>
+                    <strong>{language === 'fr' ? 'Nombre total d’heures' : 'Total hours'}:</strong>{' '}
+                    {language === 'fr' ? '8 760 h/an' : '8,760 h/year'}
+                  </div>
+                  <div>
+                    <strong>{language === 'fr' ? 'Horaire appliqué' : 'Applied schedule'}:</strong>{' '}
+                    {scheduleDescriptionText}
+                  </div>
+                  <div>
+                    <strong>{language === 'fr' ? 'Heures utilisées après horaire' : 'Hours used after schedule'}:</strong>{' '}
+                    {formatNumber(Math.round(8760 * (scheduleMode === '24-7' ? 1 : baseScheduleFactor)), 0)} {language === 'fr' ? 'h/an' : 'h/year'}
+                  </div>
+                  <div className="mt-2 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-indigo-900">
+                    {language === 'fr'
+                      ? 'Les heures BIN sont utilisées pour une analyse énergétique préliminaire. Pour une simulation horaire détaillée, utiliser le mode Simulation météo horaire 8760.'
+                      : 'BIN hours are used for a preliminary energy analysis. For detailed hourly simulation, use Hourly Weather Simulation 8760 mode.'}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <div>
+                    <strong>{language === 'fr' ? 'Source des données' : 'Data source'}:</strong>{' '}
+                    {language === 'fr' ? 'Gouvernement du Canada CWEC_FMCCE' : 'Government of Canada CWEC_FMCCE'}
+                  </div>
+                  <div>
+                    <strong>{language === 'fr' ? 'Organisation' : 'Organization'}:</strong>{' '}
+                    {language === 'fr' ? 'Environnement et Changement climatique Canada' : 'Environment and Climate Change Canada'}
+                  </div>
+                  <div>
+                    <strong>{language === 'fr' ? 'Fichier météo' : 'Weather file'}:</strong>{' '}
+                    {hourlyWeatherFileName || builtInHourlyWeatherFileName || '-'}
+                  </div>
+                  <div>
+                    <strong>{language === 'fr' ? 'Type' : 'Type'}:</strong>{' '}
+                    {language === 'fr' ? 'fichier météo horaire EPW 8760' : 'hourly EPW weather file 8760'}
+                  </div>
+                  <div>
+                    <strong>{language === 'fr' ? 'Validation' : 'Validation'}:</strong>{' '}
+                    {language === 'fr' ? 'officiel' : 'official'}
+                  </div>
+                  <div>
+                    <strong>{language === 'fr' ? 'Nombre d’enregistrements horaires' : 'Number of hourly records'}:</strong>{' '}
+                    {formatNumber(hourlyWeatherSummary?.recordsLoaded || 8760, 0)}
+                  </div>
+                  <div>
+                    <strong>{language === 'fr' ? 'Heures d’exploitation utilisées' : 'Operating hours used'}:</strong>{' '}
+                    {formatNumber(hourlyWeatherSummary?.operatingHoursUsed || 0, 0)} {language === 'fr' ? 'h/an' : 'h/year'}
+                  </div>
+                </div>
+              )}
+            </div>
 
             <div className="overflow-x-auto mt-6">
               <table className="w-full border-collapse overflow-hidden rounded-2xl">

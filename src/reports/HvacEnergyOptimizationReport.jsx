@@ -533,7 +533,12 @@ const PROFESSIONAL_REPORT_CSS = `
   }
 `
 
+let activeReportLanguage = 'en'
+
 export default function HvacEnergyOptimizationReport({ data }) {
+  const normalizedLanguage = String(data.language || 'en').toLowerCase()
+  const isFrench = normalizedLanguage.startsWith('fr')
+  activeReportLanguage = isFrench ? 'fr' : 'en'
   const annual = data.annualComparison || {}
   const freeCooling = annual.freeCooling || {}
   const humifog = annual.humifog || {}
@@ -558,6 +563,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
   const recovered = pointMap.get('recovered')
   const afterHumifog = pointMap.get('humifog')
   const afterHeating = pointMap.get('heating')
+  const tr = (fr, en) => (isFrench ? fr : en)
   const is100OA = Boolean(mode.is100OA)
   const includesFreeCoolingAnalysis = Boolean(mode.includesFreeCoolingAnalysis && !is100OA)
   const selectedOaPercent = system.selectedOaPercent ?? system.oaMinimumPercent ?? system.oaPercent
@@ -645,30 +651,55 @@ export default function HvacEnergyOptimizationReport({ data }) {
     ? `${selectedReheatName} - COP ${formatNumber(heatPumpCop, 1)}`
     : selectedReheatName
   const reheatApplies = humifogReheatKwh > 0.5 || humifogReheatThermalKwh > 0.5 || humifogReheatAppliedKwh > 0.5
+  const hourlyWeatherDataSummary = mode.hourlyWeatherDataSummary || null
+  const hourlyWeatherSummaryRows = hourlyWeatherDataSummary
+    ? [
+      [tr('Ville sélectionnée', 'Selected city'), hourlyWeatherDataSummary.selectedCity || '-'],
+      [tr('Source météo', 'Weather source'), hourlyWeatherDataSummary.weatherSource || '-'],
+      [tr('Organisation', 'Organization'), hourlyWeatherDataSummary.sourceOrganization || '-'],
+      [tr('Type de fichier', 'File type'), hourlyWeatherDataSummary.climateFileType || '-'],
+      [tr('Fichier chargé', 'Loaded file'), hourlyWeatherDataSummary.loadedFile || '-'],
+      [tr('Validation', 'Validation'), hourlyWeatherDataSummary.validation || '-'],
+      [tr('Enregistrements horaires', 'Hourly records'), `${formatNumber(hourlyWeatherDataSummary.recordsLoaded || 0, 0)}`],
+      [tr('Heures d’exploitation utilisées', 'Operating hours used'), `${formatNumber(hourlyWeatherDataSummary.operatingHoursUsed || 0, 0)}`],
+      [tr('Température extérieure moyenne', 'Average outdoor temperature'), `${formatNumber(hourlyWeatherDataSummary.averageOutdoorTemp || 0, 1)} °C`],
+      [tr('Température extérieure minimale', 'Minimum outdoor temperature'), `${formatNumber(hourlyWeatherDataSummary.minOutdoorTemp || 0, 1)} °C`],
+      [tr('Température extérieure maximale', 'Maximum outdoor temperature'), `${formatNumber(hourlyWeatherDataSummary.maxOutdoorTemp || 0, 1)} °C`],
+      [tr('Humidité relative extérieure moyenne', 'Average outdoor RH'), `${formatNumber(hourlyWeatherDataSummary.averageOutdoorRh || 0, 1)}%`],
+    ]
+    : []
+  const hourlyWeatherCompactRows = hourlyWeatherDataSummary
+    ? [
+      [tr('Heures d’exploitation utilisées', 'Operating hours used'), `${formatNumber(hourlyWeatherDataSummary.operatingHoursUsed || 0, 0)}`],
+      [tr('Heures sous 0°C', 'Hours below 0°C'), `${formatNumber(hourlyWeatherDataSummary.hoursBelowZero || 0, 0)}`],
+      [tr('Heures sous -10°C', 'Hours below -10°C'), `${formatNumber(hourlyWeatherDataSummary.hoursBelowMinusTen || 0, 0)}`],
+      [tr('Heures sous -20°C', 'Hours below -20°C'), `${formatNumber(hourlyWeatherDataSummary.hoursBelowMinusTwenty || 0, 0)}`],
+      [tr('Heures avec humidification requise', 'Hours requiring humidification'), `${formatNumber(hourlyWeatherDataSummary.hoursWithHumidificationRequired || 0, 0)}`],
+    ]
+    : []
   const reportInputValidationRows = [
-    ['Project location', project.location || '-'],
-    ['Report mode', includesFreeCoolingAnalysis ? 'Free Cooling' : '100% Outdoor Air'],
-    ['Ventilation mode selected', mode.ventilationModeName || '-'],
-    ['Calculation method selected', mode.selectedCalculationMethod || '-'],
-    ['Weather data source', mode.weatherDataSource || 'Government of Canada — CWEC_FMCCE / EPW hourly weather file'],
-    ['Weather source organization', mode.weatherSourceOrganization || 'Environment and Climate Change Canada'],
-    ['Weather climate file type', mode.weatherClimateFileType || '-'],
-    ['Weather file validation status', mode.weatherValidationStatus || '-'],
-    ['Weather validation warning', mode.weatherValidationWarning || '-'],
-    ['Hourly weather file', mode.hourlyWeatherFileName || '-'],
-    ['Hourly weather location', mode.hourlyWeatherFileLocation || '-'],
-    ['Hourly weather records loaded', `${mode.hourlyWeatherRecordsLoaded || 0}`],
-    ['Hourly operating hours used', `${mode.hourlyWeatherOperatingHoursUsed || 0}`],
-    ['Hourly weather file status', mode.hourlyWeatherParseError ? `Error: ${mode.hourlyWeatherParseError}` : 'OK'],
+    [tr('Emplacement du projet', 'Project location'), project.location || '-'],
+    [tr('Mode du rapport', 'Report mode'), includesFreeCoolingAnalysis ? tr('Free Cooling', 'Free Cooling') : tr('100% air extérieur', '100% Outdoor Air')],
+    [tr('Mode de ventilation sélectionné', 'Ventilation mode selected'), mode.ventilationModeName || '-'],
+    [tr('Méthode de calcul', 'Calculation method selected'), mode.selectedCalculationMethod || '-'],
+    [tr('Source météo', 'Weather data source'), mode.weatherDataSource || tr('Gouvernement du Canada — CWEC_FMCCE / fichier météo horaire EPW', 'Government of Canada — CWEC_FMCCE / EPW hourly weather file')],
+    [tr('Organisation', 'Weather source organization'), mode.weatherSourceOrganization || tr('Environnement et Changement climatique Canada', 'Environment and Climate Change Canada')],
+    [tr('Type de fichier', 'Weather climate file type'), mode.weatherClimateFileType || '-'],
+    [tr('Validation', 'Weather file validation status'), mode.weatherValidationStatus || '-'],
+    [tr('Fichier chargé', 'Hourly weather file'), mode.hourlyWeatherFileName || '-'],
+    [tr('Localisation du fichier météo', 'Hourly weather location'), mode.hourlyWeatherFileLocation || '-'],
+    [tr('Enregistrements horaires', 'Hourly weather records loaded'), `${mode.hourlyWeatherRecordsLoaded || 0}`],
+    [tr('Heures d’exploitation utilisées', 'Hourly operating hours used'), `${mode.hourlyWeatherOperatingHoursUsed || 0}`],
+    [tr('Statut du fichier météo horaire', 'Hourly weather file status'), mode.hourlyWeatherParseError ? `${tr('Erreur', 'Error')}: ${mode.hourlyWeatherParseError}` : 'OK'],
     ...(mode.selectedCalculationMethod?.toLowerCase().includes('hourly') && mode.hourlyAnnualResults
       ? [
-        ['Hourly annual steam energy', `${formatNumber(mode.hourlyAnnualResults.annualSteamKwh || 0, 0)} kWh/year`],
-        ['Hourly annual gas energy', `${formatNumber(mode.hourlyAnnualResults.annualGasKwh || 0, 0)} kWh/year`],
-        ['Hourly annual Humifog energy', `${formatNumber(mode.hourlyAnnualResults.annualHumifogKwh || 0, 0)} kWh/year`],
-        ['Hourly annual operating cost', `${formatNumber(mode.hourlyAnnualResults.annualCost || 0, 0)} $/year`],
-        ['Hourly annual savings', `${formatNumber(mode.hourlyAnnualResults.annualSavings || 0, 0)} $/year`],
-        ['Hourly annual GHG reduction', `${formatNumber(mode.hourlyAnnualResults.annualGhgReduction || 0, 3)} tCO2e/year`],
-        ['Hourly annual water consumption', `${formatNumber(mode.hourlyAnnualResults.annualWaterConsumptionKg || 0, 0)} kg/year`],
+        [tr('Énergie annuelle vapeur', 'Annual steam kWh'), `${formatNumber(mode.hourlyAnnualResults.annualSteamKwh || 0, 0)} kWh/year`],
+        [tr('Énergie annuelle gaz', 'Annual gas kWh'), `${formatNumber(mode.hourlyAnnualResults.annualGasKwh || 0, 0)} kWh/year`],
+        [tr('Énergie annuelle Humifog', 'Annual Humifog kWh'), `${formatNumber(mode.hourlyAnnualResults.annualHumifogKwh || 0, 0)} kWh/year`],
+        [tr('Coût annuel', 'Annual cost'), `${formatNumber(mode.hourlyAnnualResults.annualCost || 0, 0)} $/year`],
+        [tr('Économies annuelles', 'Annual savings'), `${formatNumber(mode.hourlyAnnualResults.annualSavings || 0, 0)} $/year`],
+        [tr('Réduction annuelle de GES', 'Annual GHG reduction'), `${formatNumber(mode.hourlyAnnualResults.annualGhgReduction || 0, 3)} tCO2e/year`],
+        [tr('Consommation annuelle d’eau', 'Annual water consumption'), `${formatNumber(mode.hourlyAnnualResults.annualWaterConsumptionKg || 0, 0)} kg/year`],
       ]
       : []),
     ['Airflow entered in software', formatFlow(system.supplyAirflowCfm, data.units)],
@@ -704,11 +735,18 @@ export default function HvacEnergyOptimizationReport({ data }) {
     null
   )
   const projectScope = includesFreeCoolingAnalysis
-    ? 'Free Cooling + Humifog optimization report for a mixed air AHU.'
-    : '100% outdoor air system report. Free Cooling / OA optimization sections are not included for this configuration.'
-  const selectedTechnology = includesFreeCoolingAnalysis
-    ? 'Humifog adiabatic humidification with optimized outdoor air control'
-    : 'Humifog adiabatic humidification on the selected AHU configuration'
+    ? tr('Rapport d’optimisation Free Cooling + Humifog pour une UTA à air mélangé.', 'Free Cooling + Humifog optimization report for a mixed air AHU.')
+    : tr('Rapport système 100 % air extérieur. Les sections Free Cooling / optimisation OA-RA ne sont pas incluses pour cette configuration.', '100% outdoor air system report. Free Cooling / OA / RA optimization sections are not included for this configuration.')
+  const recommendationText = includesFreeCoolingAnalysis
+    ? {
+      fr: 'Humidification adiabatique Humifog avec contrôle optimisé de l’air extérieur',
+      en: 'Humifog adiabatic humidification with optimized outdoor air control',
+    }
+    : {
+      fr: 'Humidification adiabatique Humifog selon la configuration UTA sélectionnée',
+      en: 'Humifog adiabatic humidification on the selected AHU configuration',
+    }
+  const selectedTechnology = cleanFrenchPdfText(isFrench ? recommendationText.fr : recommendationText.en, isFrench)
   const electricityRate = economics.electricityRate || 0
   const naturalGasRate = economics.naturalGasRate || 0
   const steamBoilerEfficiency = economics.steamBoilerEfficiency || 82
@@ -721,29 +759,35 @@ export default function HvacEnergyOptimizationReport({ data }) {
     freeCoolingSteamHumidificationKwh / Math.max(atmosphericGasHumidifierEfficiency / 100, 0.01)
   const freeCoolingTechnologyOptions = [
     {
-      label: 'Electric Steam',
-      basis: 'Steam + economizer',
+      label: tr('Vapeur électrique', 'Electric Steam'),
+      basis: tr('Vapeur + économiseur', 'Steam + economizer'),
       annualEnergyKwh: freeCooling.totalEnergyKwh || 0,
       annualCost: freeCooling.annualCost || 0,
     },
     {
-      label: 'Natural Gas Steam',
-      basis: `${formatNumber(steamBoilerEfficiency, 0)}% boiler efficiency`,
+      label: tr('Vapeur gaz naturel', 'Natural Gas Steam'),
+      basis: tr(
+        `${formatNumber(steamBoilerEfficiency, 0)}% rendement de la chaudière vapeur`,
+        `${formatNumber(steamBoilerEfficiency, 0)}% boiler efficiency`
+      ),
       annualEnergyKwh: freeCoolingCommonElectricKwh + freeCoolingNaturalGasHumidificationKwh,
       annualCost:
         freeCoolingCommonElectricKwh * electricityRate +
         (freeCoolingNaturalGasHumidificationKwh / 10.35) * naturalGasRate,
     },
     {
-      label: 'Atmospheric Gas',
-      basis: `${formatNumber(atmosphericGasHumidifierEfficiency, 0)}% gas humidifier efficiency`,
+      label: tr('Humidificateur gaz atmosphérique', 'Atmospheric Gas'),
+      basis: tr(
+        `${formatNumber(atmosphericGasHumidifierEfficiency, 0)}% rendement de l’humidificateur gaz atmosphérique`,
+        `${formatNumber(atmosphericGasHumidifierEfficiency, 0)}% gas humidifier efficiency`
+      ),
       annualEnergyKwh: freeCoolingCommonElectricKwh + freeCoolingAtmosphericGasHumidificationKwh,
       annualCost:
         freeCoolingCommonElectricKwh * electricityRate +
         (freeCoolingAtmosphericGasHumidificationKwh / 10.35) * naturalGasRate,
     },
     {
-      label: 'Humifog + Free Cooling',
+      label: tr('Humifog + Free Cooling', 'Humifog + Free Cooling'),
       basis: `Pump + ${selectedReheatBasis}`,
       annualEnergyKwh: humifog.totalEnergyKwh || 0,
       annualCost: humifog.annualCost || 0,
@@ -753,6 +797,26 @@ export default function HvacEnergyOptimizationReport({ data }) {
     (best, option) => option.annualCost < best.annualCost ? option : best,
     freeCoolingTechnologyOptions[0]
   )
+  const executiveRecommendationOptions = includesFreeCoolingAnalysis
+    ? [
+      { label: tr('Vapeur électrique', 'Electric Steam'), annualCost: freeCoolingTechnologyOptions[0]?.annualCost },
+      { label: tr('Vapeur gaz naturel', 'Natural Gas Steam'), annualCost: freeCoolingTechnologyOptions[1]?.annualCost },
+      { label: tr('Humidificateur gaz atmosphérique', 'Atmospheric Gas Humidifier'), annualCost: freeCoolingTechnologyOptions[2]?.annualCost },
+      { label: tr('Humidification adiabatique Humifog', 'Humifog adiabatic humidification'), annualCost: freeCoolingTechnologyOptions[3]?.annualCost },
+    ]
+    : [
+      { label: tr('Vapeur électrique', 'Electric Steam'), annualCost: energySummary.steam?.annualCost },
+      { label: tr('Vapeur gaz naturel', 'Natural Gas Steam'), annualCost: energySummary.naturalGasSteam?.annualCost },
+      { label: tr('Humidificateur gaz atmosphérique', 'Atmospheric Gas Humidifier'), annualCost: energySummary.atmosphericGasHumidifier?.annualCost },
+      { label: tr('Humidification adiabatique Humifog', 'Humifog adiabatic humidification'), annualCost: energySummary.humifog?.annualCost },
+    ]
+  const executiveRecommendation = executiveRecommendationOptions.reduce((best, option) => {
+    const optionCost = Number(option.annualCost)
+    const bestCost = Number(best.annualCost)
+    const safeOptionCost = Number.isFinite(optionCost) ? optionCost : Number.POSITIVE_INFINITY
+    const safeBestCost = Number.isFinite(bestCost) ? bestCost : Number.POSITIVE_INFINITY
+    return safeOptionCost < safeBestCost ? option : best
+  }, executiveRecommendationOptions[0] || { label: selectedTechnology, annualCost: Number.POSITIVE_INFINITY })
 
   return (
     <article className="engineering-report">
@@ -833,55 +897,63 @@ export default function HvacEnergyOptimizationReport({ data }) {
         </div>
       </header>
 
-      <ReportSection title="EXECUTIVE SUMMARY" pageBreak>
+      <ReportSection title={tr('SOMMAIRE EXÉCUTIF', 'EXECUTIVE SUMMARY')} pageBreak>
         <div className="executive-callout">
           <div>
-            <span className="eyebrow">Recommended annual cost basis</span>
-            <strong>{includesFreeCoolingAnalysis ? lowestAnnualCostOption.label : selectedTechnology}</strong>
+            <span className="eyebrow">{tr('Option recommandée selon le coût annuel', 'Recommended option based on annual cost')}</span>
+            <strong>{executiveRecommendation.label}</strong>
+            <p className="report-text" style={{ marginTop: 6, marginBottom: 0, fontSize: 10 }}>
+              {tr(
+                'Recommandation basée uniquement sur le coût annuel d’exploitation estimé. Les critères d’énergie, de GES, d’eau, d’entretien et d’investissement initial doivent aussi être considérés.',
+                'Recommendation based only on estimated annual operating cost. Energy, GHG, water, maintenance, and initial investment should also be considered.'
+              )}
+            </p>
           </div>
           <div>
-            <span className="eyebrow">Modeled airflow</span>
-            <strong>{formatFlow(system.supplyAirflowCfm, data.units)}</strong>
+            <span className="eyebrow">{tr('Débit d’air modélisé', 'Modeled airflow')}</span>
+            <strong>{formatFlow(system.supplyAirflowCfm, data.units, isFrench ? 'fr' : 'en')}</strong>
           </div>
           <div>
-            <span className="eyebrow">Report scope</span>
-            <strong>{includesFreeCoolingAnalysis ? 'Free Cooling comparison' : '100% OA comparison'}</strong>
+            <span className="eyebrow">{tr('Portée du rapport', 'Report scope')}</span>
+            <strong>{includesFreeCoolingAnalysis ? tr('Comparaison en mode refroidissement gratuit', 'Free Cooling comparison') : tr('Comparaison 100 % air extérieur', '100% outdoor air comparison')}</strong>
           </div>
         </div>
-        <h3>Project Overview</h3>
+        <h3>{tr('Aperçu du projet', 'Project Overview')}</h3>
         <p className="report-text">
           {includesFreeCoolingAnalysis
-            ? 'This report compares steam humidification with Humifog adiabatic humidification for an HVAC air handling unit using the room condition as the design target.'
-            : 'This report documents the selected 100% outdoor air AHU configuration. Free Cooling and OA / RA optimization results are intentionally excluded because the system does not operate as a mixed air economizer.'}
+            ? tr('Ce rapport compare l’humidification à vapeur avec l’humidification adiabatique Humifog pour une unité de traitement d’air, en utilisant les conditions de la pièce comme cible de conception.', 'This report compares steam humidification with Humifog adiabatic humidification for an HVAC air handling unit using the room condition as the design target.')
+            : tr('Ce rapport documente la configuration UTA sélectionnée en 100 % air extérieur. Les résultats Free Cooling et d’optimisation OA / RA sont exclus intentionnellement parce que le système ne fonctionne pas comme un économiseur à air mélangé.', 'This report documents the selected 100% outdoor air AHU configuration. Free Cooling and OA / RA optimization results are intentionally excluded because the system does not operate as a mixed air economizer.')}
         </p>
-        <h3>System Description</h3>
+        <h3>{tr('Description du système', 'System Description')}</h3>
         <KeyValueTable rows={[
-          ['System Type', system.type],
-          ['Selected Technology', selectedTechnology],
-          ['Energy Recovery Type', system.recoveryType],
-          ['Heating Type', selectedReheatName],
+          [tr('Configuration UTA sélectionnée', 'Selected AHU configuration'), system.type],
+          [tr('Humidification adiabatique Humifog', 'Humifog adiabatic humidification'), selectedTechnology],
+          [tr('Type de récupération d’énergie', 'Energy Recovery Type'), system.recoveryType],
+          [tr('Type de chauffage', 'Heating Type'), selectedReheatName],
         ]} />
-        <h3>Summary of Results</h3>
+        <h3>{tr('Résumé des résultats', 'Summary of Results')}</h3>
         <KpiGrid items={includesFreeCoolingAnalysis
           ? [
-            ['Annual Energy Savings', formatEnergy(annual.savingsKwh)],
-            ['Annual Cost Savings', formatMoney(annual.annualSavings)],
-            ['GHG Reduction', `${formatNumber(metrics.eliminatedGES, 1)} tCO2e/year`],
-            ['Estimated Payback', economics.estimatedPayback],
-            ['Lowest Annual Cost', lowestAnnualCostOption.label],
-            ['Humifog Reheat', reheatApplies ? `${formatEnergy(humifogReheatAppliedKwh)} - ${selectedReheatName}` : 'Not required'],
+            [tr('Économies annuelles d’énergie', 'Annual Energy Savings'), formatEnergy(annual.savingsKwh)],
+            [tr('Économies annuelles de coût', 'Annual Cost Savings'), formatMoney(annual.annualSavings)],
+            [tr('Réduction de GES', 'GHG Reduction'), `${formatNumber(metrics.eliminatedGES, 1)} tCO2e/year`],
+            [tr('Retour estimé', 'Estimated Payback'), economics.estimatedPayback],
+            [tr('Coût annuel le plus bas', 'Lowest Annual Cost'), lowestAnnualCostOption.label],
+            [tr('Réchauffage Humifog', 'Humifog Reheat'), reheatApplies ? `${formatEnergy(humifogReheatAppliedKwh)} - ${selectedReheatName}` : tr('Non requis', 'Not required')],
           ]
           : [
-            ['Airflow Mode', system.type],
-            ['Annual Estimate', formatEnergy(energySummary.humifog?.annualEnergyKwh)],
-            ['Annual Operating Cost', formatMoney(energySummary.humifog?.annualCost)],
-            ['GHG Reduction', `${formatNumber(metrics.eliminatedGES, 1)} tCO2e/year`],
-            ['Humifog Reheat', (energySummary.humifog?.annualReheatCost || 0) > 0 ? formatMoney(energySummary.humifog?.annualReheatCost) : 'Not required'],
-            ['Free Cooling sections not applicable', '100% OA'],
+            [tr('Mode de débit d’air', 'Airflow Mode'), system.type],
+            [tr('Estimation annuelle', 'Annual Estimate'), formatEnergy(energySummary.humifog?.annualEnergyKwh)],
+            [tr('Coût annuel d’exploitation', 'Annual Operating Cost'), formatMoney(energySummary.humifog?.annualCost)],
+            [tr('Réduction de GES', 'GHG Reduction'), `${formatNumber(metrics.eliminatedGES, 1)} tCO2e/year`],
+            [tr('Réchauffage Humifog', 'Humifog Reheat'), (energySummary.humifog?.annualReheatCost || 0) > 0 ? formatMoney(energySummary.humifog?.annualReheatCost) : tr('Non requis', 'Not required')],
+            [tr('Sections Free Cooling non applicables', 'Free Cooling sections not applicable'), tr('100 % OA', '100% OA')],
           ]} />
         <div className="professional-note">
-          The comparison is based only on values available in the HESES project dataset. Missing project-specific values
-          are intentionally shown as project inputs or engineering assumptions rather than inferred values.
+          {tr(
+            'La comparaison est basée uniquement sur les valeurs disponibles dans le jeu de données du projet HESES. Les valeurs spécifiques au projet manquantes sont présentées intentionnellement comme intrants de projet ou hypothèses d’ingénierie plutôt que comme valeurs inférées.',
+            'The comparison is based only on values available in the HESES project dataset. Missing project-specific values are intentionally shown as project inputs or engineering assumptions rather than inferred values.'
+          )}
         </div>
       </ReportSection>
 
@@ -948,15 +1020,15 @@ export default function HvacEnergyOptimizationReport({ data }) {
         <table className="report-table compact">
           <thead>
             <tr>
-              <th>Point</th>
-              <th>Air State</th>
-              <th>Temperature</th>
-              <th>Relative Humidity</th>
-              <th>Humidity Ratio</th>
-              <th>Enthalpy</th>
-              <th>Wet Bulb</th>
-              <th>Dew Point</th>
-              <th>Specific Volume</th>
+              <th>{tr('Point', 'Point')}</th>
+              <th>{tr('État de l’air', 'Air State')}</th>
+              <th>{tr('Température', 'Temperature')}</th>
+              <th>{tr('Humidité relative', 'Relative Humidity')}</th>
+              <th>{tr('Rapport d’humidité', 'Humidity Ratio')}</th>
+              <th>{tr('Enthalpie', 'Enthalpy')}</th>
+              <th>{tr('Bulbe humide', 'Wet Bulb')}</th>
+              <th>{tr('Point de rosée', 'Dew Point')}</th>
+              <th>{tr('Volume spécifique', 'Specific Volume')}</th>
             </tr>
           </thead>
           <tbody>
@@ -964,12 +1036,12 @@ export default function HvacEnergyOptimizationReport({ data }) {
               <tr key={`${point.key}-${index}`}>
                 <td>Point {index + 1}</td>
                 <td>{formatPointLabel(point.label)}</td>
-                <td>{formatTemp(point.state.db, data.units)}</td>
+                <td>{formatTemp(point.state.db, data.units, data.language)}</td>
                 <td>{formatNumber(point.state.rh, 0)}%</td>
                 <td>{formatHumidity(point.state.w, data.units)}</td>
                 <td>{formatEnthalpy(point.state.h, data.units)}</td>
-                <td>{formatTemp(point.state.wb, data.units)}</td>
-                <td>{formatTemp(point.state.dp, data.units)}</td>
+                <td>{formatTemp(point.state.wb, data.units, data.language)}</td>
+                <td>{formatTemp(point.state.dp, data.units, data.language)}</td>
                 <td>{formatSpecificVolume(point.state, data.units)}</td>
               </tr>
             ))}
@@ -980,41 +1052,41 @@ export default function HvacEnergyOptimizationReport({ data }) {
       <ReportSection title={reportSectionTitle('calculations', 'PSYCHROMETRIC CALCULATIONS')} pageBreak allowPageBreak>
         <FormulaBlock lines={includesFreeCoolingAnalysis
           ? [
-            'Mixed Air Temperature: Tmix = (OA x Toa) + (RA x Tra)',
-            'Mixed Air Humidity Ratio: Wmix = (OA x Woa) + (RA x Wra)',
-            'Mixed Air Enthalpy: hmix = (OA x hoa) + (RA x hra)',
-            'Recovery: Trec = Tmix + recovery_efficiency x (Tra - Tmix)',
-            'Humifog: Tout = Tinlet - eta x (Tinlet - Twb_mix)',
-            'Heating Load: Q = 1.08 x CFM x DeltaT',
-            'Steam Load: lb/hr = 4.5 x CFM x DeltaW',
+            tr('Température de l’air mélangé : Tmix = (OA x Toa) + (RA x Tra)', 'Mixed Air Temperature: Tmix = (OA x Toa) + (RA x Tra)'),
+            tr('Rapport d’humidité de l’air mélangé : Wmix = (OA x Woa) + (RA x Wra)', 'Mixed Air Humidity Ratio: Wmix = (OA x Woa) + (RA x Wra)'),
+            tr('Enthalpie de l’air mélangé : hmix = (OA x hoa) + (RA x hra)', 'Mixed Air Enthalpy: hmix = (OA x hoa) + (RA x hra)'),
+            tr('Récupération : Trec = Tmix + efficacité de récupération × (Tra - Tmix)', 'Recovery: Trec = Tmix + recovery_efficiency x (Tra - Tmix)'),
+            tr('Humifog : Tout = Tentrée - eta x (Tentrée - Tbh_mélange)', 'Humifog: Tout = Tinlet - eta x (Tinlet - Twb_mix)'),
+            tr('Charge de chauffage : Q = 1,08 × CFM × DeltaT', 'Heating Load: Q = 1.08 x CFM x DeltaT'),
+            tr('Charge vapeur : lb/h = 4,5 × CFM × DeltaW', 'Steam Load: lb/hr = 4.5 x CFM x DeltaW'),
           ]
           : [
-            'Outdoor air psychrometric state is calculated from dry bulb temperature and relative humidity.',
-            'Recovery: Trec = Tinlet + recovery_efficiency x available temperature difference',
-            'Heating Load: Q = 1.08 x CFM x DeltaT',
-            'Humifog: adiabatic outlet state is calculated from the actual entering air condition.',
-            'Steam Load: lb/hr = 4.5 x CFM x DeltaW',
+            tr('L’état psychrométrique de l’air extérieur est calculé à partir de la température sèche et de l’humidité relative.', 'Outdoor air psychrometric state is calculated from dry bulb temperature and relative humidity.'),
+            tr('Récupération : Trec = Tentrée + efficacité de récupération × différence de température disponible', 'Recovery: Trec = Tinlet + recovery_efficiency x available temperature difference'),
+            tr('Charge de chauffage : Q = 1,08 × CFM × DeltaT', 'Heating Load: Q = 1.08 x CFM x DeltaT'),
+            tr('Humifog : l’état de sortie adiabatique est calculé à partir des conditions réelles de l’air entrant.', 'Humifog: adiabatic outlet state is calculated from the actual entering air condition.'),
+            tr('Charge vapeur : lb/h = 4,5 × CFM × DeltaW', 'Steam Load: lb/hr = 4.5 x CFM x DeltaW'),
           ]} />
-        <h3>Actual Numerical Values</h3>
+        <h3>{tr('Valeurs numériques calculées', 'Actual Numerical Values')}</h3>
         <KeyValueTable rows={[
-          ['Outdoor Air Temperature', outdoor ? formatTemp(outdoor.db, data.units) : '-'],
+          [tr('Température de l’air extérieur', 'Outdoor Air Temperature'), outdoor ? formatTemp(outdoor.db, data.units, data.language) : '-'],
           ...(!is100OA
             ? [
-              ['Return Air Temperature', returnAir ? formatTemp(returnAir.db, data.units) : '-'],
-              ['Mixed Air Temperature', mixed ? formatTemp(mixed.db, data.units) : '-'],
-              ['Mixed Air Humidity Ratio', mixed ? formatHumidity(mixed.w, data.units) : '-'],
-              ['Mixed Air Enthalpy', mixed ? formatEnthalpy(mixed.h, data.units) : '-'],
+              [tr('Température de l’air de retour', 'Return Air Temperature'), returnAir ? formatTemp(returnAir.db, data.units, data.language) : '-'],
+              [tr('Température de l’air mélangé', 'Mixed Air Temperature'), mixed ? formatTemp(mixed.db, data.units, data.language) : '-'],
+              [tr('Rapport d’humidité de l’air mélangé', 'Mixed Air Humidity Ratio'), mixed ? formatHumidity(mixed.w, data.units) : '-'],
+              [tr('Enthalpie de l’air mélangé', 'Mixed Air Enthalpy'), mixed ? formatEnthalpy(mixed.h, data.units) : '-'],
             ]
             : []),
-          ['After Recovery Temperature', recovered ? formatTemp(recovered.db, data.units) : '-'],
-          ...(!is100OA ? [['Mixed Air Wet Bulb Reference', mixed ? formatTemp(mixed.wb, data.units) : '-']] : []),
-          ['After Humifog Temperature', afterHumifog ? formatTemp(afterHumifog.db, data.units) : '-'],
-          ['After Heating Temperature', afterHeating ? formatTemp(afterHeating.db, data.units) : '-'],
+          [tr('Température après récupération', 'After Recovery Temperature'), recovered ? formatTemp(recovered.db, data.units, data.language) : '-'],
+          ...(!is100OA ? [[tr('Référence bulbe humide de l’air mélangé', 'Mixed Air Wet Bulb Reference'), mixed ? formatTemp(mixed.wb, data.units, data.language) : '-']] : []),
+          [tr('Température après Humifog', 'After Humifog Temperature'), afterHumifog ? formatTemp(afterHumifog.db, data.units, data.language) : '-'],
+          [tr('Température après chauffage', 'After Heating Temperature'), afterHeating ? formatTemp(afterHeating.db, data.units, data.language) : '-'],
           ...(includesFreeCoolingAnalysis
             ? [
-              ['Calculated Mixed Air Temperature', formatTemp(data.validation.calculatedMixedDb, data.units)],
-              ['Active Mixed Air Temperature', formatTemp(data.validation.activeMixedDb, data.units)],
-              ['Mixed Air Override', data.validation.isOverridden ? 'Measured value used' : 'Calculated value used'],
+              [tr('Température de l’air mélangé calculée', 'Calculated Mixed Air Temperature'), formatTemp(data.validation.calculatedMixedDb, data.units, data.language)],
+              [tr('Température de l’air mélangé active', 'Active Mixed Air Temperature'), formatTemp(data.validation.activeMixedDb, data.units, data.language)],
+              [tr('Validation air mélangé', 'Mixed Air Override'), data.validation.isOverridden ? tr('Valeur mesurée utilisée', 'Measured value used') : tr('Valeur calculée utilisée', 'Calculated value used')],
             ]
             : []),
         ]} />
@@ -1067,7 +1139,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
               <tr>
                 <td>Steam Scenario</td>
                 <td>{formatNumber(freeCooling.averageOa, 0)}%</td>
-                <td>{formatTemp(freeCooling.averageMixedDb, data.units)}</td>
+                <td>{formatTemp(freeCooling.averageMixedDb, data.units, data.language)}</td>
                 <td>-</td>
                 <td>{formatEnergy(freeCooling.totalEnergyKwh)}</td>
                 <td>{formatMoney(freeCooling.annualCost)}</td>
@@ -1075,7 +1147,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
               <tr>
                 <td>Humifog Scenario</td>
                 <td>{formatNumber(humifog.averageOa, 0)}%</td>
-                <td>{formatTemp(humifog.averageMixedDb, data.units)}</td>
+                <td>{formatTemp(humifog.averageMixedDb, data.units, data.language)}</td>
                 <td>{reheatApplies ? `${formatEnergy(humifogReheatAppliedKwh)} - ${selectedReheatName}` : 'Not required'}</td>
                 <td>{formatEnergy(humifog.totalEnergyKwh)}</td>
                 <td>{formatMoney(humifog.annualCost)}</td>
@@ -1090,7 +1162,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
             ['Applied reheat energy by selected method', reheatApplies ? formatEnergy(humifogReheatAppliedKwh) : 'Not required'],
             ['Heat pump COP equivalent', selectedReheatSource === 'heatPump' && heatPumpCop ? `${formatEnergy(humifogReheatEquivalentHeatPumpKwh)} / COP ${formatNumber(heatPumpCop, 1)}` : '-'],
             ['Maximum BIN reheat input', criticalReheatRow && (criticalReheatRow.reheatLoadKw || 0) > 0 ? formatPower(criticalReheatRow.reheatLoadKw) : 'Not required'],
-            ['Critical BIN', criticalReheatRow && (criticalReheatRow.reheatLoadKw || 0) > 0 ? `${formatTemp(criticalReheatRow.tempC, data.units)} / ${formatNumber(criticalReheatRow.hours, 0)} h` : '-'],
+            ['Critical BIN', criticalReheatRow && (criticalReheatRow.reheatLoadKw || 0) > 0 ? `${formatTemp(criticalReheatRow.tempC, data.units, data.language)} / ${formatNumber(criticalReheatRow.hours, 0, data.language)} h` : '-'],
           ]} />
         </ReportSection>
       )}
@@ -1187,48 +1259,48 @@ export default function HvacEnergyOptimizationReport({ data }) {
         </table>
       </ReportSection>
 
-      <ReportSection title={reportSectionTitle('economics', 'ECONOMIC ANALYSIS')} pageBreak allowPageBreak>
+      <ReportSection title={reportSectionTitle('economics', tr('ANALYSE ÉCONOMIQUE', 'ECONOMIC ANALYSIS'))} pageBreak allowPageBreak>
         <KeyValueTable rows={includesFreeCoolingAnalysis
           ? [
-            ['Utility Rate - Electricity', `${formatUtilityRate(economics.electricityRate, 3)} / kWh`],
-            ['Utility Rate - Natural Gas', `${formatUtilityRate(economics.naturalGasRate, 3)} / m3`],
-            ['Steam Boiler Efficiency', `${formatNumber(economics.steamBoilerEfficiency, 0)}%`],
-            ['Atmospheric Gas Humidifier Efficiency', `${formatNumber(economics.atmosphericGasHumidifierEfficiency, 0)}%`],
-            ['Annual Energy Cost - Electric Steam', formatMoney(freeCoolingTechnologyOptions[0].annualCost)],
-            ['Annual Energy Cost - Natural Gas Steam', formatMoney(freeCoolingTechnologyOptions[1].annualCost)],
-            ['Annual Energy Cost - Atmospheric Gas', formatMoney(freeCoolingTechnologyOptions[2].annualCost)],
-            ['Annual Energy Cost - Humifog', formatMoney(freeCoolingTechnologyOptions[3].annualCost)],
-            ['Lowest Annual Cost Option', lowestAnnualCostOption.label],
-            ['Annual Savings', formatMoney(annual.annualSavings)],
-            ['Simple Payback', economics.estimatedPayback],
-            ['10-Year Savings', formatMoney(tenYearSavings)],
-            ['20-Year Savings', formatMoney(twentyYearSavings)],
+            [tr('Tarif d utilité - Électricité', 'Utility Rate - Electricity'), formatUtilityRateWithUnit(economics.electricityRate, 3, 'kWh')],
+            [tr('Tarif d utilité - Gaz naturel', 'Utility Rate - Natural Gas'), formatUtilityRateWithUnit(economics.naturalGasRate, 3, isFrench ? 'm³' : 'm3')],
+            [tr('Rendement de la chaudière vapeur', 'Steam Boiler Efficiency'), `${formatNumber(economics.steamBoilerEfficiency, 0)}%`],
+            [tr('Rendement de l’humidificateur gaz atmosphérique', 'Atmospheric Gas Humidifier Efficiency'), `${formatNumber(economics.atmosphericGasHumidifierEfficiency, 0)}%`],
+            [tr('Coût annuel - Vapeur électrique', 'Annual Energy Cost - Electric Steam'), formatMoney(freeCoolingTechnologyOptions[0].annualCost)],
+            [tr('Coût annuel - Vapeur gaz naturel', 'Annual Energy Cost - Natural Gas Steam'), formatMoney(freeCoolingTechnologyOptions[1].annualCost)],
+            [tr('Coût annuel - Humidificateur gaz atmosphérique', 'Annual Energy Cost - Atmospheric Gas'), formatMoney(freeCoolingTechnologyOptions[2].annualCost)],
+            [tr('Coût annuel - Humifog', 'Annual Energy Cost - Humifog'), formatMoney(freeCoolingTechnologyOptions[3].annualCost)],
+            [tr('Option au coût annuel le plus bas', 'Lowest Annual Cost Option'), lowestAnnualCostOption.label],
+            [tr('Économies annuelles', 'Annual Savings'), formatMoney(annual.annualSavings)],
+            [tr('Retour simple', 'Simple Payback'), economics.estimatedPayback],
+            [tr('Économies sur 10 ans', '10-Year Savings'), formatMoney(tenYearSavings)],
+            [tr('Économies sur 20 ans', '20-Year Savings'), formatMoney(twentyYearSavings)],
           ]
           : [
-            ['Utility Rate - Electricity', `${formatUtilityRate(economics.electricityRate, 3)} / kWh`],
-            ['Utility Rate - Natural Gas', `${formatUtilityRate(economics.naturalGasRate, 3)} / m3`],
-            ['Steam Boiler Efficiency', `${formatNumber(economics.steamBoilerEfficiency, 0)}%`],
-            ['Atmospheric Gas Humidifier Efficiency', `${formatNumber(economics.atmosphericGasHumidifierEfficiency, 0)}%`],
-            ['Annual Energy Cost - Electric Steam', formatMoney(energySummary.steam?.annualCost)],
-            ['Annual Energy Cost - Natural Gas Steam', formatMoney(energySummary.naturalGasSteam?.annualCost)],
-            ['Annual Energy Cost - Atmospheric Gas Humidifier', formatMoney(energySummary.atmosphericGasHumidifier?.annualCost)],
-            ['Annual Energy Cost - Humifog', formatMoney(energySummary.humifog?.annualCost)],
-            ['Annual Savings vs Electric Steam', formatMoney(energySummary.annualSavingsVsSteam)],
-            ['Simple Payback', economics.estimatedPayback],
+            [tr('Tarif d utilité - Électricité', 'Utility Rate - Electricity'), formatUtilityRateWithUnit(economics.electricityRate, 3, 'kWh')],
+            [tr('Tarif d utilité - Gaz naturel', 'Utility Rate - Natural Gas'), formatUtilityRateWithUnit(economics.naturalGasRate, 3, isFrench ? 'm³' : 'm3')],
+            [tr('Rendement de la chaudière vapeur', 'Steam Boiler Efficiency'), `${formatNumber(economics.steamBoilerEfficiency, 0)}%`],
+            [tr('Rendement de l’humidificateur gaz atmosphérique', 'Atmospheric Gas Humidifier Efficiency'), `${formatNumber(economics.atmosphericGasHumidifierEfficiency, 0)}%`],
+            [tr('Coût annuel - Vapeur électrique', 'Annual Energy Cost - Electric Steam'), formatMoney(energySummary.steam?.annualCost)],
+            [tr('Coût annuel - Vapeur gaz naturel', 'Annual Energy Cost - Natural Gas Steam'), formatMoney(energySummary.naturalGasSteam?.annualCost)],
+            [tr('Coût annuel - Humidificateur gaz atmosphérique', 'Annual Energy Cost - Atmospheric Gas Humidifier'), formatMoney(energySummary.atmosphericGasHumidifier?.annualCost)],
+            [tr('Coût annuel - Humifog', 'Annual Energy Cost - Humifog'), formatMoney(energySummary.humifog?.annualCost)],
+            [tr('Économies annuelles vs vapeur électrique', 'Annual Savings vs Electric Steam'), formatMoney(energySummary.annualSavingsVsSteam)],
+            [tr('Retour simple', 'Simple Payback'), economics.estimatedPayback],
           ]} />
 
         {roiRows.length > 0 && (
           <>
-            <h3>Installed Cost and ROI Inputs</h3>
+            <h3>{tr('Coût installé et intrants ROI', 'Installed Cost and ROI Inputs')}</h3>
             <table className="report-table">
               <thead>
                 <tr>
-                  <th>System</th>
-                  <th>Installed Cost</th>
-                  <th>Annual Energy Cost</th>
-                  <th>Annual Savings</th>
-                  <th>Incremental Cost</th>
-                  <th>Simple Payback</th>
+                  <th>{tr('Système', 'System')}</th>
+                  <th>{tr('Coût installé', 'Installed Cost')}</th>
+                  <th>{tr('Coût annuel énergie', 'Annual Energy Cost')}</th>
+                  <th>{tr('Économies annuelles', 'Annual Savings')}</th>
+                  <th>{tr('Coût incrémental', 'Incremental Cost')}</th>
+                  <th>{tr('Retour simple', 'Simple Payback')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1250,14 +1322,14 @@ export default function HvacEnergyOptimizationReport({ data }) {
 
       <ReportSection title={reportSectionTitle('ghg', 'GREENHOUSE GAS ANALYSIS')} pageBreak>
         <KeyValueTable rows={[
-          ['Steam System Emissions', `${formatNumber(metrics.naturalGasGES, 1)} tCO2e/year`],
+          [tr('Émissions du système vapeur', 'Steam System Emissions'), `${formatNumber(metrics.naturalGasGES, 1)} ${tr('tCO2e/an', 'tCO2e/year')}`],
           ...(!includesFreeCoolingAnalysis
-            ? [['Atmospheric Gas Humidifier Emissions', `${formatNumber(metrics.atmosphericGasHumidifierGES, 1)} tCO2e/year`]]
+            ? [[tr('Émissions de l’humidificateur gaz atmosphérique', 'Atmospheric Gas Humidifier Emissions'), `${formatNumber(metrics.atmosphericGasHumidifierGES, 1)} ${tr('tCO2e/an', 'tCO2e/year')}`]]
             : []),
-          ['Humifog System Emissions', `${formatNumber(metrics.adiabaticGES, 1)} tCO2e/year`],
-          ['Emission Reduction', `${formatNumber(metrics.eliminatedGES, 1)} tCO2e/year`],
-          ['Equivalent Trees', `${formatNumber(treesEquivalent, 0)} trees/year`],
-          ['Equivalent CO2 Reduction', `${formatNumber(metrics.eliminatedGES, 1)} metric tonnes CO2e/year`],
+          [tr('Émissions du système Humifog', 'Humifog System Emissions'), `${formatNumber(metrics.adiabaticGES, 1)} ${tr('tCO2e/an', 'tCO2e/year')}`],
+          [tr('Réduction des émissions', 'Emission Reduction'), `${formatNumber(metrics.eliminatedGES, 1)} ${tr('tCO2e/an', 'tCO2e/year')}`],
+          [tr('Équivalent en arbres', 'Equivalent Trees'), `${formatNumber(treesEquivalent, 0)} ${tr('arbres/an', 'trees/year')}`],
+          [tr('Réduction équivalente de CO2e', 'Equivalent CO2 Reduction'), `${formatNumber(metrics.eliminatedGES, 1)} ${tr('tonnes métriques CO2e/an', 'metric tonnes CO2e/year')}`],
         ]} />
       </ReportSection>
 
@@ -1274,7 +1346,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
               title="Graph 2 - Mixed Air Temperature vs OA %"
               data={optimizationRows.map((row) => ({ x: row.oaPercent, y: row.tmix }))}
               color="#f97316"
-              yLabel={data.units === 'imperial' ? 'deg F' : 'deg C'}
+              yLabel={data.units === 'imperial' ? (isFrench ? '°F' : 'deg F') : (isFrench ? '°C' : 'deg C')}
               yTransform={(value) => data.units === 'imperial' ? value * 9 / 5 + 32 : value}
             />
             <BarGraph title="Graph 3 - Annual Savings by BIN" data={binSavingsRows} color="#22c55e" />
@@ -1364,6 +1436,20 @@ export default function HvacEnergyOptimizationReport({ data }) {
         <p className="report-text">
           This audit lists the HESES software inputs and calculated values used directly by this PDF report.
         </p>
+        {hourlyWeatherSummaryRows.length > 0 && (
+          <>
+            <h3>{tr('Données météorologiques utilisées', 'Weather data used')}</h3>
+            <p className="report-text">
+              {tr(
+                'Les résultats de simulation horaire sont basés sur un fichier météorologique typique CWEC_FMCCE du Gouvernement du Canada. Ces fichiers représentent une année météorologique typique pour les calculs énergétiques et ne représentent pas une année réelle spécifique.',
+                'Hourly simulation results are based on a Government of Canada CWEC_FMCCE typical weather file. These files represent a typical meteorological year for energy calculations and do not represent one specific real year.'
+              )}
+            </p>
+            <KeyValueTable rows={hourlyWeatherSummaryRows} />
+            <h3>{tr('Résumé météo pendant les heures d’exploitation', 'Weather summary during operating hours')}</h3>
+            <KeyValueTable rows={hourlyWeatherCompactRows} />
+          </>
+        )}
         <KeyValueTable rows={reportInputValidationRows} />
       </ReportSection>
 
@@ -1730,86 +1816,130 @@ function HeatMap({ title, rows, units }) {
 }
 
 function formatPointLabel(label) {
+  const isFrench = activeReportLanguage === 'fr'
   const labels = {
-    'Outdoor air': 'Outdoor Air',
-    'Return air': 'Return Air',
-    'Mixed air': 'Mixed Air',
-    'After thermal wheel': 'After Thermal Wheel',
-    'After recovery': 'After Energy Recovery',
-    'After Humifog': 'After Humifog',
-    'After heating': 'After Heating',
-    Room: 'Room Conditions',
+    'Outdoor air': isFrench ? 'Air extérieur' : 'Outdoor Air',
+    'Return air': isFrench ? 'Air de retour' : 'Return Air',
+    'Mixed air': isFrench ? 'Air mélangé' : 'Mixed Air',
+    'After Thermal Wheel': isFrench ? 'Après roue thermique' : 'After Thermal Wheel',
+    'After thermal wheel': isFrench ? 'Après roue thermique' : 'After Thermal Wheel',
+    'After Recovery': isFrench ? 'Après récupération' : 'After Energy Recovery',
+    'After recovery': isFrench ? 'Après récupération' : 'After Energy Recovery',
+    'After Humifog': isFrench ? 'Après Humifog' : 'After Humifog',
+    'After heating': isFrench ? 'Après chauffage' : 'After Heating',
+    Room: isFrench ? 'Conditions de la pièce' : 'Room Conditions',
   }
 
   return labels[label] || label
 }
 
-function formatTemp(tempC, units) {
+function cleanFrenchPdfText(value, isFrench) {
+  if (!isFrench) return value
+
+  return String(value || '')
+    .replace(
+      /Humifog\s+adiabatique\s+humidification\s+on\s+the\s+selected\s+AHU\s+configuration/gi,
+      'Humidification adiabatique Humifog selon la configuration UTA sélectionnée'
+    )
+    .replace(
+      /Humifog\s+adiabatic\s+humidification\s+on\s+the\s+selected\s+AHU\s+configuration/gi,
+      'Humidification adiabatique Humifog selon la configuration UTA sélectionnée'
+    )
+}
+
+function formatTemp(tempC, units, language = activeReportLanguage) {
   const value = units === 'imperial' ? tempC * 9 / 5 + 32 : tempC
-  return `${formatNumber(value, 1)} ${units === 'imperial' ? 'deg F' : 'deg C'}`
+  const unitLabel = units === 'imperial'
+    ? (language === 'fr' ? '°F' : 'deg F')
+    : (language === 'fr' ? '°C' : 'deg C')
+  return `${formatNumber(value, 1, language)} ${unitLabel}`
 }
 
 function formatHumidity(humidityRatio, units) {
   const value = units === 'imperial' ? humidityRatio * 7000 : humidityRatio * 1000
-  return `${formatNumber(value, units === 'imperial' ? 1 : 2)} ${units === 'imperial' ? 'gr/lb' : 'g/kg'}`
+  return `${formatNumber(value, units === 'imperial' ? 1 : 2, activeReportLanguage)} ${units === 'imperial' ? 'gr/lb' : 'g/kg'}`
 }
 
 function formatEnthalpy(enthalpyKjKg, units) {
   const value = units === 'imperial' ? enthalpyKjKg * 0.429923 : enthalpyKjKg
-  return `${formatNumber(value, 1)} ${units === 'imperial' ? 'Btu/lb' : 'kJ/kg'}`
+  const unitLabel = units === 'imperial'
+    ? (activeReportLanguage === 'fr' ? 'BTU/lb' : 'Btu/lb')
+    : 'kJ/kg'
+  return `${formatNumber(value, 1, activeReportLanguage)} ${unitLabel}`
 }
 
 function formatSpecificVolume(state, units) {
   const valueM3Kg = 287.055 * (state.db + 273.15) * (1 + 1.6078 * state.w) / 101325
 
   if (units === 'imperial') {
-    return `${formatNumber(valueM3Kg * 16.0185, 2)} ft3/lb da`
+    const unitLabel = activeReportLanguage === 'fr' ? 'pi³/lb da' : 'ft3/lb da'
+    return `${formatNumber(valueM3Kg * 16.0185, 2, activeReportLanguage)} ${unitLabel}`
   }
 
-  return `${formatNumber(valueM3Kg, 3)} m3/kg da`
+  return `${formatNumber(valueM3Kg, 3, activeReportLanguage)} m3/kg da`
 }
 
-function formatFlow(cfm, units) {
-  if (units === 'metric') return `${formatNumber(cfm * 0.47195, 0)} L/s`
-  return `${formatNumber(cfm, 0)} CFM`
+function formatFlow(cfm, units, language = activeReportLanguage) {
+  if (units === 'metric') return `${formatNumber(cfm * 0.47195, 0, language)} L/s`
+  return `${formatNumber(cfm, 0, language)} CFM`
 }
 
 function formatWater(lbHr, units) {
-  if (units === 'metric') return `${formatNumber(lbHr * 0.453592, 1)} kg/h`
-  return `${formatNumber(lbHr, 1)} lb/h`
+  if (units === 'metric') return `${formatNumber(lbHr * 0.453592, 1, activeReportLanguage)} kg/h`
+  return `${formatNumber(lbHr, 1, activeReportLanguage)} lb/h`
 }
 
 function formatEnergy(kwh) {
-  return `${formatNumber(kwh, 0)} kWh`
+  return `${formatNumber(kwh, 0, activeReportLanguage)} kWh`
 }
 
 function formatPower(kw) {
-  return `${formatNumber(kw, 1)} kW`
+  return `${formatNumber(kw, 1, activeReportLanguage)} kW`
 }
 
 function formatMoney(value) {
-  return `$${formatNumber(value, 0)}`
+  if (activeReportLanguage === 'fr') {
+    return `${formatNumber(value, 0, activeReportLanguage)} $`
+  }
+  return `$${formatNumber(value, 0, activeReportLanguage)}`
 }
 
 function formatUtilityRate(value, digits = 3) {
-  return `$${formatNumber(value, digits)}`
+  if (activeReportLanguage === 'fr') {
+    return `${formatNumber(value, digits, activeReportLanguage)} $`
+  }
+  return `$${formatNumber(value, digits, activeReportLanguage)}`
+}
+
+function formatUtilityRateWithUnit(value, digits = 3, unit = '') {
+  const rate = formatUtilityRate(value, digits)
+  if (activeReportLanguage === 'fr') {
+    return `${rate}/${unit}`
+  }
+  return `${rate} / ${unit}`
 }
 
 function formatSignedMoney(value) {
   const numeric = Number(value || 0)
   const sign = numeric > 0 ? '+' : numeric < 0 ? '-' : ''
-  return `${sign}$${formatNumber(Math.abs(numeric), 0)}`
+  return `${sign}$${formatNumber(Math.abs(numeric), 0, activeReportLanguage)}`
 }
 
 function formatPayback(row) {
   if (row.reference) return 'Reference'
   if ((row.annualSavings || 0) <= 0 || row.paybackYears == null) return 'Not economical'
   if (row.paybackYears === 0) return 'Immediate'
-  return `${formatNumber(row.paybackYears, 1)} years`
+  if (activeReportLanguage === 'fr') {
+    const rounded = Number(formatNumber(row.paybackYears, 1, activeReportLanguage).replace(',', '.'))
+    const unit = Math.abs(rounded - 1) < 0.0001 ? 'an' : 'ans'
+    return `${formatNumber(row.paybackYears, 1, activeReportLanguage)} ${unit}`
+  }
+  return `${formatNumber(row.paybackYears, 1, activeReportLanguage)} years`
 }
 
-function formatNumber(value, digits = 1) {
-  return Number(value || 0).toLocaleString('en-CA', {
+function formatNumber(value, digits = 1, language = activeReportLanguage) {
+  const locale = String(language || '').toLowerCase().startsWith('fr') ? 'fr-CA' : 'en-CA'
+  return Number(value || 0).toLocaleString(locale, {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   })

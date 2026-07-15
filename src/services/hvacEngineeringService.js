@@ -30,20 +30,21 @@ export function calculateHvacDashboardMetrics({
   const isNoRecovery = Boolean(selectedRecovery?.noRecovery)
   const indoorHumidityRatio = humidityRatioFromRH(roomTemperature, roomRelativeHumidity)
   const outdoorHumidityRatio = humidityRatioFromRH(outsideWinterTemp, 90)
-  const deltaW = Math.max(0.00001, indoorHumidityRatio - outdoorHumidityRatio)
+  const latentRecoveryEffect = getLatentRecoveryEffect(selectedRecovery)
+  const latentRecoveryFraction = clampValue(Math.min(latentRecoveryEffect, 45) / 100, 0, 0.45)
+  const enteringHumidityRatio = Math.min(
+    indoorHumidityRatio,
+    outdoorHumidityRatio + latentRecoveryFraction * (indoorHumidityRatio - outdoorHumidityRatio)
+  )
+  const deltaW = Math.max(0, indoorHumidityRatio - enteringHumidityRatio)
 
   const indoorGrains = Math.round(grainsFromHumidityRatio(indoorHumidityRatio))
-  const outdoorGrains = Math.round(grainsFromHumidityRatio(outdoorHumidityRatio))
+  const outdoorGrains = Math.round(grainsFromHumidityRatio(enteringHumidityRatio))
   const indoorEnthalpy = Math.round(moistAirEnthalpyBtuLb(roomTemperature, indoorHumidityRatio))
-  const outdoorEnthalpy = Math.round(moistAirEnthalpyBtuLb(outsideWinterTemp, outdoorHumidityRatio))
+  const outdoorEnthalpy = Math.round(moistAirEnthalpyBtuLb(outsideWinterTemp, enteringHumidityRatio))
 
   const steamHumidificationLoad = Math.max(0, Math.round(4.5 * effectiveOutsideAirCFM * deltaW))
-  const latentRecoveryEffect = getLatentRecoveryEffect(selectedRecovery)
-
-  const correctedHumidificationLoad = Math.max(
-    0,
-    Math.round(steamHumidificationLoad * (1 - Math.min(latentRecoveryEffect, 45) / 100))
-  )
+  const correctedHumidificationLoad = steamHumidificationLoad
 
   const combinedRecoveryEfficiency = selectedRecovery?.efficacite ?? 0
   const cappedRecoveryEfficiency = Math.min(combinedRecoveryEfficiency, 95)
@@ -65,12 +66,12 @@ export function calculateHvacDashboardMetrics({
 
   const leavingAirTemperature = Number((supplyAirTemperature - adiabaticTemperatureDrop).toFixed(1))
   const reheatDeltaT = Math.max(0, supplyAirTemperature - leavingAirTemperature)
-  const grossReheatKW = Math.round(sensibleHeatingKw(effectiveOutsideAirCFM, reheatDeltaT))
+  const enteringHumifogEnthalpy = moistAirEnthalpyBtuLb(afterWheelTemp, enteringHumidityRatio)
+  const preheatBtuPerHr = Math.max(0, 4.5 * effectiveOutsideAirCFM * (indoorEnthalpy - enteringHumifogEnthalpy))
+  const grossReheatKW = Math.round(preheatBtuPerHr / 3412)
 
   const cassetteBoostFactor = isEnthalpyCassette(selectedRecovery) ? 1.18 : 1
-  const recoveryEnergyReductionKW = Math.round(
-    grossReheatKW * (cappedRecoveryEfficiency / 100) * 0.18 * cassetteBoostFactor
-  )
+  const recoveryEnergyReductionKW = 0
 
   const steamEnergyKW = baseSteamEnergyKW
   const adiabaticPumpKW = Math.max(1, Math.round(adiabaticLoad * 0.0009))
@@ -270,4 +271,8 @@ function normalizeRecoveryName(recovery) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
+}
+
+function clampValue(value, min, max) {
+  return Math.min(Math.max(Number(value) || 0, min), max)
 }
