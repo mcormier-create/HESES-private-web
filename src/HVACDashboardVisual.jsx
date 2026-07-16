@@ -21,6 +21,7 @@ import {
 } from 'recharts'
 
 const WEATHER_PRODUCTION_MODE = false
+const BIN_WEEKS_PER_YEAR = 52.142857
 
 const monthlyFactors = [1, 0.95, 0.83, 0.64, 0.44, 0.28, 0.18, 0.2, 0.36, 0.58, 0.82, 0.96]
 const DEFAULT_SCHEDULE_CUSTOM_DAYS = {
@@ -32,17 +33,23 @@ const DEFAULT_SCHEDULE_CUSTOM_DAYS = {
   sat: false,
   sun: false,
 }
+const SCHEDULE_DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+const PRESET_SCHEDULE_DAYS = {
+  'mon-fri': { mon: true, tue: true, wed: true, thu: true, fri: true, sat: false, sun: false },
+  'mon-sat': { mon: true, tue: true, wed: true, thu: true, fri: true, sat: true, sun: false },
+  'seven-days': { mon: true, tue: true, wed: true, thu: true, fri: true, sat: true, sun: true },
+}
 
-const builtInWeatherFiles = {
-  'Montréal': '/weather/montreal.epw',
-  Montreal: '/weather/montreal.epw',
-  'Québec': '/weather/quebec.epw',
-  Quebec: '/weather/quebec.epw',
-  Ottawa: '/weather/ottawa.epw',
-  Toronto: '/weather/toronto.epw',
-  Vancouver: '/weather/vancouver.epw',
-  Calgary: '/weather/calgary.epw',
-  Winnipeg: '/weather/winnipeg.epw',
+const BUILT_IN_EPW_FILES = {
+  'Montréal': 'montreal.epw',
+  Montreal: 'montreal.epw',
+  'Québec': 'quebec.epw',
+  Quebec: 'quebec.epw',
+  Ottawa: 'ottawa.epw',
+  Toronto: 'toronto.epw',
+  Vancouver: 'vancouver.epw',
+  Calgary: 'calgary.epw',
+  Winnipeg: 'winnipeg.epw',
 }
 
 const WEATHER_UNVERIFIED_WARNING = {
@@ -152,7 +159,7 @@ const weatherMetadata = {
 }
 
 const builtInWeatherFilesByCityKey = Object.fromEntries(
-  Object.entries(builtInWeatherFiles).map(([cityName, filePath]) => [normalizeCityKey(cityName), filePath])
+  Object.entries(BUILT_IN_EPW_FILES).map(([cityName, fileName]) => [normalizeCityKey(cityName), fileName])
 )
 
 function normalizeCityKey(cityName) {
@@ -164,19 +171,22 @@ function normalizeCityKey(cityName) {
 }
 
 function getBuiltInHourlyWeatherFilePath(cityName) {
-  return builtInWeatherFilesByCityKey[normalizeCityKey(cityName)] || ''
+  const fileName = getBuiltInEpwFileName(cityName)
+  return fileName ? `/weather/${fileName}` : ''
+}
+
+function getBuiltInEpwFileName(cityName) {
+  const normalizedCity = String(cityName || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  return BUILT_IN_EPW_FILES[cityName] || BUILT_IN_EPW_FILES[normalizedCity] || builtInWeatherFilesByCityKey[normalizeCityKey(cityName)] || ''
 }
 
 function getBuiltInHourlyWeatherFileName(cityName) {
-  const filePath = getBuiltInHourlyWeatherFilePath(cityName)
-  return filePath ? filePath.split('/').pop() || filePath : ''
+  return getBuiltInEpwFileName(cityName)
 }
 
-function getBuiltInHourlyWeatherFileUrl(fileName) {
-  const normalizedFileName = String(fileName || '').replace(/^\/+/, '')
-  if (!normalizedFileName) return ''
-
-  return new URL(`weather/${normalizedFileName}`, window.location.origin).toString()
+function buildEpwUrl(fileName) {
+  if (!fileName) return ''
+  return `${window.location.origin}/weather/${fileName}`
 }
 
 function formatWeatherValidationStatus(status, language) {
@@ -307,6 +317,11 @@ function computeScheduleDailyHours(startTime, endTime, mode) {
   return ((24 * 60 - start) + end) / 60
 }
 
+function resolveScheduleActiveDays(option, customDays) {
+  if (option === 'custom') return { ...DEFAULT_SCHEDULE_CUSTOM_DAYS, ...customDays }
+  return { ...PRESET_SCHEDULE_DAYS[option] }
+}
+
 function epwTextToRecords(text) {
   const lines = text.split(/\r?\n/)
   let weatherLocation = ''
@@ -349,15 +364,16 @@ function epwTextToRecords(text) {
 }
 
 function epwRecordHour(hour) {
-  return ((hour + 23) % 24)
+  const epwHour = Number(hour)
+  if (!Number.isFinite(epwHour)) return 0
+  return epwHour >= 1 && epwHour <= 24 ? epwHour - 1 : epwHour
 }
 
 function isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays) {
   if (scheduleMode === '24-7') return true
 
-  const recordHour = epwRecordHour(record.hour)
-  const recordMinute = record.minute || 0
-  const date = new Date(record.year, record.month - 1, record.day, recordHour, recordMinute)
+  const hourOfDay = epwRecordHour(record.hour)
+  const date = new Date(record.year, record.month - 1, record.day)
   const dayOfWeek = date.getDay()
   const dayName = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][dayOfWeek]
 
@@ -379,7 +395,7 @@ function isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleE
   const start = startHours * 60 + startMinutes
   let end = endHours * 60 + endMinutes
   if (end === 0) end = 24 * 60
-  const recordMinutes = recordHour * 60 + recordMinute
+  const recordMinutes = hourOfDay * 60
 
   if (start === end) return true
   if (start < end) return recordMinutes >= start && recordMinutes < end
@@ -1892,6 +1908,7 @@ const translations = {
     weeklyOperatingHours: 'Heures d exploitation par semaine',
     annualOperatingHours: 'Heures d exploitation annuelles',
     scheduleFactor: 'Facteur d exploitation',
+    actualAnnualPercentage: 'Pourcentage annuel réel',
     calculationMode: 'Mode de calcul',
     methodSelection: 'Méthode de calcul',
     binHoursMethod: 'Méthode heures BIN',
@@ -2044,6 +2061,27 @@ const translations = {
     originalBinHours: 'Original BIN hours',
     effectiveBinHours: 'Effective BIN hours',
     perYear: 'h/yr',
+    operatingSchedule: 'Operating schedule',
+    startTime: 'Start time',
+    endTime: 'End time',
+    operatingDays: 'Operating days',
+    mondayToFriday: 'Monday to Friday',
+    mondayToSaturday: 'Monday to Saturday',
+    sevenDaysWeek: '7 days/week',
+    customDays: 'Custom',
+    dailyOperatingHours: 'Operating hours per day',
+    weeklyOperatingHours: 'Operating hours per week',
+    annualOperatingHours: 'Annual operating hours',
+    scheduleFactor: 'Operating factor',
+    actualAnnualPercentage: 'Actual annual percentage',
+    scheduleNote: 'HESES uses annual BIN hours. In full BIN mode, original BIN hours are used. In custom schedule mode, BIN hours are adjusted to the selected schedule. Exact hour-by-hour filtering requires an 8760 hourly weather file.',
+    mon: 'Mon',
+    tue: 'Tue',
+    wed: 'Wed',
+    thu: 'Thu',
+    fri: 'Fri',
+    sat: 'Sat',
+    sun: 'Sun',
     calculationMode: 'Calculation mode',
     methodSelection: 'Calculation method',
     binHoursMethod: 'BIN hours method',
@@ -2693,6 +2731,7 @@ function HvacDashboardApp() {
   const [hourlyWeatherResolvedUrl, setHourlyWeatherResolvedUrl] = useState('')
   const [hourlyWeatherFetchStatus, setHourlyWeatherFetchStatus] = useState(0)
   const [hourlyWeatherDebugRecordCount, setHourlyWeatherDebugRecordCount] = useState(0)
+  const [hourlyWeatherBuiltInMissing, setHourlyWeatherBuiltInMissing] = useState(false)
   const [scheduleStartTime, setScheduleStartTime] = useState(() => initialProjectSettings.scheduleStartTime || '06:00')
   const [scheduleEndTime, setScheduleEndTime] = useState(() => initialProjectSettings.scheduleEndTime || '18:00')
   const [scheduleDaysOption, setScheduleDaysOption] = useState(() => {
@@ -2925,6 +2964,37 @@ function HvacDashboardApp() {
     selectedReheatEnergySource.includes('heat pump')
   const builtInHourlyWeatherFilePath = getBuiltInHourlyWeatherFilePath(selectedCity.nom)
   const builtInHourlyWeatherFileName = getBuiltInHourlyWeatherFileName(selectedCity.nom)
+  const isHourlyMode = calculationMethod === 'hourly'
+  const hasLoadedHourlyEpw =
+    isHourlyMode &&
+    Array.isArray(hourlyWeatherRecords) &&
+    hourlyWeatherRecords.length >= 8750
+  const scheduleStartHour = Number(String(scheduleStartTime || '00:00').split(':')[0] || 0)
+  const scheduleEndHour = Number(String(scheduleEndTime || '00:00').split(':')[0] || 0)
+  const filteredHourlyRecords = calculationMethod === 'hourly'
+    ? hourlyWeatherRecords.filter((record) => isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays))
+    : []
+  const hasFilteredHourlyRecords =
+    hasLoadedHourlyEpw &&
+    Array.isArray(filteredHourlyRecords) &&
+    filteredHourlyRecords.length > 0
+  const hourlyWeatherFileFound = calculationMethod === 'hourly' && hasLoadedHourlyEpw
+  const hourlyWeatherFileMissing = calculationMethod === 'hourly' && !hourlyWeatherFileFound
+  const shouldShowBuiltInFileNotFound =
+    calculationMethod === 'hourly' &&
+    hourlyWeatherSourceType !== 'custom' &&
+    !hasLoadedHourlyEpw &&
+    !hourlyWeatherLoading &&
+    hourlyWeatherBuiltInMissing
+  const hourlyWeatherLoadError = hasLoadedHourlyEpw
+    ? ''
+    : (shouldShowBuiltInFileNotFound ? getBuiltInHourlyFallbackMessage(selectedCity.nom, t) : hourlyWeatherParseError)
+  const noScheduleMatchMessage = language === 'fr'
+    ? 'Le fichier EPW est chargé, mais aucun enregistrement ne correspond à l’horaire d’exploitation sélectionné.'
+    : 'EPW file loaded, but no records match the selected operating schedule.'
+  const hourlyWeatherWarning = hasLoadedHourlyEpw && !hasFilteredHourlyRecords
+    ? noScheduleMatchMessage
+    : (hasLoadedHourlyEpw ? '' : hourlyWeatherValidationWarning)
   const customWeatherFile = hourlyWeatherSourceType === 'custom'
   const loadedWeatherFileName = (hourlyWeatherFileName || builtInHourlyWeatherFileName || '').toLowerCase()
   const parsedWeatherRecordsCount = Number(hourlyWeatherRecordsLoaded || hourlyWeatherMetadata?.recordCount || 0)
@@ -2943,8 +3013,21 @@ function HvacDashboardApp() {
   )
   const effectiveSupplyAirTemperature = is100OA ? roomTemperature : supplyAirTemperature
   const weatherSourceCalculationLabel = calculationMethod === 'hourly'
-    ? (language === 'fr' ? 'EPW horaire' : 'Hourly EPW')
+    ? (hourlyWeatherSourceType === 'custom'
+      ? (language === 'fr' ? 'EPW horaire personnalisé' : 'Custom hourly EPW')
+      : (language === 'fr' ? 'EPW horaire intégré' : 'Built-in hourly EPW'))
     : (language === 'fr' ? 'Méthode heures BIN' : 'BIN hours method')
+
+  useEffect(() => {
+    if (calculationMethod !== 'hourly') return
+    if (!hasLoadedHourlyEpw) return
+    if (!hourlyWeatherParseError) return
+
+    const normalized = String(hourlyWeatherParseError).toLowerCase()
+    if (normalized.includes('built-in hourly weather file') || normalized.includes('fichier météo horaire intégré')) {
+      setHourlyWeatherParseError('')
+    }
+  }, [calculationMethod, hasLoadedHourlyEpw, hourlyWeatherParseError])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -2968,6 +3051,7 @@ function HvacDashboardApp() {
       setHourlyWeatherResolvedUrl('')
       setHourlyWeatherFetchStatus(0)
       setHourlyWeatherDebugRecordCount(0)
+      setHourlyWeatherBuiltInMissing(true)
       setHourlyWeatherParseError(fallbackMessage)
       return
     }
@@ -2985,10 +3069,20 @@ function HvacDashboardApp() {
     setHourlyWeatherResolvedUrl('')
     setHourlyWeatherFetchStatus(0)
     setHourlyWeatherDebugRecordCount(0)
+    setHourlyWeatherBuiltInMissing(false)
     setHourlyWeatherLoading(true)
     setHourlyWeatherParseError('')
 
-    const epwUrl = getBuiltInHourlyWeatherFileUrl(builtInHourlyWeatherFileName)
+    const fileName = getBuiltInEpwFileName(selectedCity?.nom || '')
+    if (!fileName) {
+      const fallbackMessage = getBuiltInHourlyFallbackMessage(selectedCity.nom, t)
+      setHourlyWeatherLoading(false)
+      setHourlyWeatherBuiltInMissing(true)
+      setHourlyWeatherParseError(fallbackMessage)
+      return
+    }
+
+    const epwUrl = buildEpwUrl(fileName)
     setHourlyWeatherResolvedUrl(epwUrl)
 
     fetch(`${epwUrl}?v=${Date.now()}`, { cache: 'no-store' })
@@ -2998,8 +3092,12 @@ function HvacDashboardApp() {
 
         setHourlyWeatherFetchStatus(response.status)
 
-        if (response.status !== 200 || !String(text || '').trim()) {
-          throw new Error('Built-in weather file request failed.')
+        if (!response.ok) {
+          throw new Error(`BUILT_IN_FETCH_NOT_OK::${response.status}`)
+        }
+
+        if (!String(text || '').trim()) {
+          throw new Error('BUILT_IN_EMPTY_RESPONSE')
         }
 
         return text
@@ -3007,29 +3105,44 @@ function HvacDashboardApp() {
       .then((text) => {
         if (!text || isCancelled) return
         if (isCancelled) return
+        const weatherLines = text
+          .split(/\r?\n/)
+          .filter((line) => /^\d{4},\d{1,2},\d{1,2},\d{1,2},/.test(String(line || '').trim()))
+
+        setHourlyWeatherDebugRecordCount(weatherLines.length)
+
+        if (weatherLines.length === 0) {
+          throw new Error('BUILT_IN_ZERO_RECORDS')
+        }
+
         const { weatherLocation, records } = epwTextToRecords(text)
         const metadata = getWeatherMetadataForCity(selectedCity.nom)
-        setHourlyWeatherDebugRecordCount(records.length)
 
-        if (records.length !== 8760) {
-          throw new Error('EPW weather file validation failed: expected exactly 8760 hourly records.')
+        if (!Array.isArray(records) || records.length === 0) {
+          throw new Error('EPW weather file validation failed: unable to parse hourly records.')
+        }
+
+        if (weatherLines.length < 8750) {
+          throw new Error('EPW weather file validation failed: expected at least 8750 valid hourly weather lines.')
         }
 
         if (WEATHER_PRODUCTION_MODE && metadata?.validationStatus !== 'official') {
           throw new Error('Production mode requires an official CWEC / Government of Canada weather file (validationStatus = official).')
         }
 
-        const isOfficialBuiltIn = isOfficialBuiltInWeatherFileMatch(builtInHourlyWeatherFileName, records.length)
+        const isOfficialBuiltIn = isOfficialBuiltInWeatherFileMatch(fileName, weatherLines.length)
         const resolvedMetadata = {
           ...(metadata || {}),
           validationStatus: isOfficialBuiltIn ? 'official' : (metadata?.validationStatus || ''),
+          recordCount: weatherLines.length,
         }
 
-        setHourlyWeatherFileName(builtInHourlyWeatherFileName)
+        setHourlyWeatherFileName(fileName)
         setHourlyWeatherFileLocation(weatherLocation || selectedCity.nom)
         setHourlyWeatherRecords(records)
         setHourlyWeatherMetadata(resolvedMetadata)
         setHourlyWeatherValidationWarning('')
+        setHourlyWeatherBuiltInMissing(false)
         const summary = calculateHourlySimulation(records, {
           scheduleMode,
           scheduleStartTime,
@@ -3055,9 +3168,8 @@ function HvacDashboardApp() {
         setHourlyWeatherOperatingHoursUsed(summary.operatingHoursUsed)
         setHourlyWeatherParseError('')
       })
-      .catch(() => {
+      .catch((error) => {
         if (isCancelled) return
-        const fallbackMessage = getBuiltInHourlyFallbackMessage(selectedCity.nom, t)
         setHourlyWeatherSourceType('none')
         setHourlyWeatherRecords([])
         setHourlyWeatherMetadata(null)
@@ -3066,7 +3178,25 @@ function HvacDashboardApp() {
         setHourlyWeatherRecordsLoaded(0)
         setHourlyWeatherOperatingHoursUsed(0)
         setHourlyWeatherDebugRecordCount(0)
-        setHourlyWeatherParseError(fallbackMessage)
+
+        const errorMessage = String(error?.message || '')
+        const shouldShowBuiltInFallbackMessage =
+          errorMessage.startsWith('BUILT_IN_FETCH_NOT_OK') ||
+          errorMessage === 'BUILT_IN_EMPTY_RESPONSE' ||
+          errorMessage === 'BUILT_IN_ZERO_RECORDS'
+        setHourlyWeatherBuiltInMissing(shouldShowBuiltInFallbackMessage)
+
+        const fetchStatusFromError = errorMessage.startsWith('BUILT_IN_FETCH_NOT_OK::')
+          ? errorMessage.split('::')[1]
+          : ''
+
+        setHourlyWeatherParseError(
+          shouldShowBuiltInFallbackMessage
+            ? `${getBuiltInHourlyFallbackMessage(selectedCity.nom, t)}${errorMessage.startsWith('BUILT_IN_FETCH_NOT_OK')
+              ? ` (${language === 'fr' ? 'EPW introuvable' : 'EPW not found'}: ${epwUrl}; Status: ${fetchStatusFromError || hourlyWeatherFetchStatus || '-'})`
+              : ''}`
+            : (error?.message || t.builtInWeatherLoadFailed)
+        )
       })
       .finally(() => {
         if (!isCancelled) setHourlyWeatherLoading(false)
@@ -3078,6 +3208,11 @@ function HvacDashboardApp() {
   }, [
     calculationMethod,
     selectedCity.nom,
+    scheduleMode,
+    scheduleStartTime,
+    scheduleEndTime,
+    scheduleDaysOption,
+    JSON.stringify(scheduleCustomDays),
     hourlyWeatherSourceType,
     t.noBuiltInWeatherAvailable,
     t.builtInWeatherLoadFailed,
@@ -3154,7 +3289,7 @@ function HvacDashboardApp() {
   const baseScheduleFactor = scheduleMode === '24-7'
     ? 1
     : Number((weeklyOperatingHours / 168).toFixed(4))
-  const isHourlySimulationActive = calculationMethod === 'hourly' && Boolean(hourlyWeatherSummary)
+  const isHourlySimulationActive = calculationMethod === 'hourly' && hasLoadedHourlyEpw
   const scheduleFactor = isHourlySimulationActive ? 1 : baseScheduleFactor
 
   const metrics = calculateHvacDashboardMetrics({
@@ -3309,10 +3444,17 @@ function HvacDashboardApp() {
     ? 1
     : Number((binWeeklyOperatingHours / 168).toFixed(4))
   const annualOperatingHours = isHourlySimulationActive
-    ? hourlyWeatherOperatingHoursUsed
-    : scheduleMode === '24-7'
-      ? originalBinHours
-      : Math.round(8760 * binScheduleFactor)
+    ? filteredHourlyRecords.length
+    : Math.round(weeklyOperatingHours * BIN_WEEKS_PER_YEAR)
+  const annualOperatingPercent = Number(((annualOperatingHours / 8760) * 100).toFixed(1))
+  const actualAnnualPercentageLabel = t.actualAnnualPercentage || (language === 'fr' ? 'Pourcentage annuel réel' : 'Actual annual percentage')
+  const activeScheduleDays = resolveScheduleActiveDays(scheduleDaysOption, scheduleCustomDays)
+  const setQuickScheduleDays = (option) => {
+    setScheduleDaysOption(option)
+    if (option !== 'custom') {
+      setScheduleCustomDays(resolveScheduleActiveDays(option, scheduleCustomDays))
+    }
+  }
   const effectiveBinData = selectedBinData.map(([tempC, hours]) => [tempC, Number((hours * binScheduleFactor).toFixed(3))])
   const totalBinHours = Math.round(effectiveBinData.reduce((total, item) => total + item[1], 0))
   const dominantBin = effectiveBinData.reduce((max, item) => (item[1] > max[1] ? item : max), effectiveBinData[0])
@@ -3329,14 +3471,11 @@ function HvacDashboardApp() {
   const hourlyHistogramBinSizeC = 5
   const hourlyWeatherHistogramData = calculationMethod === 'hourly'
     ? (() => {
-      if (!hourlyWeatherRecords.length) return []
+      if (!hasFilteredHourlyRecords) return []
 
       const buckets = new Map()
-      hourlyWeatherRecords.forEach((record) => {
-        if (!isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays)) {
-          return
-        }
-
+      filteredHourlyRecords.forEach((record) => {
+        if (!Number.isFinite(record?.dryBulbC)) return
         const binStart = Math.floor(record.dryBulbC / hourlyHistogramBinSizeC) * hourlyHistogramBinSizeC
         buckets.set(binStart, (buckets.get(binStart) || 0) + 1)
       })
@@ -3353,9 +3492,13 @@ function HvacDashboardApp() {
     })()
     : []
 
-  const weatherChartData = calculationMethod === 'bin' ? displayedBinData : hourlyWeatherHistogramData
+  const weatherChartData = calculationMethod === 'hourly'
+    ? hourlyWeatherHistogramData
+    : displayedBinData
   const showOriginalBinHoursInChart = calculationMethod === 'bin' && scheduleMode === 'custom'
-  const isWeatherChartEmpty = weatherChartData.length === 0
+  const isWeatherChartEmpty = calculationMethod === 'hourly'
+    ? (!hourlyWeatherRecords.length || !hasFilteredHourlyRecords || hourlyWeatherHistogramData.length === 0)
+    : weatherChartData.length === 0
   const selectedBinWeatherData = effectiveBinData.map(([tempC, hours]) => ({
     tempC,
     hours,
@@ -5773,8 +5916,8 @@ function HvacDashboardApp() {
                     {calculationMethod === 'bin'
                       ? (language === 'fr' ? 'Heures BIN sélectionnées' : 'Selected BIN hours')
                       : (language === 'fr'
-                        ? `Heures spécifiques sélectionnées : ${formatNumber(hourlyWeatherSummary?.operatingHoursUsed || annualOperatingHours, 0)} h/an`
-                        : `Selected specific hours: ${formatNumber(hourlyWeatherSummary?.operatingHoursUsed || annualOperatingHours, 0)} h/year`)}
+                        ? `Heures spécifiques sélectionnées : ${formatNumber(annualOperatingHours, 0)} h/an`
+                        : `Selected specific hours: ${formatNumber(annualOperatingHours, 0)} h/year`)}
                   </div>
                   {calculationMethod === 'bin' && (
                     <div className="mt-4 text-sm font-semibold text-slate-700">
@@ -5817,9 +5960,21 @@ function HvacDashboardApp() {
                       </div>
                       {calculationMethod === 'hourly' && (
                         <div className="mt-2 rounded-2xl border border-cyan-200 bg-cyan-50 p-3 text-xs font-semibold text-cyan-800">
-                          <div>{language === 'fr' ? `EPW URL utilisée : ${hourlyWeatherResolvedUrl || getBuiltInHourlyWeatherFileUrl(builtInHourlyWeatherFileName)}` : `EPW URL used: ${hourlyWeatherResolvedUrl || getBuiltInHourlyWeatherFileUrl(builtInHourlyWeatherFileName)}`}</div>
+                          <div>{language === 'fr' ? `EPW URL utilisée : ${hourlyWeatherResolvedUrl || buildEpwUrl(builtInHourlyWeatherFileName)}` : `EPW URL used: ${hourlyWeatherResolvedUrl || buildEpwUrl(builtInHourlyWeatherFileName)}`}</div>
                           <div>{language === 'fr' ? `Fetch status : ${hourlyWeatherFetchStatus || '-'}` : `Fetch status: ${hourlyWeatherFetchStatus || '-'}`}</div>
-                          <div>{language === 'fr' ? `Enregistrements EPW : ${formatNumber(hourlyWeatherDebugRecordCount || hourlyWeatherSummary?.recordsLoaded || 0, 0)}` : `EPW records: ${formatNumber(hourlyWeatherDebugRecordCount || hourlyWeatherSummary?.recordsLoaded || 0, 0)}`}</div>
+                          <div>{language === 'fr' ? `Enregistrements EPW : ${formatNumber(hourlyWeatherDebugRecordCount || hourlyWeatherSummary?.recordsLoaded || hourlyWeatherRecords.length || 0, 0)}` : `EPW records: ${formatNumber(hourlyWeatherDebugRecordCount || hourlyWeatherSummary?.recordsLoaded || hourlyWeatherRecords.length || 0, 0)}`}</div>
+                          <div>{language === 'fr' ? `Enregistrements EPW chargés : ${formatNumber(hourlyWeatherRecords.length, 0)}` : `EPW records loaded: ${formatNumber(hourlyWeatherRecords.length, 0)}`}</div>
+                          <div>{language === 'fr' ? `Enregistrements d’exploitation filtrés : ${formatNumber(filteredHourlyRecords.length, 0)}` : `Filtered operating records: ${formatNumber(filteredHourlyRecords.length, 0)}`}</div>
+                          <div>{language === 'fr' ? `Heure de début d’horaire : ${formatNumber(scheduleStartHour, 0)}` : `Schedule start hour: ${formatNumber(scheduleStartHour, 0)}`}</div>
+                          <div>{language === 'fr' ? `Heure de fin d’horaire : ${formatNumber(scheduleEndHour, 0)}` : `Schedule end hour: ${formatNumber(scheduleEndHour, 0)}`}</div>
+                          <div>{language === 'fr' ? 'Source de calcul : EPW horaire intégré' : 'Calculation source: Built-in hourly EPW'}</div>
+                        </div>
+                      )}
+                      {calculationMethod === 'hourly' && hourlyWeatherFileFound && (
+                        <div className="mt-3 rounded-2xl border border-emerald-300 bg-emerald-50 p-3 text-sm font-semibold text-emerald-900">
+                          <div>{language === 'fr' ? `Fichier chargé : ${hourlyWeatherFileName || builtInHourlyWeatherFileName}` : `Loaded file: ${hourlyWeatherFileName || builtInHourlyWeatherFileName}`}</div>
+                          <div>{language === 'fr' ? `Enregistrements chargés : ${formatNumber(hourlyWeatherRecords.length, 0)}` : `Records loaded: ${formatNumber(hourlyWeatherRecords.length, 0)}`}</div>
+                          <div>{language === 'fr' ? 'Source de calcul : EPW horaire intégré' : 'Calculation source: Built-in hourly EPW'}</div>
                         </div>
                       )}
                       {(hourlyWeatherFileName || (hourlyWeatherLoading && builtInHourlyWeatherFileName)) && (
@@ -5898,9 +6053,19 @@ function HvacDashboardApp() {
                           </div>
                         </>
                       )}
-                      {hourlyWeatherParseError && !(isOfficialBuiltInHourlyFileLoaded && hourlyWeatherRecords.length > 0) && (
+                      {shouldShowBuiltInFileNotFound && (
                         <div className="mt-2 rounded-2xl border border-amber-200 bg-amber-100 p-3 text-amber-900">
-                          {hourlyWeatherParseError}
+                          {hourlyWeatherLoadError}
+                        </div>
+                      )}
+                      {!shouldShowBuiltInFileNotFound && hourlyWeatherLoadError && hourlyWeatherSourceType === 'custom' && (
+                        <div className="mt-2 rounded-2xl border border-amber-200 bg-amber-100 p-3 text-amber-900">
+                          {hourlyWeatherLoadError}
+                        </div>
+                      )}
+                      {hourlyWeatherWarning && (
+                        <div className="mt-2 rounded-2xl border border-amber-200 bg-amber-100 p-3 text-amber-900">
+                          {hourlyWeatherWarning}
                         </div>
                       )}
                     </div>
@@ -5934,7 +6099,7 @@ function HvacDashboardApp() {
                 <div className="flex flex-wrap items-center gap-3">
                   <button
                     type="button"
-                    onClick={() => setScheduleDaysOption('mon-fri')}
+                    onClick={() => setQuickScheduleDays('mon-fri')}
                     className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${scheduleDaysOption === 'mon-fri' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
                     disabled={scheduleMode === '24-7'}
                   >
@@ -5942,7 +6107,7 @@ function HvacDashboardApp() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setScheduleDaysOption('mon-sat')}
+                    onClick={() => setQuickScheduleDays('mon-sat')}
                     className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${scheduleDaysOption === 'mon-sat' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
                     disabled={scheduleMode === '24-7'}
                   >
@@ -5950,7 +6115,7 @@ function HvacDashboardApp() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setScheduleDaysOption('seven-days')}
+                    onClick={() => setQuickScheduleDays('seven-days')}
                     className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${scheduleDaysOption === 'seven-days' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
                     disabled={scheduleMode === '24-7'}
                   >
@@ -5965,20 +6130,28 @@ function HvacDashboardApp() {
                     {t.customDays}
                   </button>
                 </div>
-                {scheduleDaysOption === 'custom' && scheduleMode !== '24-7' && (
-                  <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    {['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((day) => (
-                      <label key={day} className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm">
-                        <input
-                          type="checkbox"
-                          checked={scheduleCustomDays[day]}
-                          onChange={() => setScheduleCustomDays((current) => ({ ...current, [day]: !current[day] }))}
-                        />
+                <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {SCHEDULE_DAY_KEYS.map((day) => {
+                    const isActive = Boolean(activeScheduleDays[day])
+                    return (
+                      <button
+                        key={day}
+                        type="button"
+                        disabled={scheduleMode === '24-7'}
+                        onClick={() => {
+                          if (scheduleMode === '24-7') return
+                          const baseDays = resolveScheduleActiveDays(scheduleDaysOption, scheduleCustomDays)
+                          const toggledDays = { ...baseDays, [day]: !isActive }
+                          setScheduleDaysOption('custom')
+                          setScheduleCustomDays(toggledDays)
+                        }}
+                        className={`rounded-2xl border px-3 py-2 text-sm font-semibold shadow-sm transition ${isActive ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}
+                      >
                         {t[day]}
-                      </label>
-                    ))}
-                  </div>
-                )}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <div className="rounded-2xl bg-white p-4 shadow-sm">
@@ -5996,6 +6169,9 @@ function HvacDashboardApp() {
                 <div className="rounded-2xl bg-white p-4 shadow-sm">
                   <div className="text-sm text-slate-500">{t.scheduleFactor}</div>
                   <div className="text-2xl font-bold text-slate-800">{(scheduleFactor * 100).toFixed(1)}%</div>
+                  <div className="mt-1 block text-xs font-medium text-slate-600">
+                    {actualAnnualPercentageLabel}: {annualOperatingPercent.toFixed(1)}%
+                  </div>
                 </div>
               </div>
             </div>
@@ -6024,8 +6200,8 @@ function HvacDashboardApp() {
                       ? `Heures BIN sélectionnées : ${formatNumber(annualOperatingHours, 0)} h/an`
                       : `Selected BIN hours: ${formatNumber(annualOperatingHours, 0)} h/year`)
                     : (language === 'fr'
-                      ? `Heures spécifiques sélectionnées : ${formatNumber(hourlyWeatherSummary?.operatingHoursUsed || annualOperatingHours, 0)} h/an`
-                      : `Selected specific hours: ${formatNumber(hourlyWeatherSummary?.operatingHoursUsed || annualOperatingHours, 0)} h/year`)}
+                      ? `Heures spécifiques sélectionnées : ${formatNumber(annualOperatingHours, 0)} h/an`
+                      : `Selected specific hours: ${formatNumber(annualOperatingHours, 0)} h/year`)}
                 </span>
                 {calculationMethod === 'hourly' && (
                   <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-cyan-700">
