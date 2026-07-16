@@ -21,6 +21,7 @@ import {
 } from 'recharts'
 
 const WEATHER_PRODUCTION_MODE = false
+const BIN_WEEKS_PER_YEAR = 52.142857
 
 const monthlyFactors = [1, 0.95, 0.83, 0.64, 0.44, 0.28, 0.18, 0.2, 0.36, 0.58, 0.82, 0.96]
 const DEFAULT_SCHEDULE_CUSTOM_DAYS = {
@@ -31,6 +32,12 @@ const DEFAULT_SCHEDULE_CUSTOM_DAYS = {
   fri: true,
   sat: false,
   sun: false,
+}
+const SCHEDULE_DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+const PRESET_SCHEDULE_DAYS = {
+  'mon-fri': { mon: true, tue: true, wed: true, thu: true, fri: true, sat: false, sun: false },
+  'mon-sat': { mon: true, tue: true, wed: true, thu: true, fri: true, sat: true, sun: false },
+  'seven-days': { mon: true, tue: true, wed: true, thu: true, fri: true, sat: true, sun: true },
 }
 
 const BUILT_IN_EPW_FILES = {
@@ -308,6 +315,11 @@ function computeScheduleDailyHours(startTime, endTime, mode) {
   if (start === end) return 24
   if (end > start) return (end - start) / 60
   return ((24 * 60 - start) + end) / 60
+}
+
+function resolveScheduleActiveDays(option, customDays) {
+  if (option === 'custom') return { ...DEFAULT_SCHEDULE_CUSTOM_DAYS, ...customDays }
+  return { ...PRESET_SCHEDULE_DAYS[option] }
 }
 
 function epwTextToRecords(text) {
@@ -1896,6 +1908,7 @@ const translations = {
     weeklyOperatingHours: 'Heures d exploitation par semaine',
     annualOperatingHours: 'Heures d exploitation annuelles',
     scheduleFactor: 'Facteur d exploitation',
+    actualAnnualPercentage: 'Pourcentage annuel réel',
     calculationMode: 'Mode de calcul',
     methodSelection: 'Méthode de calcul',
     binHoursMethod: 'Méthode heures BIN',
@@ -2048,6 +2061,27 @@ const translations = {
     originalBinHours: 'Original BIN hours',
     effectiveBinHours: 'Effective BIN hours',
     perYear: 'h/yr',
+    operatingSchedule: 'Operating schedule',
+    startTime: 'Start time',
+    endTime: 'End time',
+    operatingDays: 'Operating days',
+    mondayToFriday: 'Monday to Friday',
+    mondayToSaturday: 'Monday to Saturday',
+    sevenDaysWeek: '7 days/week',
+    customDays: 'Custom',
+    dailyOperatingHours: 'Operating hours per day',
+    weeklyOperatingHours: 'Operating hours per week',
+    annualOperatingHours: 'Annual operating hours',
+    scheduleFactor: 'Operating factor',
+    actualAnnualPercentage: 'Actual annual percentage',
+    scheduleNote: 'HESES uses annual BIN hours. In full BIN mode, original BIN hours are used. In custom schedule mode, BIN hours are adjusted to the selected schedule. Exact hour-by-hour filtering requires an 8760 hourly weather file.',
+    mon: 'Mon',
+    tue: 'Tue',
+    wed: 'Wed',
+    thu: 'Thu',
+    fri: 'Fri',
+    sat: 'Sat',
+    sun: 'Sun',
     calculationMode: 'Calculation mode',
     methodSelection: 'Calculation method',
     binHoursMethod: 'BIN hours method',
@@ -2697,6 +2731,7 @@ function HvacDashboardApp() {
   const [hourlyWeatherResolvedUrl, setHourlyWeatherResolvedUrl] = useState('')
   const [hourlyWeatherFetchStatus, setHourlyWeatherFetchStatus] = useState(0)
   const [hourlyWeatherDebugRecordCount, setHourlyWeatherDebugRecordCount] = useState(0)
+  const [hourlyWeatherBuiltInMissing, setHourlyWeatherBuiltInMissing] = useState(false)
   const [scheduleStartTime, setScheduleStartTime] = useState(() => initialProjectSettings.scheduleStartTime || '06:00')
   const [scheduleEndTime, setScheduleEndTime] = useState(() => initialProjectSettings.scheduleEndTime || '18:00')
   const [scheduleDaysOption, setScheduleDaysOption] = useState(() => {
@@ -2929,26 +2964,35 @@ function HvacDashboardApp() {
     selectedReheatEnergySource.includes('heat pump')
   const builtInHourlyWeatherFilePath = getBuiltInHourlyWeatherFilePath(selectedCity.nom)
   const builtInHourlyWeatherFileName = getBuiltInHourlyWeatherFileName(selectedCity.nom)
-  const hasLoadedHourlyEpw = Array.isArray(hourlyWeatherRecords) && hourlyWeatherRecords.length >= 8750
+  const isHourlyMode = calculationMethod === 'hourly'
+  const hasLoadedHourlyEpw =
+    isHourlyMode &&
+    Array.isArray(hourlyWeatherRecords) &&
+    hourlyWeatherRecords.length >= 8750
   const scheduleStartHour = Number(String(scheduleStartTime || '00:00').split(':')[0] || 0)
   const scheduleEndHour = Number(String(scheduleEndTime || '00:00').split(':')[0] || 0)
   const filteredHourlyRecords = calculationMethod === 'hourly'
     ? hourlyWeatherRecords.filter((record) => isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays))
     : []
+  const hasFilteredHourlyRecords =
+    hasLoadedHourlyEpw &&
+    Array.isArray(filteredHourlyRecords) &&
+    filteredHourlyRecords.length > 0
   const hourlyWeatherFileFound = calculationMethod === 'hourly' && hasLoadedHourlyEpw
   const hourlyWeatherFileMissing = calculationMethod === 'hourly' && !hourlyWeatherFileFound
   const shouldShowBuiltInFileNotFound =
     calculationMethod === 'hourly' &&
     hourlyWeatherSourceType !== 'custom' &&
     !hasLoadedHourlyEpw &&
-    (hourlyWeatherFetchStatus >= 400 || hourlyWeatherRecords.length === 0)
+    !hourlyWeatherLoading &&
+    hourlyWeatherBuiltInMissing
   const hourlyWeatherLoadError = hasLoadedHourlyEpw
     ? ''
     : (shouldShowBuiltInFileNotFound ? getBuiltInHourlyFallbackMessage(selectedCity.nom, t) : hourlyWeatherParseError)
   const noScheduleMatchMessage = language === 'fr'
     ? 'Le fichier EPW est chargé, mais aucun enregistrement ne correspond à l’horaire d’exploitation sélectionné.'
     : 'EPW file loaded, but no records match the selected operating schedule.'
-  const hourlyWeatherWarning = hasLoadedHourlyEpw && filteredHourlyRecords.length === 0
+  const hourlyWeatherWarning = hasLoadedHourlyEpw && !hasFilteredHourlyRecords
     ? noScheduleMatchMessage
     : (hasLoadedHourlyEpw ? '' : hourlyWeatherValidationWarning)
   const customWeatherFile = hourlyWeatherSourceType === 'custom'
@@ -3007,6 +3051,7 @@ function HvacDashboardApp() {
       setHourlyWeatherResolvedUrl('')
       setHourlyWeatherFetchStatus(0)
       setHourlyWeatherDebugRecordCount(0)
+      setHourlyWeatherBuiltInMissing(true)
       setHourlyWeatherParseError(fallbackMessage)
       return
     }
@@ -3024,6 +3069,7 @@ function HvacDashboardApp() {
     setHourlyWeatherResolvedUrl('')
     setHourlyWeatherFetchStatus(0)
     setHourlyWeatherDebugRecordCount(0)
+    setHourlyWeatherBuiltInMissing(false)
     setHourlyWeatherLoading(true)
     setHourlyWeatherParseError('')
 
@@ -3031,6 +3077,7 @@ function HvacDashboardApp() {
     if (!fileName) {
       const fallbackMessage = getBuiltInHourlyFallbackMessage(selectedCity.nom, t)
       setHourlyWeatherLoading(false)
+      setHourlyWeatherBuiltInMissing(true)
       setHourlyWeatherParseError(fallbackMessage)
       return
     }
@@ -3095,6 +3142,7 @@ function HvacDashboardApp() {
         setHourlyWeatherRecords(records)
         setHourlyWeatherMetadata(resolvedMetadata)
         setHourlyWeatherValidationWarning('')
+        setHourlyWeatherBuiltInMissing(false)
         const summary = calculateHourlySimulation(records, {
           scheduleMode,
           scheduleStartTime,
@@ -3136,6 +3184,7 @@ function HvacDashboardApp() {
           errorMessage.startsWith('BUILT_IN_FETCH_NOT_OK') ||
           errorMessage === 'BUILT_IN_EMPTY_RESPONSE' ||
           errorMessage === 'BUILT_IN_ZERO_RECORDS'
+        setHourlyWeatherBuiltInMissing(shouldShowBuiltInFallbackMessage)
 
         const fetchStatusFromError = errorMessage.startsWith('BUILT_IN_FETCH_NOT_OK::')
           ? errorMessage.split('::')[1]
@@ -3159,6 +3208,11 @@ function HvacDashboardApp() {
   }, [
     calculationMethod,
     selectedCity.nom,
+    scheduleMode,
+    scheduleStartTime,
+    scheduleEndTime,
+    scheduleDaysOption,
+    JSON.stringify(scheduleCustomDays),
     hourlyWeatherSourceType,
     t.noBuiltInWeatherAvailable,
     t.builtInWeatherLoadFailed,
@@ -3390,10 +3444,23 @@ function HvacDashboardApp() {
     ? 1
     : Number((binWeeklyOperatingHours / 168).toFixed(4))
   const annualOperatingHours = isHourlySimulationActive
-    ? (hourlyWeatherOperatingHoursUsed || filteredHourlyRecords.length)
-    : scheduleMode === '24-7'
-      ? originalBinHours
-      : Math.round(8760 * binScheduleFactor)
+    ? filteredHourlyRecords.length
+    : Math.round(weeklyOperatingHours * BIN_WEEKS_PER_YEAR)
+  const annualOperatingPercent = Number(((annualOperatingHours / 8760) * 100).toFixed(1))
+  const activeScheduleDays = resolveScheduleActiveDays(scheduleDaysOption, scheduleCustomDays)
+  const setQuickScheduleDays = (option) => {
+    setScheduleDaysOption(option)
+    if (option !== 'custom') {
+      setScheduleCustomDays(resolveScheduleActiveDays(option, scheduleCustomDays))
+    }
+  }
+  const toggleScheduleDay = (dayKey) => {
+    if (scheduleMode === '24-7') return
+    const baseDays = resolveScheduleActiveDays(scheduleDaysOption, scheduleCustomDays)
+    const toggledDays = { ...baseDays, [dayKey]: !Boolean(baseDays[dayKey]) }
+    setScheduleDaysOption('custom')
+    setScheduleCustomDays(toggledDays)
+  }
   const effectiveBinData = selectedBinData.map(([tempC, hours]) => [tempC, Number((hours * binScheduleFactor).toFixed(3))])
   const totalBinHours = Math.round(effectiveBinData.reduce((total, item) => total + item[1], 0))
   const dominantBin = effectiveBinData.reduce((max, item) => (item[1] > max[1] ? item : max), effectiveBinData[0])
@@ -3410,10 +3477,11 @@ function HvacDashboardApp() {
   const hourlyHistogramBinSizeC = 5
   const hourlyWeatherHistogramData = calculationMethod === 'hourly'
     ? (() => {
-      if (!filteredHourlyRecords.length) return []
+      if (!hasFilteredHourlyRecords) return []
 
       const buckets = new Map()
       filteredHourlyRecords.forEach((record) => {
+        if (!Number.isFinite(record?.dryBulbC)) return
         const binStart = Math.floor(record.dryBulbC / hourlyHistogramBinSizeC) * hourlyHistogramBinSizeC
         buckets.set(binStart, (buckets.get(binStart) || 0) + 1)
       })
@@ -3430,9 +3498,13 @@ function HvacDashboardApp() {
     })()
     : []
 
-  const weatherChartData = calculationMethod === 'bin' ? displayedBinData : hourlyWeatherHistogramData
+  const weatherChartData = calculationMethod === 'hourly'
+    ? hourlyWeatherHistogramData
+    : displayedBinData
   const showOriginalBinHoursInChart = calculationMethod === 'bin' && scheduleMode === 'custom'
-  const isWeatherChartEmpty = weatherChartData.length === 0
+  const isWeatherChartEmpty = calculationMethod === 'hourly'
+    ? (!hourlyWeatherRecords.length || !hasFilteredHourlyRecords || hourlyWeatherHistogramData.length === 0)
+    : weatherChartData.length === 0
   const selectedBinWeatherData = effectiveBinData.map(([tempC, hours]) => ({
     tempC,
     hours,
@@ -5850,8 +5922,8 @@ function HvacDashboardApp() {
                     {calculationMethod === 'bin'
                       ? (language === 'fr' ? 'Heures BIN sélectionnées' : 'Selected BIN hours')
                       : (language === 'fr'
-                        ? `Heures spécifiques sélectionnées : ${formatNumber(hourlyWeatherSummary?.operatingHoursUsed || annualOperatingHours, 0)} h/an`
-                        : `Selected specific hours: ${formatNumber(hourlyWeatherSummary?.operatingHoursUsed || annualOperatingHours, 0)} h/year`)}
+                        ? `Heures spécifiques sélectionnées : ${formatNumber(annualOperatingHours, 0)} h/an`
+                        : `Selected specific hours: ${formatNumber(annualOperatingHours, 0)} h/year`)}
                   </div>
                   {calculationMethod === 'bin' && (
                     <div className="mt-4 text-sm font-semibold text-slate-700">
@@ -5901,7 +5973,7 @@ function HvacDashboardApp() {
                           <div>{language === 'fr' ? `Enregistrements d’exploitation filtrés : ${formatNumber(filteredHourlyRecords.length, 0)}` : `Filtered operating records: ${formatNumber(filteredHourlyRecords.length, 0)}`}</div>
                           <div>{language === 'fr' ? `Heure de début d’horaire : ${formatNumber(scheduleStartHour, 0)}` : `Schedule start hour: ${formatNumber(scheduleStartHour, 0)}`}</div>
                           <div>{language === 'fr' ? `Heure de fin d’horaire : ${formatNumber(scheduleEndHour, 0)}` : `Schedule end hour: ${formatNumber(scheduleEndHour, 0)}`}</div>
-                          <div>{language === 'fr' ? 'Source de calcul : EPW horaire' : 'Calculation source: EPW hourly'}</div>
+                          <div>{language === 'fr' ? 'Source de calcul : EPW horaire intégré' : 'Calculation source: Built-in hourly EPW'}</div>
                         </div>
                       )}
                       {calculationMethod === 'hourly' && hourlyWeatherFileFound && (
@@ -6005,6 +6077,9 @@ function HvacDashboardApp() {
                     </div>
                   )}
                 </div>
+                <div className="mb-3 rounded-xl border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-bold text-cyan-900">
+                  VERSION DASHBOARD : schedule-visible-days-v2
+                </div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className="block">
                     <div className="mb-2 text-sm font-semibold text-slate-800">{t.startTime}</div>
@@ -6029,72 +6104,164 @@ function HvacDashboardApp() {
                 </div>
               </div>
               <div>
-                <div className="mb-2 font-semibold text-slate-800">{t.operatingDays}</div>
+                <div className="mb-2 font-semibold text-slate-800">
+                  {language === 'fr' ? 'Jours d’exploitation' : 'Operating days'}
+                </div>
                 <div className="flex flex-wrap items-center gap-3">
                   <button
                     type="button"
-                    onClick={() => setScheduleDaysOption('mon-fri')}
-                    className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${scheduleDaysOption === 'mon-fri' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
+                    onClick={() => setQuickScheduleDays('mon-fri')}
+                    className="rounded-2xl transition"
+                    style={scheduleDaysOption === 'mon-fri'
+                      ? { minWidth: '80px', padding: '10px 16px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '80px', padding: '10px 16px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
                     disabled={scheduleMode === '24-7'}
                   >
-                    {t.mondayToFriday}
+                    {language === 'fr' ? 'Lundi à vendredi' : 'Monday to Friday'}
                   </button>
                   <button
                     type="button"
-                    onClick={() => setScheduleDaysOption('mon-sat')}
-                    className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${scheduleDaysOption === 'mon-sat' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
+                    onClick={() => setQuickScheduleDays('mon-sat')}
+                    className="rounded-2xl transition"
+                    style={scheduleDaysOption === 'mon-sat'
+                      ? { minWidth: '80px', padding: '10px 16px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '80px', padding: '10px 16px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
                     disabled={scheduleMode === '24-7'}
                   >
-                    {t.mondayToSaturday}
+                    {language === 'fr' ? 'Lundi à samedi' : 'Monday to Saturday'}
                   </button>
                   <button
                     type="button"
-                    onClick={() => setScheduleDaysOption('seven-days')}
-                    className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${scheduleDaysOption === 'seven-days' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
+                    onClick={() => setQuickScheduleDays('seven-days')}
+                    className="rounded-2xl transition"
+                    style={scheduleDaysOption === 'seven-days'
+                      ? { minWidth: '80px', padding: '10px 16px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '80px', padding: '10px 16px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
                     disabled={scheduleMode === '24-7'}
                   >
-                    {t.sevenDaysWeek}
+                    {language === 'fr' ? '7 jours/semaine' : '7 days/week'}
                   </button>
                   <button
                     type="button"
                     onClick={() => setScheduleDaysOption('custom')}
-                    className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${scheduleDaysOption === 'custom' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
+                    className="rounded-2xl transition"
+                    style={scheduleDaysOption === 'custom'
+                      ? { minWidth: '80px', padding: '10px 16px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '80px', padding: '10px 16px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
                     disabled={scheduleMode === '24-7'}
                   >
-                    {t.customDays}
+                    {language === 'fr' ? 'Personnalisé' : 'Custom'}
                   </button>
                 </div>
-                {scheduleDaysOption === 'custom' && scheduleMode !== '24-7' && (
-                  <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    {['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((day) => (
-                      <label key={day} className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm">
-                        <input
-                          type="checkbox"
-                          checked={scheduleCustomDays[day]}
-                          onChange={() => setScheduleCustomDays((current) => ({ ...current, [day]: !current[day] }))}
-                        />
-                        {t[day]}
-                      </label>
-                    ))}
-                  </div>
-                )}
+                <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <button
+                    type="button"
+                    disabled={scheduleMode === '24-7'}
+                    onClick={() => toggleScheduleDay('mon')}
+                    className="inline-flex min-h-10 min-w-[64px] items-center justify-center rounded-2xl shadow-sm transition whitespace-nowrap"
+                    style={Boolean(activeScheduleDays.mon)
+                      ? { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
+                  >
+                    {language === 'fr' ? 'Lun' : 'Mon'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={scheduleMode === '24-7'}
+                    onClick={() => toggleScheduleDay('tue')}
+                    className="inline-flex min-h-10 min-w-[64px] items-center justify-center rounded-2xl shadow-sm transition whitespace-nowrap"
+                    style={Boolean(activeScheduleDays.tue)
+                      ? { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
+                  >
+                    {language === 'fr' ? 'Mar' : 'Tue'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={scheduleMode === '24-7'}
+                    onClick={() => toggleScheduleDay('wed')}
+                    className="inline-flex min-h-10 min-w-[64px] items-center justify-center rounded-2xl shadow-sm transition whitespace-nowrap"
+                    style={Boolean(activeScheduleDays.wed)
+                      ? { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
+                  >
+                    {language === 'fr' ? 'Mer' : 'Wed'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={scheduleMode === '24-7'}
+                    onClick={() => toggleScheduleDay('thu')}
+                    className="inline-flex min-h-10 min-w-[64px] items-center justify-center rounded-2xl shadow-sm transition whitespace-nowrap"
+                    style={Boolean(activeScheduleDays.thu)
+                      ? { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
+                  >
+                    {language === 'fr' ? 'Jeu' : 'Thu'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={scheduleMode === '24-7'}
+                    onClick={() => toggleScheduleDay('fri')}
+                    className="inline-flex min-h-10 min-w-[64px] items-center justify-center rounded-2xl shadow-sm transition whitespace-nowrap"
+                    style={Boolean(activeScheduleDays.fri)
+                      ? { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
+                  >
+                    {language === 'fr' ? 'Ven' : 'Fri'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={scheduleMode === '24-7'}
+                    onClick={() => toggleScheduleDay('sat')}
+                    className="inline-flex min-h-10 min-w-[64px] items-center justify-center rounded-2xl shadow-sm transition whitespace-nowrap"
+                    style={Boolean(activeScheduleDays.sat)
+                      ? { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
+                  >
+                    {language === 'fr' ? 'Sam' : 'Sat'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={scheduleMode === '24-7'}
+                    onClick={() => toggleScheduleDay('sun')}
+                    className="inline-flex min-h-10 min-w-[64px] items-center justify-center rounded-2xl shadow-sm transition whitespace-nowrap"
+                    style={Boolean(activeScheduleDays.sun)
+                      ? { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
+                  >
+                    {language === 'fr' ? 'Dim' : 'Sun'}
+                  </button>
+                </div>
               </div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <div className="rounded-2xl bg-white p-4 shadow-sm">
-                  <div className="text-sm text-slate-500">{t.dailyOperatingHours}</div>
+                  <div className="text-sm text-slate-500">
+                    {language === 'fr' ? 'Heures d’exploitation par jour' : 'Operating hours per day'}
+                  </div>
                   <div className="text-2xl font-bold text-slate-800">{dailyOperatingHours.toFixed(1)} h/day</div>
                 </div>
                 <div className="rounded-2xl bg-white p-4 shadow-sm">
-                  <div className="text-sm text-slate-500">{t.weeklyOperatingHours}</div>
+                  <div className="text-sm text-slate-500">
+                    {language === 'fr' ? 'Heures d’exploitation par semaine' : 'Operating hours per week'}
+                  </div>
                   <div className="text-2xl font-bold text-slate-800">{weeklyOperatingHours.toFixed(1)} h/week</div>
                 </div>
                 <div className="rounded-2xl bg-white p-4 shadow-sm">
-                  <div className="text-sm text-slate-500">{t.annualOperatingHours}</div>
+                  <div className="text-sm text-slate-500">
+                    {language === 'fr' ? 'Heures d’exploitation annuelles' : 'Annual operating hours'}
+                  </div>
                   <div className="text-2xl font-bold text-slate-800">{annualOperatingHours.toLocaleString()} h/year</div>
                 </div>
                 <div className="rounded-2xl bg-white p-4 shadow-sm">
-                  <div className="text-sm text-slate-500">{t.scheduleFactor}</div>
-                  <div className="text-2xl font-bold text-slate-800">{(scheduleFactor * 100).toFixed(1)}%</div>
+                  <div className="text-sm text-slate-500">
+                    {language === 'fr' ? 'Facteur d’exploitation' : 'Operating factor'}
+                  </div>
+                  <div className="text-2xl font-bold text-slate-800">{annualOperatingPercent.toFixed(1)}%</div>
+                  <div className="mt-1 block text-xs font-medium text-slate-600">
+                    {language === 'fr'
+                      ? 'Pourcentage annuel réel'
+                      : 'Actual annual percentage'}: {annualOperatingPercent.toFixed(1)}%
+                  </div>
                 </div>
               </div>
             </div>
@@ -6123,8 +6290,8 @@ function HvacDashboardApp() {
                       ? `Heures BIN sélectionnées : ${formatNumber(annualOperatingHours, 0)} h/an`
                       : `Selected BIN hours: ${formatNumber(annualOperatingHours, 0)} h/year`)
                     : (language === 'fr'
-                      ? `Heures spécifiques sélectionnées : ${formatNumber(hourlyWeatherSummary?.operatingHoursUsed || annualOperatingHours, 0)} h/an`
-                      : `Selected specific hours: ${formatNumber(hourlyWeatherSummary?.operatingHoursUsed || annualOperatingHours, 0)} h/year`)}
+                      ? `Heures spécifiques sélectionnées : ${formatNumber(annualOperatingHours, 0)} h/an`
+                      : `Selected specific hours: ${formatNumber(annualOperatingHours, 0)} h/year`)}
                 </span>
                 {calculationMethod === 'hourly' && (
                   <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-cyan-700">
