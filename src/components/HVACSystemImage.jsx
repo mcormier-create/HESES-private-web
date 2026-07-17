@@ -154,6 +154,39 @@ const localizedSchematics = {
   },
 }
 
+function parseDisplayNumber(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string') return null
+
+  const match = value.match(/-?[\d\s.,\u00A0]+/)
+  if (!match) return null
+  const normalized = match[0]
+    .replace(/[\s\u00A0]/g, '')
+    .replace(/,/g, '')
+  const parsed = Number(normalized)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function parseFlowWithUnit(value) {
+  if (typeof value !== 'string') return null
+  const match = value.match(/(-?[\d\s.,\u00A0]+)(.*)/)
+  if (!match) return null
+
+  const parsedValue = parseDisplayNumber(match[1])
+  if (!Number.isFinite(parsedValue)) return null
+  return {
+    value: parsedValue,
+    unit: (match[2] || '').trim(),
+  }
+}
+
+function formatFlowWithUnit(value, unit, lang) {
+  if (!Number.isFinite(value)) return '-'
+  const locale = lang === 'fr' ? 'fr-CA' : 'en-CA'
+  const formattedValue = Math.round(value).toLocaleString(locale)
+  return unit ? `${formattedValue} ${unit}` : formattedValue
+}
+
 export default function HVACSystemImage({
   schematicId = '',
   recoveryType = 'enthalpy',
@@ -279,6 +312,38 @@ export default function HVACSystemImage({
         { title: text.humifogPump, value: data.humifogKw ?? '-' },
         { title: text.oaAirflow, value: data.airflow ?? '-' },
       ]
+  const parsedTotalFlow = parseFlowWithUnit(String(data.totalAirflow ?? data.supplyAirFlow ?? data.airflow ?? ''))
+  const parsedOaPercent = parseDisplayNumber(String(data.oaPercent ?? ''))
+  const canComputeFreeCoolingFlows = Boolean(
+    isFreeCoolingSystem &&
+    parsedTotalFlow &&
+    Number.isFinite(parsedTotalFlow.value) &&
+    Number.isFinite(parsedOaPercent)
+  )
+  const computedOutdoorAirFlow = canComputeFreeCoolingFlows
+    ? parsedTotalFlow.value * (parsedOaPercent / 100)
+    : null
+  const computedReturnAirFlow = canComputeFreeCoolingFlows
+    ? parsedTotalFlow.value - computedOutdoorAirFlow
+    : null
+  const computedExhaustAirFlow = canComputeFreeCoolingFlows
+    ? computedOutdoorAirFlow
+    : null
+  const computedSupplyAirFlow = canComputeFreeCoolingFlows
+    ? parsedTotalFlow.value
+    : null
+  const displayedOutdoorAirFlow = canComputeFreeCoolingFlows
+    ? formatFlowWithUnit(computedOutdoorAirFlow, parsedTotalFlow.unit, lang)
+    : (data.outsideAirFlow ?? data.airflow ?? '-')
+  const displayedReturnAirFlow = canComputeFreeCoolingFlows
+    ? formatFlowWithUnit(computedReturnAirFlow, parsedTotalFlow.unit, lang)
+    : (data.returnAirFlow ?? '-')
+  const displayedExhaustAirFlow = canComputeFreeCoolingFlows
+    ? formatFlowWithUnit(computedExhaustAirFlow, parsedTotalFlow.unit, lang)
+    : (data.exhaustAirFlow ?? data.outsideAirFlow ?? '-')
+  const displayedSupplyAirFlow = canComputeFreeCoolingFlows
+    ? formatFlowWithUnit(computedSupplyAirFlow, parsedTotalFlow.unit, lang)
+    : (data.supplyAirFlow ?? data.totalAirflow ?? '-')
   const labelPositions = isFreeCoolingSystem
     ? {
         outdoorAir: 'left-[4%] top-[38%]',
@@ -372,19 +437,19 @@ export default function HVACSystemImage({
             <AnimatedFlowLabel
               className={labelPositions.oaDamper}
               title={text.oaDamper}
-              value={data.outsideAirFlow ?? data.airflow ?? '-'}
+              value={displayedOutdoorAirFlow}
               color="blue"
             />
             <AnimatedFlowLabel
               className={labelPositions.returnDamper}
               title={text.returnDamper}
-              value={data.returnAirFlow ?? '-'}
+              value={displayedReturnAirFlow}
               color="orange"
             />
             <AnimatedFlowLabel
               className={labelPositions.exhaustDamper}
               title={text.exhaustDamper}
-              value={data.exhaustAirFlow ?? data.returnAirFlow ?? '-'}
+              value={displayedExhaustAirFlow}
               color="red"
             />
             <OverlayLabel
@@ -397,7 +462,7 @@ export default function HVACSystemImage({
             <AnimatedFlowLabel
               className={labelPositions.supplyAirflow}
               title={text.supplyAirflow}
-              value={data.supplyAirFlow ?? data.totalAirflow ?? '-'}
+              value={displayedSupplyAirFlow}
               color="blue"
             />
           </>
