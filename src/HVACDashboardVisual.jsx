@@ -2949,12 +2949,10 @@ function HvacDashboardApp() {
   const effectiveOutsideAirCFM = Math.round(outsideAirCFM * activeFraction)
   const calculatedReturnAirCFM = Math.max(0, outsideAirCFM - effectiveOutsideAirCFM)
   const noRecoverySelection = heatRecoverySystems[language][0]
-  const displayedHeatRecoverySystems = isFreeCoolingMode
-    ? [noRecoverySelection]
-    : heatRecoverySystems[language]
-  const activeSelectedRecoveries = isFreeCoolingMode
-    ? [noRecoverySelection]
-    : selectedRecoveries
+  const displayedHeatRecoverySystems = heatRecoverySystems[language]
+  const activeSelectedRecoveries = selectedRecoveries?.length > 0
+    ? selectedRecoveries
+    : [noRecoverySelection]
   const is100OA = ventilationMode.type === 'outside-air'
   const selectedReheatEnergySource = String(selectedReheatSystem?.energie || '')
     .normalize('NFD')
@@ -3327,6 +3325,11 @@ function HvacDashboardApp() {
     grossReheatKW,
     reheatEnergyKW,
     recoveryEnergyReductionKW,
+    isThermalWheel,
+    wheelAirflowCFM,
+    exhaustAirCFM,
+    temperatureDeltaF,
+    wheelRecoveryThermalKw,
     steamEnergyKW,
     recoveredHeatKW,
     netReheatKW,
@@ -3355,6 +3358,14 @@ function HvacDashboardApp() {
   const selectedRecoveryName = selectedRecovery?.nom ?? ''
   const selectedRecoveryNameLower = selectedRecoveryName.toLowerCase()
   const isNoRecovery = Boolean(selectedRecovery?.noRecovery)
+  const effectiveRecoveryReductionKw = Math.max(0, Number(recoveryEnergyReductionKW) || 0)
+  const isWheelBypassedInFreeCooling = Boolean(isFreeCoolingMode && isNoRecovery)
+  const selectedRecoveryDisplayName = isWheelBypassedInFreeCooling
+    ? (language === 'fr' ? 'Roue thermique bypassée' : 'Thermal wheel bypassed')
+    : (selectedRecovery?.nom || (language === 'fr' ? 'Aucune récupération' : 'No recovery'))
+  const selectedRecoveryPowerDisplay = isWheelBypassedInFreeCooling
+    ? (language === 'fr' ? 'bypass' : 'bypassed')
+    : (effectiveRecoveryReductionKw > 0 ? `-${effectiveRecoveryReductionKw} kW` : '0 kW')
   const humidifierType = 'HUMIFOG'
 
   const recoveryGroup = isNoRecovery
@@ -5739,8 +5750,13 @@ function HvacDashboardApp() {
                       <td className="p-4 text-center">-</td>
                       <td className="p-4 text-center">-</td>
                       <td className="p-4 text-center text-green-700 font-bold">
-                        {activeSelectedRecoveries[0]?.nom}
-                        <div className="mt-2">{isNoRecovery ? '0' : `-${recoveryEnergyReductionKW}`} kW</div>
+                        {selectedRecoveryDisplayName}
+                        <div className="mt-2">{selectedRecoveryPowerDisplay}</div>
+                        {isThermalWheel && !isNoRecovery && effectiveRecoveryReductionKw > 0 && (
+                          <div className="mt-1 text-xs font-semibold text-slate-600">
+                            OA {Math.round(wheelAirflowCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} CFM | EXH {Math.round(exhaustAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} CFM | ΔT {formatNumber(temperatureDeltaF, 1)}°F | {formatNumber(wheelRecoveryThermalKw, 1)} kW
+                          </div>
+                        )}
                       </td>
                     </tr>
                   )}

@@ -71,11 +71,35 @@ export function calculateHvacDashboardMetrics({
   const grossReheatKW = Math.round(preheatBtuPerHr / 3412)
 
   const cassetteBoostFactor = isEnthalpyCassette(selectedRecovery) ? 1.18 : 1
-  const recoveryEnergyReductionKW = 0
+  const normalizedRecoveryName = normalizeRecoveryName(selectedRecovery)
+  const isThermalWheel = normalizedRecoveryName.includes('roue') || normalizedRecoveryName.includes('thermal wheel')
+  const selectedRecoveryEfficiency = Number(selectedRecovery?.efficacite ?? 0)
+  const wheelEfficiencyPercent = isNoRecovery
+    ? 0
+    : clampValue(
+      Number.isFinite(Number(wheelEfficiency)) && Number(wheelEfficiency) > 0
+        ? Number(wheelEfficiency)
+        : selectedRecoveryEfficiency,
+      0,
+      95
+    )
+  const wheelEfficiencyFraction = wheelEfficiencyPercent / 100
+  const outdoorAirTempF = outsideWinterTemp * 9 / 5 + 32
+  const returnAirTempF = roomTemperature * 9 / 5 + 32
+  const exhaustAirCFM = effectiveOutsideAirCFM
+  const wheelAirflowCFM = Math.max(0, Math.min(effectiveOutsideAirCFM, exhaustAirCFM))
+  const temperatureDeltaF = Math.max(0, returnAirTempF - outdoorAirTempF)
+  const wheelRecoveryThermalKw = isThermalWheel && !isNoRecovery
+    ? (1.08 * wheelAirflowCFM * temperatureDeltaF * wheelEfficiencyFraction) / 3412
+    : 0
+  const fallbackRecoveryThermalKw = !isNoRecovery && !isThermalWheel
+    ? grossReheatKW * (Math.min(selectedRecoveryEfficiency, 95) / 100) * 0.18 * cassetteBoostFactor
+    : 0
+  const recoveryEnergyReductionKW = Math.round(Math.max(0, isThermalWheel ? wheelRecoveryThermalKw : fallbackRecoveryThermalKw))
 
   const steamEnergyKW = baseSteamEnergyKW
   const adiabaticPumpKW = Math.max(1, Math.round(adiabaticLoad * 0.0009))
-  const recoveredHeatKW = Math.round((heatPumpCOP * cappedRecoveryEfficiency) / 6)
+  const recoveredHeatKW = recoveryEnergyReductionKW
   const exchangerRecoveredKW = recoveryEnergyReductionKW
   const netReheatKW = Math.max(0, grossReheatKW - exchangerRecoveredKW)
   const reheatEnergySource = String(selectedReheatSystem?.energie || '')
@@ -145,6 +169,12 @@ export function calculateHvacDashboardMetrics({
     grossReheatKW,
     reheatEnergyKW,
     cassetteBoostFactor,
+    isThermalWheel,
+    wheelEfficiencyPercent,
+    wheelAirflowCFM,
+    exhaustAirCFM,
+    temperatureDeltaF,
+    wheelRecoveryThermalKw,
     recoveryEnergyReductionKW,
     steamEnergyKW,
     adiabaticPumpKW,
