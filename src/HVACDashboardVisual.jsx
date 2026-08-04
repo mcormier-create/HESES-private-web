@@ -4578,16 +4578,10 @@ function HvacDashboardApp() {
       `}</style>
       <div className="mx-auto mb-6 flex max-w-7xl flex-wrap items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 shadow-lg border border-slate-200">
-            <img
-              src="/heses-logo.png"
-              alt="HESES"
-              className="h-16 w-auto max-w-[320px] object-contain"
-            />
-            <div className="leading-tight hidden lg:block">
-              <div className="text-sm font-black tracking-wide text-slate-900">HESES</div>
-              <div className="text-xs font-semibold text-slate-500">HVAC Energy Systems</div>
-            </div>
+          <div className="logo-card" role="img" aria-label="HESES Humidification Energy Software">
+            <div className="logo-title">HESES</div>
+            <div className="logo-accent" aria-hidden="true" />
+            <div className="logo-subtitle">Humidification Energy Software</div>
           </div>
           <div className="flex flex-wrap gap-2">
           <button

@@ -344,6 +344,22 @@ export default function HVACSystemImage({
   const displayedSupplyAirFlow = canComputeFreeCoolingFlows
     ? formatFlowWithUnit(computedSupplyAirFlow, parsedTotalFlow.unit, lang)
     : (data.supplyAirFlow ?? data.totalAirflow ?? '-')
+  const freeCoolingAfterHeatingStyle = isFreeCoolingSystem
+    ? {
+        top: '34%',
+        left: '52%',
+        width: '190px',
+        minWidth: '190px',
+      }
+    : undefined
+  const freeCoolingAfterHumifogStyle = isFreeCoolingSystem
+    ? {
+        top: '34%',
+        left: '64%',
+        width: '160px',
+        minWidth: '160px',
+      }
+    : undefined
   const labelPositions = isFreeCoolingSystem
     ? {
         outdoorAir: 'left-[4%] top-[38%]',
@@ -353,8 +369,8 @@ export default function HVACSystemImage({
         exhaustDamper: 'left-[3%] top-[21%]',
         mixedAir: 'left-[39%] top-[62%]',
         supplyAirflow: 'right-[4%] top-[47%]',
-        afterHumifog: 'left-[62%] top-[33%]',
-        afterHeating: 'left-[53%] top-[33%]',
+        afterHumifog: '',
+        afterHeating: '',
         supplyAir: 'right-[4%] top-[58%]',
       }
     : {
@@ -393,7 +409,8 @@ export default function HVACSystemImage({
         </div>
       </div>
 
-      <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+      <div className="overflow-x-auto overflow-y-visible rounded-2xl border border-slate-200 bg-slate-50">
+        <div className="relative min-w-[980px] lg:min-w-0">
         <img
           key={imageSrc}
           src={imageSrc}
@@ -484,6 +501,7 @@ export default function HVACSystemImage({
           value={data.afterHumifogTemp ?? '-'}
           sub={localizeHumidityText(data.afterHumifogRh, lang)}
           color="purple"
+          style={freeCoolingAfterHumifogStyle}
         />
 
         <OverlayLabel
@@ -492,6 +510,7 @@ export default function HVACSystemImage({
           value={data.afterHeatingTemp ?? '-'}
           sub={localizeHumidityText(data.afterHeatingRh, lang)}
           color="red"
+          style={freeCoolingAfterHeatingStyle}
         />
 
         <OverlayLabel
@@ -501,6 +520,7 @@ export default function HVACSystemImage({
           sub={localizeHumidityText(data.saRh, lang)}
           color="blue"
         />
+        </div>
       </div>
 
       <div className="mt-6 grid gap-4 md:grid-cols-4">
@@ -531,7 +551,7 @@ function AnimatedFlowLabel({ className, title, value, color }) {
   }
 
   return (
-    <div className={`absolute rounded-full border px-3 py-1 text-xs font-semibold shadow-sm backdrop-blur ${colors[color]} ${className}`}>
+    <div className={`absolute z-20 min-w-[180px] overflow-visible whitespace-nowrap rounded-full border px-3 py-1 text-xs font-semibold shadow-sm backdrop-blur ${colors[color]} ${className}`}>
       <span className={`mr-2 inline-block h-2 w-2 rounded-full ${dotColors[color]} animate-pulse`} />
       <span>{title}</span>
       <span className="ml-2 font-bold">{value}</span>
@@ -539,7 +559,7 @@ function AnimatedFlowLabel({ className, title, value, color }) {
   )
 }
 
-function OverlayLabel({ className, title, value, sub, color }) {
+function OverlayLabel({ className, title, value, sub, color, style }) {
   const colors = {
     blue: 'border-blue-200 bg-blue-50 text-blue-700',
     orange: 'border-orange-200 bg-orange-50 text-orange-700',
@@ -550,7 +570,8 @@ function OverlayLabel({ className, title, value, sub, color }) {
 
   return (
     <div
-      className={`absolute rounded-xl border px-3 py-2 text-center text-xs shadow-sm backdrop-blur ${colors[color]} ${className}`}
+      className={`absolute z-30 min-w-[200px] overflow-visible whitespace-nowrap rounded-xl border px-3 py-2 text-center text-xs shadow-sm backdrop-blur ${colors[color]} ${className}`}
+      style={style}
     >
       <div className="font-semibold">{title}</div>
       <div className="text-lg font-bold">{value}</div>
