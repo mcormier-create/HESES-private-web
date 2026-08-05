@@ -154,6 +154,57 @@ const localizedSchematics = {
   },
 }
 
+function parseDisplayNumber(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string') return null
+
+  const match = value.match(/-?[\d\s.,\u00A0]+/)
+  if (!match) return null
+  const compact = match[0].replace(/[\s\u00A0]/g, '')
+  let normalized = compact
+
+  const hasComma = compact.includes(',')
+  const hasDot = compact.includes('.')
+  if (hasComma && hasDot) {
+    // If comma appears last, treat comma as decimal and dot as thousands.
+    if (compact.lastIndexOf(',') > compact.lastIndexOf('.')) {
+      normalized = compact.replace(/\./g, '').replace(/,/g, '.')
+    } else {
+      // Otherwise keep dot as decimal and comma as thousands.
+      normalized = compact.replace(/,/g, '')
+    }
+  } else if (hasComma) {
+    // Preserve thousands groups like 12,345 but parse 15,0 as decimal.
+    const commaThousandsPattern = /^-?\d{1,3}(,\d{3})+$/
+    normalized = commaThousandsPattern.test(compact)
+      ? compact.replace(/,/g, '')
+      : compact.replace(/,/g, '.')
+  }
+
+  const parsed = Number(normalized)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function parseFlowWithUnit(value) {
+  if (typeof value !== 'string') return null
+  const match = value.match(/(-?[\d\s.,\u00A0]+)(.*)/)
+  if (!match) return null
+
+  const parsedValue = parseDisplayNumber(match[1])
+  if (!Number.isFinite(parsedValue)) return null
+  return {
+    value: parsedValue,
+    unit: (match[2] || '').trim(),
+  }
+}
+
+function formatFlowWithUnit(value, unit, lang) {
+  if (!Number.isFinite(value)) return '-'
+  const locale = lang === 'fr' ? 'fr-CA' : 'en-CA'
+  const formattedValue = Math.round(value).toLocaleString(locale)
+  return unit ? `${formattedValue} ${unit}` : formattedValue
+}
+
 export default function HVACSystemImage({
   schematicId = '',
   recoveryType = 'enthalpy',
@@ -279,6 +330,54 @@ export default function HVACSystemImage({
         { title: text.humifogPump, value: data.humifogKw ?? '-' },
         { title: text.oaAirflow, value: data.airflow ?? '-' },
       ]
+  const parsedTotalFlow = parseFlowWithUnit(String(data.totalAirflow ?? data.supplyAirFlow ?? data.airflow ?? ''))
+  const parsedOaPercent = parseDisplayNumber(String(data.oaPercent ?? ''))
+  const canComputeFreeCoolingFlows = Boolean(
+    isFreeCoolingSystem &&
+    parsedTotalFlow &&
+    Number.isFinite(parsedTotalFlow.value) &&
+    Number.isFinite(parsedOaPercent)
+  )
+  const computedOutdoorAirFlow = canComputeFreeCoolingFlows
+    ? parsedTotalFlow.value * (parsedOaPercent / 100)
+    : null
+  const computedReturnAirFlow = canComputeFreeCoolingFlows
+    ? parsedTotalFlow.value - computedOutdoorAirFlow
+    : null
+  const computedExhaustAirFlow = canComputeFreeCoolingFlows
+    ? computedOutdoorAirFlow
+    : null
+  const computedSupplyAirFlow = canComputeFreeCoolingFlows
+    ? parsedTotalFlow.value
+    : null
+  const displayedOutdoorAirFlow = canComputeFreeCoolingFlows
+    ? formatFlowWithUnit(computedOutdoorAirFlow, parsedTotalFlow.unit, lang)
+    : (data.outsideAirFlow ?? data.airflow ?? '-')
+  const displayedReturnAirFlow = canComputeFreeCoolingFlows
+    ? formatFlowWithUnit(computedReturnAirFlow, parsedTotalFlow.unit, lang)
+    : (data.returnAirFlow ?? '-')
+  const displayedExhaustAirFlow = canComputeFreeCoolingFlows
+    ? formatFlowWithUnit(computedExhaustAirFlow, parsedTotalFlow.unit, lang)
+    : (data.exhaustAirFlow ?? data.outsideAirFlow ?? '-')
+  const displayedSupplyAirFlow = canComputeFreeCoolingFlows
+    ? formatFlowWithUnit(computedSupplyAirFlow, parsedTotalFlow.unit, lang)
+    : (data.supplyAirFlow ?? data.totalAirflow ?? '-')
+  const freeCoolingAfterHeatingStyle = isFreeCoolingSystem
+    ? {
+        top: '34%',
+        left: '52%',
+        width: '190px',
+        minWidth: '190px',
+      }
+    : undefined
+  const freeCoolingAfterHumifogStyle = isFreeCoolingSystem
+    ? {
+        top: '34%',
+        left: '64%',
+        width: '160px',
+        minWidth: '160px',
+      }
+    : undefined
   const labelPositions = isFreeCoolingSystem
     ? {
         outdoorAir: 'left-[4%] top-[38%]',
@@ -288,8 +387,8 @@ export default function HVACSystemImage({
         exhaustDamper: 'left-[3%] top-[21%]',
         mixedAir: 'left-[39%] top-[62%]',
         supplyAirflow: 'right-[4%] top-[47%]',
-        afterHumifog: 'left-[62%] top-[33%]',
-        afterHeating: 'left-[53%] top-[33%]',
+        afterHumifog: '',
+        afterHeating: '',
         supplyAir: 'right-[4%] top-[58%]',
       }
     : {
@@ -328,7 +427,8 @@ export default function HVACSystemImage({
         </div>
       </div>
 
-      <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+      <div className="overflow-x-auto overflow-y-visible rounded-2xl border border-slate-200 bg-slate-50">
+        <div className="relative min-w-[980px] lg:min-w-0">
         <img
           key={imageSrc}
           src={imageSrc}
@@ -372,19 +472,19 @@ export default function HVACSystemImage({
             <AnimatedFlowLabel
               className={labelPositions.oaDamper}
               title={text.oaDamper}
-              value={data.outsideAirFlow ?? data.airflow ?? '-'}
+              value={displayedOutdoorAirFlow}
               color="blue"
             />
             <AnimatedFlowLabel
               className={labelPositions.returnDamper}
               title={text.returnDamper}
-              value={data.returnAirFlow ?? '-'}
+              value={displayedReturnAirFlow}
               color="orange"
             />
             <AnimatedFlowLabel
               className={labelPositions.exhaustDamper}
               title={text.exhaustDamper}
-              value={data.exhaustAirFlow ?? data.returnAirFlow ?? '-'}
+              value={displayedExhaustAirFlow}
               color="red"
             />
             <OverlayLabel
@@ -397,7 +497,7 @@ export default function HVACSystemImage({
             <AnimatedFlowLabel
               className={labelPositions.supplyAirflow}
               title={text.supplyAirflow}
-              value={data.supplyAirFlow ?? data.totalAirflow ?? '-'}
+              value={displayedSupplyAirFlow}
               color="blue"
             />
           </>
@@ -419,6 +519,7 @@ export default function HVACSystemImage({
           value={data.afterHumifogTemp ?? '-'}
           sub={localizeHumidityText(data.afterHumifogRh, lang)}
           color="purple"
+          style={freeCoolingAfterHumifogStyle}
         />
 
         <OverlayLabel
@@ -427,6 +528,7 @@ export default function HVACSystemImage({
           value={data.afterHeatingTemp ?? '-'}
           sub={localizeHumidityText(data.afterHeatingRh, lang)}
           color="red"
+          style={freeCoolingAfterHeatingStyle}
         />
 
         <OverlayLabel
@@ -436,6 +538,7 @@ export default function HVACSystemImage({
           sub={localizeHumidityText(data.saRh, lang)}
           color="blue"
         />
+        </div>
       </div>
 
       <div className="mt-6 grid gap-4 md:grid-cols-4">
@@ -466,7 +569,7 @@ function AnimatedFlowLabel({ className, title, value, color }) {
   }
 
   return (
-    <div className={`absolute rounded-full border px-3 py-1 text-xs font-semibold shadow-sm backdrop-blur ${colors[color]} ${className}`}>
+    <div className={`absolute z-20 min-w-[180px] overflow-visible whitespace-nowrap rounded-full border px-3 py-1 text-xs font-semibold shadow-sm backdrop-blur ${colors[color]} ${className}`}>
       <span className={`mr-2 inline-block h-2 w-2 rounded-full ${dotColors[color]} animate-pulse`} />
       <span>{title}</span>
       <span className="ml-2 font-bold">{value}</span>
@@ -474,7 +577,7 @@ function AnimatedFlowLabel({ className, title, value, color }) {
   )
 }
 
-function OverlayLabel({ className, title, value, sub, color }) {
+function OverlayLabel({ className, title, value, sub, color, style }) {
   const colors = {
     blue: 'border-blue-200 bg-blue-50 text-blue-700',
     orange: 'border-orange-200 bg-orange-50 text-orange-700',
@@ -485,7 +588,8 @@ function OverlayLabel({ className, title, value, sub, color }) {
 
   return (
     <div
-      className={`absolute rounded-xl border px-3 py-2 text-center text-xs shadow-sm backdrop-blur ${colors[color]} ${className}`}
+      className={`absolute z-30 min-w-[200px] overflow-visible whitespace-nowrap rounded-xl border px-3 py-2 text-center text-xs shadow-sm backdrop-blur ${colors[color]} ${className}`}
+      style={style}
     >
       <div className="font-semibold">{title}</div>
       <div className="text-lg font-bold">{value}</div>

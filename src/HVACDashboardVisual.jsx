@@ -2371,10 +2371,12 @@ function HvacDashboardApp() {
   const inputTempToC = (value) => units === 'imperial' ? round1((value - 32) * 5 / 9) : value
   const tempUnit = units === 'imperial' ? '\u00B0F' : '\u00B0C'
   const displayFlow = (cfm) => units === 'metric' ? Math.round(cfm * 0.47195) : cfm
+  const inputFlowToCfm = (value) => units === 'metric' ? Math.round((value || 0) / 0.47195) : value
   const flowUnit = units === 'metric' ? 'L/s' : 'CFM'
   const displayGasFlow = (m3h) => units === 'imperial' ? Math.round(m3h * 35.3147 * 10) / 10 : m3h
   const gasFlowUnit = units === 'imperial' ? 'ft\u00B3/h' : 'm\u00B3/h'
   const displayGasRate = (rM3) => units === 'imperial' ? Math.round((rM3 / 0.0366) * 100) / 100 : rM3
+  const inputGasRateToMetric = (value) => units === 'imperial' ? (value || 0) * 0.0366 : value
   const gasRateUnit = units === 'imperial' ? '$/MMBTU' : '$/m\u00B3'
   const displayHumidity = (grLb) => units === 'metric' ? Math.round(grLb * 0.142857 * 10) / 10 : grLb
   const humidityUnit = units === 'metric' ? 'g/kg' : 'gr/lb'
@@ -3447,13 +3449,19 @@ function HvacDashboardApp() {
     ? filteredHourlyRecords.length
     : Math.round(weeklyOperatingHours * BIN_WEEKS_PER_YEAR)
   const annualOperatingPercent = Number(((annualOperatingHours / 8760) * 100).toFixed(1))
-  const actualAnnualPercentageLabel = t.actualAnnualPercentage || (language === 'fr' ? 'Pourcentage annuel réel' : 'Actual annual percentage')
   const activeScheduleDays = resolveScheduleActiveDays(scheduleDaysOption, scheduleCustomDays)
   const setQuickScheduleDays = (option) => {
     setScheduleDaysOption(option)
     if (option !== 'custom') {
       setScheduleCustomDays(resolveScheduleActiveDays(option, scheduleCustomDays))
     }
+  }
+  const toggleScheduleDay = (dayKey) => {
+    if (scheduleMode === '24-7') return
+    const baseDays = resolveScheduleActiveDays(scheduleDaysOption, scheduleCustomDays)
+    const toggledDays = { ...baseDays, [dayKey]: !Boolean(baseDays[dayKey]) }
+    setScheduleDaysOption('custom')
+    setScheduleCustomDays(toggledDays)
   }
   const effectiveBinData = selectedBinData.map(([tempC, hours]) => [tempC, Number((hours * binScheduleFactor).toFixed(3))])
   const totalBinHours = Math.round(effectiveBinData.reduce((total, item) => total + item[1], 0))
@@ -3558,9 +3566,18 @@ function HvacDashboardApp() {
   )
   const annualValidationRows = (freeCoolingHumifogAnalysis.binValidationRows || []).map((row) => {
     const humifogAnnualTotal = freeCoolingHumifogAnalysis.annualComparison.humifog.totalEnergyKwh || 0
+    const appliedMixedDb = Number(row.humifogAppliedMixTempDb ?? row.mixedDb ?? 0)
+    const adiabaticDeltaDb = Math.abs(Number(row.adiabaticCoolingC ?? 0))
+    const humifogOutletAfterAtomizationDb = appliedMixedDb - adiabaticDeltaDb
 
     return {
       ...row,
+      humifogAppliedMixTempDb: appliedMixedDb,
+      adiabaticCoolingC: adiabaticDeltaDb,
+      humifogOutletAfterAtomizationDb,
+      humifogAfterAtomizationDb: humifogOutletAfterAtomizationDb,
+      humifogOutletDb: humifogOutletAfterAtomizationDb,
+      humifogAtomizationWarning: humifogOutletAfterAtomizationDb > appliedMixedDb + 0.0001,
       annualContributionPercent: humifogAnnualTotal > 0
         ? row.humifogOptimized.binEnergyKwh / humifogAnnualTotal * 100
         : 0,
@@ -3575,6 +3592,7 @@ function HvacDashboardApp() {
     (maxRow, row) => row.reheatLoadKw > (maxRow?.reheatLoadKw ?? -1) ? row : maxRow,
     null
   )
+  const humifogAtomizationWarningRows = annualValidationRows.filter((row) => row.humifogAtomizationWarning)
 
   const energyData = monthLabels[language].map((mois, index) => {
     const seasonalFactor = monthlyFactors[index]
@@ -3621,10 +3639,25 @@ function HvacDashboardApp() {
   const chartPreheatBtuHr = 4.5 * effectiveOutsideAirCFM * chartPreheatDeltaHBtuLb
   const chartHeatingThermalKw = chartPreheatBtuHr / 3412
   const chartHeatingHpKw = chartHeatingThermalKw / Math.max(heatPumpCOP, 0.1)
-  const chartHumifogInletState = fallbackAfterHeatingState
+  const chartOutdoorAirPercent = is100OA ? 100 : Math.min(100, Math.max(0, activeFraction * 100))
+  const chartReturnAirPercent = Math.max(0, 100 - chartOutdoorAirPercent)
+  const chartOutdoorAirFraction = chartOutdoorAirPercent / 100
+  const chartReturnAirFraction = chartReturnAirPercent / 100
+  const chartOutdoorHumidityRatio = fallbackOutdoorState.w
+  const chartReturnHumidityRatio = fallbackReturnState.w
+  const chartMixedHumidityRatio =
+    chartOutdoorAirFraction * chartOutdoorHumidityRatio +
+    chartReturnAirFraction * chartReturnHumidityRatio
+  const chartTargetHumidityRatio = chartReturnHumidityRatio
+  const chartDeltaHumidityRatio = Math.max(0, chartTargetHumidityRatio - chartMixedHumidityRatio)
+  const chartOutdoorGrainsLb = chartOutdoorHumidityRatio * 7000
+  const chartReturnGrainsLb = chartReturnHumidityRatio * 7000
+  const chartMixedGrainsLb = chartMixedHumidityRatio * 7000
+  const chartTargetGrainsLb = chartTargetHumidityRatio * 7000
+  const chartDeltaGrainsLb = chartDeltaHumidityRatio * 7000
   const chartHumifogWaterLbHr = Math.max(
     0,
-    4.5 * effectiveOutsideAirCFM * (Math.min(fallbackAfterHumifogState.w, fallbackReturnState.w) - chartHumifogInletState.w)
+    4.5 * outsideAirCFM * chartDeltaHumidityRatio
   )
   const chartHumifogWaterKgH = chartHumifogWaterLbHr * 0.453592
   const chartHumifogPumpKw = Math.max(0, chartHumifogWaterLbHr * 0.0009)
@@ -4242,9 +4275,20 @@ function HvacDashboardApp() {
       ]
     : []
   const activeRaPercent = is100OA ? 0 : 100 - activeOaPercent
+  const displayedOaPercentForFlow = is100OA
+    ? 100
+    : isFreeCoolingMode
+      ? minimumOutsideAirPercent
+      : activeOaPercent
+  const displayedOutdoorAirCFM = Math.round(outsideAirCFM * (displayedOaPercentForFlow / 100))
+  const displayedReturnAirCFM = Math.max(0, outsideAirCFM - displayedOutdoorAirCFM)
+  const displayedExhaustAirCFM = displayedOutdoorAirCFM
   const totalAirflowDisplay = `${displayFlow(outsideAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
   const outsideAirFlowDisplay = `${displayFlow(effectiveOutsideAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
   const returnAirFlowDisplay = `${displayFlow(calculatedReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
+  const displayedOutdoorAirFlowDisplay = `${displayFlow(displayedOutdoorAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
+  const displayedReturnAirFlowDisplay = `${displayFlow(displayedReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
+  const displayedExhaustAirFlowDisplay = `${displayFlow(displayedExhaustAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
   const freeCoolingEnergySavingsDisplay = freeCoolingCalculationComplete
     ? `${formatSavingsAnnualEnergy(freeCoolingHumifogAnalysis.netSavings.netAnnualEnergySavingsKwh)} / ${formatSavingsPercent(freeCoolingHumifogAnalysis.netSavings.energyReductionPercent)}`
     : calculationIncompleteText
@@ -4301,13 +4345,13 @@ function HvacDashboardApp() {
     recoveryKw: `${formatNumber(chartRecoveryThermalKw, 1)} kW`,
     heatingKw: `${formatNumber(chartHeatingHpKw, 1)} kW`,
     humifogKw: `${formatNumber(chartHumifogPumpKw, 1)} kW`,
-    airflow: outsideAirFlowDisplay,
-    oaPercent: `${activeOaPercent}%`,
-    raPercent: `${activeRaPercent}%`,
+    airflow: totalAirflowDisplay,
+    oaPercent: `${formatNumber(displayedOaPercentForFlow, 1)}%`,
+    raPercent: `${formatNumber(is100OA ? 0 : 100 - displayedOaPercentForFlow, 1)}%`,
     totalAirflow: totalAirflowDisplay,
-    outsideAirFlow: outsideAirFlowDisplay,
-    returnAirFlow: returnAirFlowDisplay,
-    exhaustAirFlow: returnAirFlowDisplay,
+    outsideAirFlow: displayedOutdoorAirFlowDisplay,
+    returnAirFlow: displayedReturnAirFlowDisplay,
+    exhaustAirFlow: displayedExhaustAirFlowDisplay,
     supplyAirFlow: totalAirflowDisplay,
     humifogLoad: humidificationLoadDisplay,
     energySavings: freeCoolingEnergySavingsDisplay,
@@ -4366,8 +4410,9 @@ function HvacDashboardApp() {
     displayedValues: {
       humidificationLoad: humidificationLoadDisplay,
       totalAirflow: totalAirflowDisplay,
-      outsideAirFlow: outsideAirFlowDisplay,
-      returnAirFlow: returnAirFlowDisplay,
+      outsideAirFlow: displayedOutdoorAirFlowDisplay,
+      returnAirFlow: displayedReturnAirFlowDisplay,
+      exhaustAirFlow: displayedExhaustAirFlowDisplay,
       activeOaPercent,
       activeRaPercent,
       psychrometricGainItems,
@@ -4572,16 +4617,10 @@ function HvacDashboardApp() {
       `}</style>
       <div className="mx-auto mb-6 flex max-w-7xl flex-wrap items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 shadow-lg border border-slate-200">
-            <img
-              src="/heses-logo.png"
-              alt="HESES"
-              className="h-16 w-auto max-w-[320px] object-contain"
-            />
-            <div className="leading-tight hidden lg:block">
-              <div className="text-sm font-black tracking-wide text-slate-900">HESES</div>
-              <div className="text-xs font-semibold text-slate-500">HVAC Energy Systems</div>
-            </div>
+          <div className="logo-card" role="img" aria-label="HESES Humidification Energy Software">
+            <div className="logo-title">HESES</div>
+            <div className="logo-accent" aria-hidden="true" />
+            <div className="logo-subtitle">Humidification Energy Software</div>
           </div>
           <div className="flex flex-wrap gap-2">
           <button
@@ -4836,9 +4875,13 @@ function HvacDashboardApp() {
                       <td className="p-4 text-center font-bold text-slate-800">{displayTemp(roomTemperature)}{tempUnit}</td>
                       <td className="p-4">
                         <input
-                          type="range" min="18" max="30" step="1" value={roomTemperature}
-                          onChange={(event) => setRoomTemperature(Number(event.target.value))}
-                          className="w-full"
+                          type="number"
+                          min={displayTemp(18)}
+                          max={displayTemp(30)}
+                          step="0.1"
+                          value={displayTemp(roomTemperature)}
+                          onChange={(event) => setRoomTemperature(inputTempToC(Number(event.target.value)))}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                         />
                       </td>
                       <td className="p-4 text-center text-slate-600">
@@ -4851,9 +4894,9 @@ function HvacDashboardApp() {
                       <td className="p-4 text-center font-bold text-slate-800">{roomRelativeHumidity}%</td>
                       <td className="p-4">
                         <input
-                          type="range" min="20" max="70" step="1" value={roomRelativeHumidity}
+                          type="number" min="0" max="100" step="1" value={roomRelativeHumidity}
                           onChange={(event) => setRoomRelativeHumidity(Number(event.target.value))}
-                          className="w-full"
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                         />
                       </td>
                       <td className="p-4 text-center text-slate-600">
@@ -4868,9 +4911,13 @@ function HvacDashboardApp() {
                       <td className="p-4 text-center font-bold text-slate-800">{displayFlow(outsideAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} {flowUnit}</td>
                       <td className="p-4">
                         <input
-                          type="range" min="1000" max="150000" step="1000" value={outsideAirCFM}
-                          onChange={(event) => setOutsideAirCFM(Number(event.target.value))}
-                          className="w-full"
+                          type="number"
+                          min="100"
+                          max="150000"
+                          step={units === 'metric' ? 50 : 100}
+                          value={displayFlow(outsideAirCFM)}
+                          onChange={(event) => setOutsideAirCFM(inputFlowToCfm(Number(event.target.value)))}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                         />
                       </td>
                       <td className="p-4 text-center text-slate-600">
@@ -4885,15 +4932,15 @@ function HvacDashboardApp() {
                       <td className="p-4 text-center font-bold text-cyan-700">{minimumOutsideAirPercent}% OA / {100 - minimumOutsideAirPercent}% RA</td>
                       <td className="p-4">
                         <input
-                          type="range" min="10" max="60" step="5" value={minimumOutsideAirPercent}
+                          type="number" min="0" max="100" step="0.1" value={minimumOutsideAirPercent}
                           onChange={(event) => setMinimumOutsideAirPercent(Number(event.target.value))}
-                          className="w-full"
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                         />
                       </td>
                       <td className="p-4 text-center text-slate-700">
-                        <span className="font-semibold text-cyan-700">{outsideAirFlowDisplay}</span>
+                        <span className="font-semibold text-cyan-700">{displayedOutdoorAirFlowDisplay}</span>
                         <span className="mx-2 text-slate-400">/</span>
-                        <span className="font-semibold text-orange-700">{returnAirFlowDisplay}</span>
+                        <span className="font-semibold text-orange-700">{displayedReturnAirFlowDisplay}</span>
                       </td>
                     </tr>
                   </tbody>
@@ -5092,12 +5139,12 @@ function HvacDashboardApp() {
                   </div>
                   <div className="bg-white rounded-2xl p-4 border border-cyan-100">
                     <div className="text-sm text-slate-500">{language === 'fr' ? 'Débit OA minimum calculé' : 'Calculated minimum OA flow'}</div>
-                    <div className="text-4xl font-bold text-cyan-700 mt-2">{displayFlow(effectiveOutsideAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')}</div>
+                    <div className="text-4xl font-bold text-cyan-700 mt-2">{displayFlow(displayedOutdoorAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')}</div>
                     <div className="text-sm text-slate-500 mt-1">{flowUnit}</div>
                   </div>
                   <div className="bg-white rounded-2xl p-4 border border-cyan-100">
                     <div className="text-sm text-slate-500">{language === 'fr' ? 'Débit air de retour calculé' : 'Calculated return air flow'}</div>
-                    <div className="text-4xl font-bold text-orange-700 mt-2">{displayFlow(calculatedReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')}</div>
+                    <div className="text-4xl font-bold text-orange-700 mt-2">{displayFlow(displayedReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')}</div>
                     <div className="text-sm text-slate-500 mt-1">{flowUnit}</div>
                   </div>
                 </div>
@@ -5174,9 +5221,13 @@ function HvacDashboardApp() {
                   <span>{displayTemp(roomTemperature)}{tempUnit}</span>
                 </div>
                 <input
-                  type="range" min="18" max="30" step="1" value={roomTemperature}
-                  onChange={(e) => setRoomTemperature(Number(e.target.value))}
-                  className="w-full"
+                  type="number"
+                  min={displayTemp(18)}
+                  max={displayTemp(30)}
+                  step="0.1"
+                  value={displayTemp(roomTemperature)}
+                  onChange={(e) => setRoomTemperature(inputTempToC(Number(e.target.value)))}
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                 />
                 </div>
               )}
@@ -5188,9 +5239,9 @@ function HvacDashboardApp() {
                   <span>{roomRelativeHumidity}%</span>
                 </div>
                 <input
-                  type="range" min="20" max="70" step="1" value={roomRelativeHumidity}
+                  type="number" min="0" max="100" step="1" value={roomRelativeHumidity}
                   onChange={(e) => setRoomRelativeHumidity(Number(e.target.value))}
-                  className="w-full"
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                 />
                 </div>
               )}
@@ -5208,9 +5259,13 @@ function HvacDashboardApp() {
                   </div>
                 ) : (
                   <input
-                    type="range" min="15" max="40" step="1" value={supplyAirTemperature}
-                    onChange={(e) => setSupplyAirTemperature(Number(e.target.value))}
-                    className="w-full"
+                    type="number"
+                    min={displayTemp(15)}
+                    max={displayTemp(40)}
+                    step="0.1"
+                    value={displayTemp(supplyAirTemperature)}
+                    onChange={(e) => setSupplyAirTemperature(inputTempToC(Number(e.target.value)))}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                   />
                 )}
               </div>
@@ -5225,9 +5280,13 @@ function HvacDashboardApp() {
                   <span>{displayFlow(outsideAirCFM).toLocaleString()} {flowUnit}</span>
                 </div>
                 <input
-                  type="range" min="1000" max="150000" step="1000" value={outsideAirCFM}
-                  onChange={(e) => setOutsideAirCFM(Number(e.target.value))}
-                  className="w-full"
+                  type="number"
+                  min="100"
+                  max="150000"
+                  step={units === 'metric' ? 50 : 100}
+                  value={displayFlow(outsideAirCFM)}
+                  onChange={(e) => setOutsideAirCFM(inputFlowToCfm(Number(e.target.value)))}
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                 />
                 </div>
               )}
@@ -5245,14 +5304,8 @@ function HvacDashboardApp() {
               <div>
                 <div className="flex justify-between mb-2">
                   <span>{t.heatPumpCOP}</span>
-                  <span>{heatPumpCOP.toFixed(1)}</span>
                 </div>
-                <input
-                  type="range" min="1" max="8" step="0.1" value={heatPumpCOP}
-                  onChange={(e) => setHeatPumpCOP(Number(e.target.value))}
-                  className="w-full"
-                />
-                <div className="mt-3 grid grid-cols-[minmax(0,1fr)_64px] items-center gap-2">
+                <div className="grid grid-cols-[minmax(0,1fr)_64px] items-center gap-2">
                   <input
                     type="number"
                     min="1"
@@ -5280,9 +5333,9 @@ function HvacDashboardApp() {
                     <span>{wheelEfficiency}%</span>
                   </div>
                   <input
-                    type="range" min="40" max="90" step="1" value={wheelEfficiency}
+                    type="number" min="0" max="100" step="1" value={wheelEfficiency}
                     onChange={(e) => setWheelEfficiency(Number(e.target.value))}
-                    className="w-full"
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                   />
                 </div>
               )}
@@ -5364,9 +5417,9 @@ function HvacDashboardApp() {
                   <td className="p-4 text-center font-bold text-slate-800">{electricityRate.toFixed(2)} $/kWh</td>
                   <td className="p-4">
                     <input
-                      type="range" min="0.03" max="0.50" step="0.01" value={electricityRate}
+                      type="number" min="0.03" max="0.50" step="0.001" value={electricityRate}
                       onChange={(e) => setElectricityRate(Number(e.target.value))}
-                      className="w-full"
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                     />
                   </td>
                   <td className="p-4 text-center text-slate-700">
@@ -5379,9 +5432,13 @@ function HvacDashboardApp() {
                   <td className="p-4 text-center font-bold text-slate-800">{displayGasRate(naturalGasRate).toFixed(2)} {gasRateUnit}</td>
                   <td className="p-4">
                     <input
-                      type="range" min="0.10" max="2.00" step="0.01" value={naturalGasRate}
-                      onChange={(e) => setNaturalGasRate(Number(e.target.value))}
-                      className="w-full"
+                      type="number"
+                      min="0.10"
+                      max={units === 'imperial' ? 54.64 : 2.00}
+                      step="0.01"
+                      value={displayGasRate(naturalGasRate)}
+                      onChange={(e) => setNaturalGasRate(inputGasRateToMetric(Number(e.target.value)))}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                     />
                   </td>
                   <td className="p-4 text-center text-yellow-700 font-semibold">
@@ -5394,9 +5451,9 @@ function HvacDashboardApp() {
                   <td className="p-4 text-center font-bold text-slate-800">{steamBoilerEfficiency}%</td>
                   <td className="p-4">
                     <input
-                      type="range" min="60" max="98" step="1" value={steamBoilerEfficiency}
+                      type="number" min="0" max="100" step="1" value={steamBoilerEfficiency}
                       onChange={(e) => setSteamBoilerEfficiency(Number(e.target.value))}
-                      className="w-full"
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                     />
                   </td>
                   <td className="p-4 text-center text-yellow-700 font-semibold">
@@ -5409,9 +5466,9 @@ function HvacDashboardApp() {
                   <td className="p-4 text-center font-bold text-slate-800">{atmosphericGasHumidifierEfficiency}%</td>
                   <td className="p-4">
                     <input
-                      type="range" min="50" max="98" step="1" value={atmosphericGasHumidifierEfficiency}
+                      type="number" min="0" max="100" step="1" value={atmosphericGasHumidifierEfficiency}
                       onChange={(e) => setAtmosphericGasHumidifierEfficiency(Number(e.target.value))}
-                      className="w-full"
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                     />
                   </td>
                   <td className="p-4 text-center text-amber-700 font-semibold">
@@ -5574,6 +5631,14 @@ function HvacDashboardApp() {
               <div className="text-5xl font-bold text-red-800 mt-3">{humidificationLoadDisplay}</div>
               <div className="text-red-700 mt-2">
                 @ {displayTemp(roomTemperature)}{tempUnit} / {roomRelativeHumidity}% RH
+              </div>
+              <div className="mt-3 rounded-2xl border border-red-200 bg-white/70 p-3 text-xs text-red-900 space-y-1">
+                <div>W OA: {formatNumber(chartOutdoorGrainsLb, 1)} gr/lb</div>
+                <div>W RA: {formatNumber(chartReturnGrainsLb, 1)} gr/lb</div>
+                <div>W mix: {formatNumber(chartMixedGrainsLb, 1)} gr/lb</div>
+                <div>W cible: {formatNumber(chartTargetGrainsLb, 1)} gr/lb</div>
+                <div>Delta grains: {formatNumber(chartDeltaGrainsLb, 1)} gr/lb</div>
+                <div>Charge Humifog: {formatNumber(chartHumifogWaterLbHr, 1)} lb/h</div>
               </div>
             </div>
 
@@ -6071,6 +6136,9 @@ function HvacDashboardApp() {
                     </div>
                   )}
                 </div>
+                <div className="mb-3 rounded-xl border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-bold text-cyan-900">
+                  VERSION DASHBOARD : schedule-visible-days-v2
+                </div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className="block">
                     <div className="mb-2 text-sm font-semibold text-slate-800">{t.startTime}</div>
@@ -6095,82 +6163,163 @@ function HvacDashboardApp() {
                 </div>
               </div>
               <div>
-                <div className="mb-2 font-semibold text-slate-800">{t.operatingDays}</div>
+                <div className="mb-2 font-semibold text-slate-800">
+                  {language === 'fr' ? 'Jours d’exploitation' : 'Operating days'}
+                </div>
                 <div className="flex flex-wrap items-center gap-3">
                   <button
                     type="button"
                     onClick={() => setQuickScheduleDays('mon-fri')}
-                    className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${scheduleDaysOption === 'mon-fri' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
+                    className="rounded-2xl transition"
+                    style={scheduleDaysOption === 'mon-fri'
+                      ? { minWidth: '80px', padding: '10px 16px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '80px', padding: '10px 16px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
                     disabled={scheduleMode === '24-7'}
                   >
-                    {t.mondayToFriday}
+                    {language === 'fr' ? 'Lundi à vendredi' : 'Monday to Friday'}
                   </button>
                   <button
                     type="button"
                     onClick={() => setQuickScheduleDays('mon-sat')}
-                    className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${scheduleDaysOption === 'mon-sat' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
+                    className="rounded-2xl transition"
+                    style={scheduleDaysOption === 'mon-sat'
+                      ? { minWidth: '80px', padding: '10px 16px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '80px', padding: '10px 16px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
                     disabled={scheduleMode === '24-7'}
                   >
-                    {t.mondayToSaturday}
+                    {language === 'fr' ? 'Lundi à samedi' : 'Monday to Saturday'}
                   </button>
                   <button
                     type="button"
                     onClick={() => setQuickScheduleDays('seven-days')}
-                    className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${scheduleDaysOption === 'seven-days' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
+                    className="rounded-2xl transition"
+                    style={scheduleDaysOption === 'seven-days'
+                      ? { minWidth: '80px', padding: '10px 16px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '80px', padding: '10px 16px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
                     disabled={scheduleMode === '24-7'}
                   >
-                    {t.sevenDaysWeek}
+                    {language === 'fr' ? '7 jours/semaine' : '7 days/week'}
                   </button>
                   <button
                     type="button"
                     onClick={() => setScheduleDaysOption('custom')}
-                    className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${scheduleDaysOption === 'custom' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
+                    className="rounded-2xl transition"
+                    style={scheduleDaysOption === 'custom'
+                      ? { minWidth: '80px', padding: '10px 16px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '80px', padding: '10px 16px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
                     disabled={scheduleMode === '24-7'}
                   >
-                    {t.customDays}
+                    {language === 'fr' ? 'Personnalisé' : 'Custom'}
                   </button>
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {SCHEDULE_DAY_KEYS.map((day) => {
-                    const isActive = Boolean(activeScheduleDays[day])
-                    return (
-                      <button
-                        key={day}
-                        type="button"
-                        disabled={scheduleMode === '24-7'}
-                        onClick={() => {
-                          if (scheduleMode === '24-7') return
-                          const baseDays = resolveScheduleActiveDays(scheduleDaysOption, scheduleCustomDays)
-                          const toggledDays = { ...baseDays, [day]: !isActive }
-                          setScheduleDaysOption('custom')
-                          setScheduleCustomDays(toggledDays)
-                        }}
-                        className={`rounded-2xl border px-3 py-2 text-sm font-semibold shadow-sm transition ${isActive ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}
-                      >
-                        {t[day]}
-                      </button>
-                    )
-                  })}
+                  <button
+                    type="button"
+                    disabled={scheduleMode === '24-7'}
+                    onClick={() => toggleScheduleDay('mon')}
+                    className="inline-flex min-h-10 min-w-[64px] items-center justify-center rounded-2xl shadow-sm transition whitespace-nowrap"
+                    style={Boolean(activeScheduleDays.mon)
+                      ? { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
+                  >
+                    {language === 'fr' ? 'Lun' : 'Mon'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={scheduleMode === '24-7'}
+                    onClick={() => toggleScheduleDay('tue')}
+                    className="inline-flex min-h-10 min-w-[64px] items-center justify-center rounded-2xl shadow-sm transition whitespace-nowrap"
+                    style={Boolean(activeScheduleDays.tue)
+                      ? { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
+                  >
+                    {language === 'fr' ? 'Mar' : 'Tue'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={scheduleMode === '24-7'}
+                    onClick={() => toggleScheduleDay('wed')}
+                    className="inline-flex min-h-10 min-w-[64px] items-center justify-center rounded-2xl shadow-sm transition whitespace-nowrap"
+                    style={Boolean(activeScheduleDays.wed)
+                      ? { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
+                  >
+                    {language === 'fr' ? 'Mer' : 'Wed'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={scheduleMode === '24-7'}
+                    onClick={() => toggleScheduleDay('thu')}
+                    className="inline-flex min-h-10 min-w-[64px] items-center justify-center rounded-2xl shadow-sm transition whitespace-nowrap"
+                    style={Boolean(activeScheduleDays.thu)
+                      ? { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
+                  >
+                    {language === 'fr' ? 'Jeu' : 'Thu'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={scheduleMode === '24-7'}
+                    onClick={() => toggleScheduleDay('fri')}
+                    className="inline-flex min-h-10 min-w-[64px] items-center justify-center rounded-2xl shadow-sm transition whitespace-nowrap"
+                    style={Boolean(activeScheduleDays.fri)
+                      ? { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
+                  >
+                    {language === 'fr' ? 'Ven' : 'Fri'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={scheduleMode === '24-7'}
+                    onClick={() => toggleScheduleDay('sat')}
+                    className="inline-flex min-h-10 min-w-[64px] items-center justify-center rounded-2xl shadow-sm transition whitespace-nowrap"
+                    style={Boolean(activeScheduleDays.sat)
+                      ? { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
+                  >
+                    {language === 'fr' ? 'Sam' : 'Sat'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={scheduleMode === '24-7'}
+                    onClick={() => toggleScheduleDay('sun')}
+                    className="inline-flex min-h-10 min-w-[64px] items-center justify-center rounded-2xl shadow-sm transition whitespace-nowrap"
+                    style={Boolean(activeScheduleDays.sun)
+                      ? { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: '#0f172a', color: 'white', border: '1px solid #0f172a' }
+                      : { minWidth: '52px', padding: '10px 14px', fontSize: '14px', fontWeight: 600, background: 'white', color: '#0f172a', border: '1px solid #cbd5e1' }}
+                  >
+                    {language === 'fr' ? 'Dim' : 'Sun'}
+                  </button>
                 </div>
               </div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <div className="rounded-2xl bg-white p-4 shadow-sm">
-                  <div className="text-sm text-slate-500">{t.dailyOperatingHours}</div>
+                  <div className="text-sm text-slate-500">
+                    {language === 'fr' ? 'Heures d’exploitation par jour' : 'Operating hours per day'}
+                  </div>
                   <div className="text-2xl font-bold text-slate-800">{dailyOperatingHours.toFixed(1)} h/day</div>
                 </div>
                 <div className="rounded-2xl bg-white p-4 shadow-sm">
-                  <div className="text-sm text-slate-500">{t.weeklyOperatingHours}</div>
+                  <div className="text-sm text-slate-500">
+                    {language === 'fr' ? 'Heures d’exploitation par semaine' : 'Operating hours per week'}
+                  </div>
                   <div className="text-2xl font-bold text-slate-800">{weeklyOperatingHours.toFixed(1)} h/week</div>
                 </div>
                 <div className="rounded-2xl bg-white p-4 shadow-sm">
-                  <div className="text-sm text-slate-500">{t.annualOperatingHours}</div>
+                  <div className="text-sm text-slate-500">
+                    {language === 'fr' ? 'Heures d’exploitation annuelles' : 'Annual operating hours'}
+                  </div>
                   <div className="text-2xl font-bold text-slate-800">{annualOperatingHours.toLocaleString()} h/year</div>
                 </div>
                 <div className="rounded-2xl bg-white p-4 shadow-sm">
-                  <div className="text-sm text-slate-500">{t.scheduleFactor}</div>
-                  <div className="text-2xl font-bold text-slate-800">{(scheduleFactor * 100).toFixed(1)}%</div>
+                  <div className="text-sm text-slate-500">
+                    {language === 'fr' ? 'Facteur d’exploitation' : 'Operating factor'}
+                  </div>
+                  <div className="text-2xl font-bold text-slate-800">{annualOperatingPercent.toFixed(1)}%</div>
                   <div className="mt-1 block text-xs font-medium text-slate-600">
-                    {actualAnnualPercentageLabel}: {annualOperatingPercent.toFixed(1)}%
+                    {language === 'fr'
+                      ? 'Pourcentage annuel réel'
+                      : 'Actual annual percentage'}: {annualOperatingPercent.toFixed(1)}%
                   </div>
                 </div>
               </div>
@@ -6652,6 +6801,11 @@ function HvacDashboardApp() {
                     ? 'Le total annuel est la somme de tous les BIN climatiques ci-dessous; il ne provient pas seulement du BIN affiche dans le graphique.'
                     : 'The annual total is the sum of every climate BIN below; it is not calculated from only the BIN shown in the chart.'}
                 </p>
+                <p className="text-sm text-cyan-800 mb-3 font-semibold">
+                  {language === 'fr'
+                    ? 'Validation adiabatique: Sortie Humifog apres atomisation = T melange Humifog appliquee - DeltaT adiabatique.'
+                    : 'Adiabatic validation: Humifog outlet after atomization = applied Humifog mixed T - adiabatic DeltaT.'}
+                </p>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-slate-100">
@@ -6662,7 +6816,8 @@ function HvacDashboardApp() {
                         language === 'fr' ? 'Humifog OA théorique / appliqué' : 'Humifog theoretical / applied OA',
                         language === 'fr' ? 'Écart volets Humifog' : 'Humifog damper difference',
                         language === 'fr' ? 'T mélange vapeur cible / appliquée' : 'Steam target / applied mixed T',
-                        language === 'fr' ? 'T mélange Humifog cible / appliquée' : 'Humifog target / applied mixed T',
+                        language === 'fr' ? 'T mélange Humifog appliquée' : 'Applied Humifog mixed T',
+                        language === 'fr' ? 'T avant Humifog (apres prechauffage)' : 'T before Humifog (after preheat)',
                         language === 'fr' ? 'Sortie Humifog apres atomisation' : 'Humifog outlet after atomization',
                         language === 'fr' ? 'DeltaT adiabatique' : 'Adiabatic deltaT',
                         language === 'fr' ? 'Rechauffage instantane' : 'Instant reheat',
@@ -6676,7 +6831,13 @@ function HvacDashboardApp() {
                     </tr>
                   </thead>
                   <tbody>
-                    {annualValidationRows.map((row) => (
+                    {annualValidationRows.map((row) => {
+                      const displayedHumifogAppliedMixedTempDb = Number(row.humifogAppliedMixTempDb ?? 0)
+                      const displayedAdiabaticDeltaDb = Math.abs(Number(row.adiabaticCoolingC ?? 0))
+                      const displayedHumifogOutletAfterAtomizationDb = displayedHumifogAppliedMixedTempDb - displayedAdiabaticDeltaDb
+                      const displayedHumifogOutletWarning = displayedHumifogOutletAfterAtomizationDb > displayedHumifogAppliedMixedTempDb + 0.0001
+
+                      return (
                       <tr key={`bin-${row.tempC}-${row.hours}`} className="border-b border-slate-100">
                         <td className="p-3 font-bold text-slate-700">{displayTemp(row.tempC)}{tempUnit}</td>
                         <td className="p-3 text-center">{formatNumber(row.hours, 0)} h</td>
@@ -6728,15 +6889,20 @@ function HvacDashboardApp() {
                           </div>
                         </td>
                         <td className="p-3 text-center font-bold text-cyan-700">
-                          <div>
-                            {language === 'fr' ? 'Cible' : 'Target'} {displayTemp(row.targetMixedDb)}{tempUnit}
-                          </div>
-                          <div className="mt-1 text-xs font-semibold text-cyan-600">
-                            {language === 'fr' ? 'Appliquée' : 'Applied'} {displayTemp(row.mixedDb)}{tempUnit}
+                          {displayTemp(displayedHumifogAppliedMixedTempDb)}{tempUnit}
+                        </td>
+                        <td className="p-3 text-center font-bold text-cyan-700">
+                          {displayTemp(row.humifogBeforeAtomizationDb)}{tempUnit}
+                        </td>
+                        <td className="p-3 text-center font-bold text-cyan-700">
+                          <div>{displayTemp(displayedHumifogOutletAfterAtomizationDb)}{tempUnit}</div>
+                          <div className={`mt-1 text-[11px] font-semibold ${displayedHumifogOutletWarning ? 'text-amber-700' : 'text-emerald-700'}`}>
+                            {displayedHumifogOutletWarning
+                              ? (language === 'fr' ? 'Validation Humifog : WARNING (sortie > T melange appliquee)' : 'Humifog validation: WARNING (outlet > applied mixed T)')
+                              : (language === 'fr' ? 'Validation Humifog : OK' : 'Humifog validation: OK')}
                           </div>
                         </td>
-                        <td className="p-3 text-center font-bold text-cyan-700">{displayTemp(row.humifogOutletDb)}{tempUnit}</td>
-                        <td className="p-3 text-center text-blue-700">{displayDeltaTemp(row.adiabaticCoolingC)}{tempUnit}</td>
+                        <td className="p-3 text-center text-blue-700">{displayDeltaTemp(displayedAdiabaticDeltaDb)}{tempUnit}</td>
                         <td className="p-3 text-center">{formatInstantPower(row.reheatLoadKw)}</td>
                         <td className="p-3 text-center font-bold text-red-700">{formatAnnualEnergy(row.steamReference.binEnergyKwh)}</td>
                         <td className="p-3 text-center font-bold text-cyan-700">{formatAnnualEnergy(row.humifogOptimized.binEnergyKwh)}</td>
@@ -6744,8 +6910,9 @@ function HvacDashboardApp() {
                           {formatSavingsAnnualEnergy(row.difference.binEnergyKwh)}
                         </td>
                         <td className="p-3 text-center font-bold text-slate-900">{formatNumber(row.annualContributionPercent, 1)}%</td>
-                      </tr>
-                    ))}
+                        </tr>
+                        )
+                      })}
                     <tr className="bg-slate-50">
                       <td className="p-3 font-bold text-slate-800">{language === 'fr' ? 'Total annuel' : 'Annual total'}</td>
                       <td className="p-3 text-center font-bold">{formatNumber(freeCoolingHumifogAnalysis.annualComparison.humifog.totalHours, 0)} h</td>
@@ -6777,6 +6944,7 @@ function HvacDashboardApp() {
                       <td className="p-3 text-center text-cyan-700">{displayTemp(freeCoolingHumifogAnalysis.annualComparison.humifog.averageMixedDb)}{tempUnit}</td>
                       <td className="p-3 text-center">-</td>
                       <td className="p-3 text-center">-</td>
+                      <td className="p-3 text-center">-</td>
                       <td className="p-3 text-center font-bold">{formatAnnualEnergy(freeCoolingHumifogAnalysis.annualComparison.humifog.reheatEnergyKwh)}</td>
                       <td className="p-3 text-center font-bold text-red-700">{formatAnnualEnergy(freeCoolingHumifogAnalysis.annualComparison.freeCooling.totalEnergyKwh)}</td>
                       <td className="p-3 text-center font-bold text-cyan-700">{formatAnnualEnergy(freeCoolingHumifogAnalysis.annualComparison.humifog.totalEnergyKwh)}</td>
@@ -6802,6 +6970,14 @@ function HvacDashboardApp() {
                     : 'Warning: annual totals do not fully match the BIN sum. Verify Free Cooling logic.')}
               </div>
 
+              {humifogAtomizationWarningRows.length > 0 && (
+                <div className="mb-8 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+                  {language === 'fr'
+                    ? `Alerte coherence Humifog: ${humifogAtomizationWarningRows.length} BIN ont une temperature apres atomisation superieure a la temperature juste avant Humifog.`
+                    : `Humifog coherence warning: ${humifogAtomizationWarningRows.length} BIN rows have an after-atomization temperature higher than the immediate pre-Humifog temperature.`}
+                </div>
+              )}
+
               {criticalHumifogReheatRow && (
                 <div className="mb-8 rounded-2xl border border-amber-200 bg-amber-50 p-5">
                   <h3 className="text-xl font-bold text-amber-950 mb-3">
@@ -6810,8 +6986,11 @@ function HvacDashboardApp() {
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
                     {[
                       [language === 'fr' ? 'BIN / heures' : 'BIN / hours', `${displayTemp(criticalHumifogReheatRow.tempC)}${tempUnit} / ${formatNumber(criticalHumifogReheatRow.hours, 0)} h`],
-                      [language === 'fr' ? 'Cible melange avant Humifog' : 'Target mix before Humifog', `${displayTemp(criticalHumifogReheatRow.targetMixedDb)}${tempUnit}`],
-                      [language === 'fr' ? 'Sortie Humifog' : 'Humifog outlet', `${displayTemp(criticalHumifogReheatRow.humifogOutletDb)}${tempUnit}`],
+                      [language === 'fr' ? 'T melange Humifog appliquee' : 'Applied Humifog mixed T', `${displayTemp(criticalHumifogReheatRow.humifogAppliedMixTempDb)}${tempUnit}`],
+                      [language === 'fr' ? 'T avant Humifog (apres prechauffage)' : 'T before Humifog (after preheat)', `${displayTemp(criticalHumifogReheatRow.humifogBeforeAtomizationDb)}${tempUnit}`],
+                      [language === 'fr' ? 'T apres Humifog (apres atomisation)' : 'T after Humifog (after atomization)', `${displayTemp(criticalHumifogReheatRow.humifogOutletAfterAtomizationDb)}${tempUnit}`],
+                      [language === 'fr' ? 'DeltaT adiabatique' : 'Adiabatic DeltaT', `${displayDeltaTemp(criticalHumifogReheatRow.adiabaticCoolingC)}${tempUnit}`],
+                      [language === 'fr' ? 'Formule validee' : 'Validated formula', `${displayTemp(criticalHumifogReheatRow.humifogAppliedMixTempDb)}${tempUnit} - ${displayDeltaTemp(criticalHumifogReheatRow.adiabaticCoolingC)}${tempUnit} = ${displayTemp(criticalHumifogReheatRow.humifogOutletAfterAtomizationDb)}${tempUnit}`],
                       [language === 'fr' ? 'Delta rechauffage' : 'Reheat delta', `${displayDeltaTemp(criticalHumifogReheatRow.reheatDeltaC)}${tempUnit}`],
                       [language === 'fr' ? 'Puissance thermique' : 'Thermal reheat', formatInstantPower(criticalHumifogReheatRow.reheatThermalKw)],
                       [language === 'fr' ? 'Puissance appliquee' : 'Applied reheat input', formatInstantPower(criticalHumifogReheatRow.reheatLoadKw)],

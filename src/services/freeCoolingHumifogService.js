@@ -733,6 +733,14 @@ function buildBinValidationRows(conventionalRows, optimizedHumifogRows) {
   return optimizedHumifogRows.map((humifogRow, index) => {
     const referenceRow = conventionalRows[index]
     const energyConsumptionKwh = humifogRow.totalEnergyKwh
+    const humifogAppliedMixTempDb = humifogRow.mixed.db
+    const humifogBeforeAtomizationDb = Number.isFinite(humifogRow.inletToHumifog?.db)
+      ? humifogRow.inletToHumifog.db
+      : humifogAppliedMixTempDb
+    const adiabaticDeltaC = Math.abs(humifogRow.adiabaticCoolingC || 0)
+    const humifogOutletAfterAtomizationDb = humifogAppliedMixTempDb - adiabaticDeltaC
+    const humifogAfterAtomizationDb = humifogOutletAfterAtomizationDb
+    const humifogAtomizationWarning = humifogOutletAfterAtomizationDb > humifogAppliedMixTempDb + 0.0001
 
     return {
       tempC: humifogRow.tempC,
@@ -749,10 +757,15 @@ function buildBinValidationRows(conventionalRows, optimizedHumifogRows) {
       returnAirCfm: humifogRow.returnAirCfm,
       mixedDb: humifogRow.mixed.db,
       mixedW: humifogRow.mixed.w,
-      humifogOutletDb: humifogRow.afterHumifog.db,
+      humifogAppliedMixTempDb,
+      humifogBeforeAtomizationDb,
+      humifogOutletAfterAtomizationDb,
+      humifogAfterAtomizationDb,
+      humifogOutletDb: humifogOutletAfterAtomizationDb,
       targetAfterHumifogDb: humifogRow.targetAfterHumifogDb,
       targetMixedDb: humifogRow.targetMixedDb,
-      adiabaticCoolingC: humifogRow.adiabaticCoolingC,
+      adiabaticCoolingC: adiabaticDeltaC,
+      humifogAtomizationWarning,
       reheatDeltaC: humifogRow.reheatDeltaC,
       reheatThermalKw: humifogRow.reheatThermalKw,
       reheatLoadKw: humifogRow.reheatLoadKw,

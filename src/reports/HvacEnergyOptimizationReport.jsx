@@ -824,7 +824,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
       <header className="report-cover page-break">
         <div className="cover-topline">
           <span className="cover-logo-lockup">
-            <img src="/heses-logo.png" alt="HESES" className="cover-logo" />
+            <img src="/heses-logo.svg" alt="HESES" className="cover-logo" />
             <span>ENERSOL / CAREL</span>
           </span>
           <span>Professional HVAC Engineering Report</span>
