@@ -733,6 +733,10 @@ function buildBinValidationRows(conventionalRows, optimizedHumifogRows) {
   return optimizedHumifogRows.map((humifogRow, index) => {
     const referenceRow = conventionalRows[index]
     const energyConsumptionKwh = humifogRow.totalEnergyKwh
+    // Locked validation rule: outlet after atomization = air before Humifog - adiabatic deltaT.
+    const adiabaticDeltaC = Math.max(0, Number(humifogRow.adiabaticCoolingC || 0))
+    const beforeHumifogDb = Number(humifogRow.mixed?.db ?? humifogRow.inletToHumifog?.db ?? 0)
+    const humifogOutletDb = beforeHumifogDb - adiabaticDeltaC
 
     return {
       tempC: humifogRow.tempC,
@@ -749,10 +753,10 @@ function buildBinValidationRows(conventionalRows, optimizedHumifogRows) {
       returnAirCfm: humifogRow.returnAirCfm,
       mixedDb: humifogRow.mixed.db,
       mixedW: humifogRow.mixed.w,
-      humifogOutletDb: humifogRow.afterHumifog.db,
+      humifogOutletDb,
       targetAfterHumifogDb: humifogRow.targetAfterHumifogDb,
       targetMixedDb: humifogRow.targetMixedDb,
-      adiabaticCoolingC: humifogRow.adiabaticCoolingC,
+      adiabaticCoolingC: adiabaticDeltaC,
       reheatDeltaC: humifogRow.reheatDeltaC,
       reheatThermalKw: humifogRow.reheatThermalKw,
       reheatLoadKw: humifogRow.reheatLoadKw,

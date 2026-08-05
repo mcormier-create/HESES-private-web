@@ -3641,9 +3641,12 @@ function HvacDashboardApp() {
   const chartHeatingThermalKw = chartPreheatBtuHr / 3412
   const chartHeatingHpKw = chartHeatingThermalKw / Math.max(heatPumpCOP, 0.1)
   const chartHumifogInletState = fallbackAfterHeatingState
+  // Locked validation rule: load = 4.5 * CFM * deltaGrains / 7000, with deltaGrains = after - before.
+  const chartHumifogDeltaGrains = (fallbackAfterHumifogState.w - chartHumifogInletState.w) * 7000
+  const chartHumifogDeltaW = chartHumifogDeltaGrains / 7000
   const chartHumifogWaterLbHr = Math.max(
     0,
-    4.5 * effectiveOutsideAirCFM * (Math.min(fallbackAfterHumifogState.w, fallbackReturnState.w) - chartHumifogInletState.w)
+    4.5 * effectiveOutsideAirCFM * chartHumifogDeltaW
   )
   const chartHumifogWaterKgH = chartHumifogWaterLbHr * 0.453592
   const chartHumifogPumpKw = Math.max(0, chartHumifogWaterLbHr * 0.0009)
