@@ -205,6 +205,12 @@ function formatFlowWithUnit(value, unit, lang) {
   return unit ? `${formattedValue} ${unit}` : formattedValue
 }
 
+function formatPercent(value, lang) {
+  if (!Number.isFinite(value)) return '-'
+  const locale = lang === 'fr' ? 'fr-CA' : 'en-CA'
+  return `${value.toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
+}
+
 export default function HVACSystemImage({
   schematicId = '',
   recoveryType = 'enthalpy',
@@ -213,6 +219,12 @@ export default function HVACSystemImage({
   systemDescription = 'AHU - Thermal wheel - Humifog - HP coil',
   isFreeCoolingMode = false,
   language = 'fr',
+  outdoorAirPercent,
+  returnAirPercent,
+  outdoorAirCFM,
+  returnAirCFM,
+  exhaustAirCFM,
+  supplyAirCFM,
   data = {},
 }) {
   const lang = language === 'en' ? 'en' : 'fr'
@@ -331,36 +343,38 @@ export default function HVACSystemImage({
         { title: text.oaAirflow, value: data.airflow ?? '-' },
       ]
   const parsedTotalFlow = parseFlowWithUnit(String(data.totalAirflow ?? data.supplyAirFlow ?? data.airflow ?? ''))
-  const parsedOaPercent = parseDisplayNumber(String(data.oaPercent ?? ''))
-  const canComputeFreeCoolingFlows = Boolean(
-    isFreeCoolingSystem &&
-    parsedTotalFlow &&
-    Number.isFinite(parsedTotalFlow.value) &&
-    Number.isFinite(parsedOaPercent)
-  )
-  const computedOutdoorAirFlow = canComputeFreeCoolingFlows
-    ? parsedTotalFlow.value * (parsedOaPercent / 100)
-    : null
-  const computedReturnAirFlow = canComputeFreeCoolingFlows
-    ? parsedTotalFlow.value - computedOutdoorAirFlow
-    : null
-  const computedExhaustAirFlow = canComputeFreeCoolingFlows
-    ? computedOutdoorAirFlow
-    : null
-  const computedSupplyAirFlow = canComputeFreeCoolingFlows
-    ? parsedTotalFlow.value
-    : null
-  const displayedOutdoorAirFlow = canComputeFreeCoolingFlows
-    ? formatFlowWithUnit(computedOutdoorAirFlow, parsedTotalFlow.unit, lang)
+  const flowUnit = parsedTotalFlow?.unit || String(data.totalAirflow ?? '').replace(/[-?\d\s.,\u00A0]/g, '').trim()
+  const explicitOutdoorAirPercent = Number(outdoorAirPercent)
+  const explicitReturnAirPercent = Number(returnAirPercent)
+  const explicitOutdoorAirFlow = Number(outdoorAirCFM)
+  const explicitReturnAirFlow = Number(returnAirCFM)
+  const explicitExhaustAirFlow = Number(exhaustAirCFM)
+  const explicitSupplyAirFlow = Number(supplyAirCFM)
+  const hasExplicitFreeCoolingValues = [
+    explicitOutdoorAirPercent,
+    explicitReturnAirPercent,
+    explicitOutdoorAirFlow,
+    explicitReturnAirFlow,
+    explicitExhaustAirFlow,
+    explicitSupplyAirFlow,
+  ].every(Number.isFinite)
+  const displayedOutdoorAirPercent = hasExplicitFreeCoolingValues
+    ? formatPercent(explicitOutdoorAirPercent, lang)
+    : (data.oaPercent ?? '-')
+  const displayedReturnAirPercent = hasExplicitFreeCoolingValues
+    ? formatPercent(explicitReturnAirPercent, lang)
+    : (data.raPercent ?? '-')
+  const displayedOutdoorAirFlow = hasExplicitFreeCoolingValues
+    ? formatFlowWithUnit(explicitOutdoorAirFlow, flowUnit, lang)
     : (data.outsideAirFlow ?? data.airflow ?? '-')
-  const displayedReturnAirFlow = canComputeFreeCoolingFlows
-    ? formatFlowWithUnit(computedReturnAirFlow, parsedTotalFlow.unit, lang)
+  const displayedReturnAirFlow = hasExplicitFreeCoolingValues
+    ? formatFlowWithUnit(explicitReturnAirFlow, flowUnit, lang)
     : (data.returnAirFlow ?? '-')
-  const displayedExhaustAirFlow = canComputeFreeCoolingFlows
-    ? formatFlowWithUnit(computedExhaustAirFlow, parsedTotalFlow.unit, lang)
+  const displayedExhaustAirFlow = hasExplicitFreeCoolingValues
+    ? formatFlowWithUnit(explicitExhaustAirFlow, flowUnit, lang)
     : (data.exhaustAirFlow ?? data.outsideAirFlow ?? '-')
-  const displayedSupplyAirFlow = canComputeFreeCoolingFlows
-    ? formatFlowWithUnit(computedSupplyAirFlow, parsedTotalFlow.unit, lang)
+  const displayedSupplyAirFlow = hasExplicitFreeCoolingValues
+    ? formatFlowWithUnit(explicitSupplyAirFlow, flowUnit, lang)
     : (data.supplyAirFlow ?? data.totalAirflow ?? '-')
   const freeCoolingAfterHeatingStyle = isFreeCoolingSystem
     ? {

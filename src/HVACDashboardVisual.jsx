@@ -3655,12 +3655,22 @@ function HvacDashboardApp() {
   const chartMixedGrainsLb = chartMixedHumidityRatio * 7000
   const chartTargetGrainsLb = chartTargetHumidityRatio * 7000
   const chartDeltaGrainsLb = chartDeltaHumidityRatio * 7000
+  const chartHumifogInletGrainsLb = fallbackPreHumifogHeatingState.w * 7000
+  const chartHumifogAfterGrainsLb = fallbackAfterHumifogState.w * 7000
+  const chartHumifogDeltaDiagnosticGrainsLb = Math.max(0, chartHumifogAfterGrainsLb - chartHumifogInletGrainsLb)
+  const chartHumifogLoadCfm = outsideAirCFM
   const chartHumifogWaterLbHr = Math.max(
     0,
-    4.5 * outsideAirCFM * chartDeltaHumidityRatio
+    4.5 * chartHumifogLoadCfm * (chartHumifogDeltaDiagnosticGrainsLb / 7000)
   )
   const chartHumifogWaterKgH = chartHumifogWaterLbHr * 0.453592
   const chartHumifogPumpKw = Math.max(0, chartHumifogWaterLbHr * 0.0009)
+  const chartHumifogDiagnosticLocale = language === 'fr' ? 'fr-CA' : 'en-CA'
+  const formatHumifogDiagnosticNumber = (value, digits = 1) => Number(value || 0).toLocaleString(chartHumifogDiagnosticLocale, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })
+  const chartHumifogFormulaText = `4.5 x ${formatHumifogDiagnosticNumber(chartHumifogLoadCfm, 0)} x ${formatHumifogDiagnosticNumber(chartHumifogDeltaDiagnosticGrainsLb, 2)} / 7000 = ${formatHumifogDiagnosticNumber(chartHumifogWaterLbHr, 1)} lb/h`
   const chartHumifogWarning = chartHumifogProcess.warning
   const fallbackPsychrometricPoints = [
     { key: 'oa', label: 'Outdoor air', state: fallbackOutdoorState },
@@ -4275,6 +4285,12 @@ function HvacDashboardApp() {
       ]
     : []
   const activeRaPercent = is100OA ? 0 : 100 - activeOaPercent
+  const imageOutdoorAirPercent = is100OA ? 100 : Number(minimumOutsideAirPercent)
+  const imageReturnAirPercent = is100OA ? 0 : Math.max(0, 100 - imageOutdoorAirPercent)
+  const imageOutdoorAirCFM = Math.round(outsideAirCFM * (imageOutdoorAirPercent / 100))
+  const imageReturnAirCFM = Math.max(0, outsideAirCFM - imageOutdoorAirCFM)
+  const imageExhaustAirCFM = imageOutdoorAirCFM
+  const imageSupplyAirCFM = outsideAirCFM
   const displayedOaPercentForFlow = is100OA
     ? 100
     : isFreeCoolingMode
@@ -4289,6 +4305,13 @@ function HvacDashboardApp() {
   const displayedOutdoorAirFlowDisplay = `${displayFlow(displayedOutdoorAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
   const displayedReturnAirFlowDisplay = `${displayFlow(displayedReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
   const displayedExhaustAirFlowDisplay = `${displayFlow(displayedExhaustAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
+  const imageOutdoorAirFlowDisplay = `${displayFlow(imageOutdoorAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
+  const imageReturnAirFlowDisplay = `${displayFlow(imageReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
+  const imageExhaustAirFlowDisplay = `${displayFlow(imageExhaustAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
+  const imageSupplyAirFlowDisplay = `${displayFlow(imageSupplyAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
+  const imageFlowDiagnostic = language === 'fr'
+    ? `Débits image utilisés : OA ${formatNumber(imageOutdoorAirPercent, 1)}% / ${displayFlow(imageOutdoorAirCFM).toLocaleString('fr-CA')} ${flowUnit} | RA ${formatNumber(imageReturnAirPercent, 1)}% / ${displayFlow(imageReturnAirCFM).toLocaleString('fr-CA')} ${flowUnit} | Exhaust ${displayFlow(imageExhaustAirCFM).toLocaleString('fr-CA')} ${flowUnit} | Supply ${displayFlow(imageSupplyAirCFM).toLocaleString('fr-CA')} ${flowUnit}`
+    : `Image airflow used: OA ${formatNumber(imageOutdoorAirPercent, 1)}% / ${displayFlow(imageOutdoorAirCFM).toLocaleString('en-CA')} ${flowUnit} | RA ${formatNumber(imageReturnAirPercent, 1)}% / ${displayFlow(imageReturnAirCFM).toLocaleString('en-CA')} ${flowUnit} | Exhaust ${displayFlow(imageExhaustAirCFM).toLocaleString('en-CA')} ${flowUnit} | Supply ${displayFlow(imageSupplyAirCFM).toLocaleString('en-CA')} ${flowUnit}`
   const freeCoolingEnergySavingsDisplay = freeCoolingCalculationComplete
     ? `${formatSavingsAnnualEnergy(freeCoolingHumifogAnalysis.netSavings.netAnnualEnergySavingsKwh)} / ${formatSavingsPercent(freeCoolingHumifogAnalysis.netSavings.energyReductionPercent)}`
     : calculationIncompleteText
@@ -4346,13 +4369,17 @@ function HvacDashboardApp() {
     heatingKw: `${formatNumber(chartHeatingHpKw, 1)} kW`,
     humifogKw: `${formatNumber(chartHumifogPumpKw, 1)} kW`,
     airflow: totalAirflowDisplay,
-    oaPercent: `${formatNumber(displayedOaPercentForFlow, 1)}%`,
-    raPercent: `${formatNumber(is100OA ? 0 : 100 - displayedOaPercentForFlow, 1)}%`,
+    oaPercent: `${formatNumber(imageOutdoorAirPercent, 1)}%`,
+    raPercent: `${formatNumber(imageReturnAirPercent, 1)}%`,
     totalAirflow: totalAirflowDisplay,
-    outsideAirFlow: displayedOutdoorAirFlowDisplay,
-    returnAirFlow: displayedReturnAirFlowDisplay,
-    exhaustAirFlow: displayedExhaustAirFlowDisplay,
-    supplyAirFlow: totalAirflowDisplay,
+    outsideAirFlow: imageOutdoorAirFlowDisplay,
+    returnAirFlow: imageReturnAirFlowDisplay,
+    exhaustAirFlow: imageExhaustAirFlowDisplay,
+    supplyAirFlow: imageSupplyAirFlowDisplay,
+    imageOutdoorAirCFM,
+    imageReturnAirCFM,
+    imageExhaustAirCFM,
+    imageSupplyAirCFM,
     humifogLoad: humidificationLoadDisplay,
     energySavings: freeCoolingEnergySavingsDisplay,
   }
@@ -5360,8 +5387,19 @@ function HvacDashboardApp() {
                   : `AHU - 100% outdoor air - ${selectedSystemDiagramLabel} - Humifog - ${selectedReheatSystemDisplayName}`)}
               isFreeCoolingMode={isFreeCoolingMode}
               language={language}
+              outdoorAirPercent={imageOutdoorAirPercent}
+              returnAirPercent={imageReturnAirPercent}
+              outdoorAirCFM={imageOutdoorAirCFM}
+              returnAirCFM={imageReturnAirCFM}
+              exhaustAirCFM={imageExhaustAirCFM}
+              supplyAirCFM={imageSupplyAirCFM}
               data={hvacSystemImageData}
             />
+            {isFreeCoolingMode && (
+              <div className="mt-3 rounded-xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm font-medium text-cyan-900">
+                {imageFlowDiagnostic}
+              </div>
+            )}
           </div>
 
           <PsychrometricChart
@@ -5632,13 +5670,12 @@ function HvacDashboardApp() {
               <div className="text-red-700 mt-2">
                 @ {displayTemp(roomTemperature)}{tempUnit} / {roomRelativeHumidity}% RH
               </div>
-              <div className="mt-3 rounded-2xl border border-red-200 bg-white/70 p-3 text-xs text-red-900 space-y-1">
-                <div>W OA: {formatNumber(chartOutdoorGrainsLb, 1)} gr/lb</div>
-                <div>W RA: {formatNumber(chartReturnGrainsLb, 1)} gr/lb</div>
-                <div>W mix: {formatNumber(chartMixedGrainsLb, 1)} gr/lb</div>
-                <div>W cible: {formatNumber(chartTargetGrainsLb, 1)} gr/lb</div>
-                <div>Delta grains: {formatNumber(chartDeltaGrainsLb, 1)} gr/lb</div>
-                <div>Charge Humifog: {formatNumber(chartHumifogWaterLbHr, 1)} lb/h</div>
+              <div className="mt-3 rounded-2xl border border-red-200 bg-white/70 p-3 text-sm text-red-900">
+                <div>{language === 'fr' ? `CFM utilisé pour charge : ${formatNumber(chartHumifogLoadCfm, 0)} CFM` : `CFM used for load: ${formatNumber(chartHumifogLoadCfm, 0)} CFM`}</div>
+                <div>{language === 'fr' ? `Grains avant Humifog : ${formatNumber(chartHumifogInletGrainsLb, 2)} gr/lb` : `Grains before Humifog: ${formatNumber(chartHumifogInletGrainsLb, 2)} gr/lb`}</div>
+                <div>{language === 'fr' ? `Grains après Humifog : ${formatNumber(chartHumifogAfterGrainsLb, 2)} gr/lb` : `Grains after Humifog: ${formatNumber(chartHumifogAfterGrainsLb, 2)} gr/lb`}</div>
+                <div>{language === 'fr' ? `Delta grains : ${formatNumber(chartHumifogDeltaDiagnosticGrainsLb, 2)} gr/lb` : `Delta grains: ${formatNumber(chartHumifogDeltaDiagnosticGrainsLb, 2)} gr/lb`}</div>
+                <div>{language === 'fr' ? `Formule utilisée : ${chartHumifogFormulaText}` : `Formula used: ${chartHumifogFormulaText}`}</div>
               </div>
             </div>
 
