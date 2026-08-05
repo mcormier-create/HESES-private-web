@@ -4264,6 +4264,12 @@ function HvacDashboardApp() {
       ]
     : []
   const activeRaPercent = is100OA ? 0 : 100 - activeOaPercent
+  const imageOutdoorAirPercent = is100OA ? 100 : activeOaPercent
+  const imageReturnAirPercent = is100OA ? 0 : Math.max(0, 100 - imageOutdoorAirPercent)
+  const imageOutdoorAirCFM = Math.round(outsideAirCFM * (imageOutdoorAirPercent / 100))
+  const imageReturnAirCFM = Math.max(0, outsideAirCFM - imageOutdoorAirCFM)
+  const imageExhaustAirCFM = imageOutdoorAirCFM
+  const imageSupplyAirCFM = outsideAirCFM
   const displayedOaPercentForFlow = is100OA
     ? 100
     : isFreeCoolingMode
@@ -4278,6 +4284,10 @@ function HvacDashboardApp() {
   const displayedOutdoorAirFlowDisplay = `${displayFlow(displayedOutdoorAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
   const displayedReturnAirFlowDisplay = `${displayFlow(displayedReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
   const displayedExhaustAirFlowDisplay = `${displayFlow(displayedExhaustAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
+  const imageOutdoorAirFlowDisplay = `${displayFlow(imageOutdoorAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
+  const imageReturnAirFlowDisplay = `${displayFlow(imageReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
+  const imageExhaustAirFlowDisplay = `${displayFlow(imageExhaustAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
+  const imageSupplyAirFlowDisplay = `${displayFlow(imageSupplyAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
   const freeCoolingEnergySavingsDisplay = freeCoolingCalculationComplete
     ? `${formatSavingsAnnualEnergy(freeCoolingHumifogAnalysis.netSavings.netAnnualEnergySavingsKwh)} / ${formatSavingsPercent(freeCoolingHumifogAnalysis.netSavings.energyReductionPercent)}`
     : calculationIncompleteText
@@ -4335,13 +4345,17 @@ function HvacDashboardApp() {
     heatingKw: `${formatNumber(chartHeatingHpKw, 1)} kW`,
     humifogKw: `${formatNumber(chartHumifogPumpKw, 1)} kW`,
     airflow: totalAirflowDisplay,
-    oaPercent: `${formatNumber(displayedOaPercentForFlow, 1)}%`,
-    raPercent: `${formatNumber(is100OA ? 0 : 100 - displayedOaPercentForFlow, 1)}%`,
+    oaPercent: `${formatNumber(imageOutdoorAirPercent, 1)}%`,
+    raPercent: `${formatNumber(imageReturnAirPercent, 1)}%`,
     totalAirflow: totalAirflowDisplay,
-    outsideAirFlow: displayedOutdoorAirFlowDisplay,
-    returnAirFlow: displayedReturnAirFlowDisplay,
-    exhaustAirFlow: displayedExhaustAirFlowDisplay,
-    supplyAirFlow: totalAirflowDisplay,
+    outsideAirFlow: imageOutdoorAirFlowDisplay,
+    returnAirFlow: imageReturnAirFlowDisplay,
+    exhaustAirFlow: imageExhaustAirFlowDisplay,
+    supplyAirFlow: imageSupplyAirFlowDisplay,
+    imageOutdoorAirCFM,
+    imageReturnAirCFM,
+    imageExhaustAirCFM,
+    imageSupplyAirCFM,
     humifogLoad: humidificationLoadDisplay,
     energySavings: freeCoolingEnergySavingsDisplay,
   }
@@ -5295,12 +5309,6 @@ function HvacDashboardApp() {
                   <span>{heatPumpCOP.toFixed(1)}</span>
                 </div>
                 <input
-                  type="number" min="1" max="8" step="0.1" value={heatPumpCOP}
-                  onChange={(e) => setHeatPumpCOP(Number(e.target.value))}
-                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
-                />
-                <div className="mt-3 grid grid-cols-[minmax(0,1fr)_64px] items-center gap-2">
-                  <input
                     type="number"
                     min="1"
                     max="8"
@@ -5309,8 +5317,6 @@ function HvacDashboardApp() {
                     onChange={(e) => setHeatPumpCOP(clampValue(Number(e.target.value), 1, 8))}
                     className="rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                   />
-                  <span className="text-sm font-semibold text-slate-500">COP</span>
-                </div>
                 {is100OA && isNoRecovery && (
                   <p className="mt-2 text-sm text-slate-500">
                     {language === 'fr'

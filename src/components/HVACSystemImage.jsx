@@ -329,8 +329,19 @@ export default function HVACSystemImage({
       ]
   const parsedTotalFlow = parseFlowWithUnit(String(data.totalAirflow ?? data.supplyAirFlow ?? data.airflow ?? ''))
   const parsedOaPercent = parseDisplayNumber(String(data.oaPercent ?? ''))
+  const explicitOutdoorAirFlow = Number(data.imageOutdoorAirCFM)
+  const explicitReturnAirFlow = Number(data.imageReturnAirCFM)
+  const explicitExhaustAirFlow = Number(data.imageExhaustAirCFM)
+  const explicitSupplyAirFlow = Number(data.imageSupplyAirCFM)
+  const hasExplicitFreeCoolingFlows = [
+    explicitOutdoorAirFlow,
+    explicitReturnAirFlow,
+    explicitExhaustAirFlow,
+    explicitSupplyAirFlow,
+  ].every(Number.isFinite)
   const canComputeFreeCoolingFlows = Boolean(
     isFreeCoolingSystem &&
+    !hasExplicitFreeCoolingFlows &&
     parsedTotalFlow &&
     Number.isFinite(parsedTotalFlow.value) &&
     Number.isFinite(parsedOaPercent)
@@ -347,16 +358,24 @@ export default function HVACSystemImage({
   const computedSupplyAirFlow = canComputeFreeCoolingFlows
     ? parsedTotalFlow.value
     : null
-  const displayedOutdoorAirFlow = canComputeFreeCoolingFlows
+  const displayedOutdoorAirFlow = hasExplicitFreeCoolingFlows
+    ? formatFlowWithUnit(explicitOutdoorAirFlow, parsedTotalFlow?.unit, lang)
+    : canComputeFreeCoolingFlows
     ? formatFlowWithUnit(computedOutdoorAirFlow, parsedTotalFlow.unit, lang)
     : (data.outsideAirFlow ?? data.airflow ?? '-')
-  const displayedReturnAirFlow = canComputeFreeCoolingFlows
+  const displayedReturnAirFlow = hasExplicitFreeCoolingFlows
+    ? formatFlowWithUnit(explicitReturnAirFlow, parsedTotalFlow?.unit, lang)
+    : canComputeFreeCoolingFlows
     ? formatFlowWithUnit(computedReturnAirFlow, parsedTotalFlow.unit, lang)
     : (data.returnAirFlow ?? '-')
-  const displayedExhaustAirFlow = canComputeFreeCoolingFlows
+  const displayedExhaustAirFlow = hasExplicitFreeCoolingFlows
+    ? formatFlowWithUnit(explicitExhaustAirFlow, parsedTotalFlow?.unit, lang)
+    : canComputeFreeCoolingFlows
     ? formatFlowWithUnit(computedExhaustAirFlow, parsedTotalFlow.unit, lang)
     : (data.exhaustAirFlow ?? data.outsideAirFlow ?? '-')
-  const displayedSupplyAirFlow = canComputeFreeCoolingFlows
+  const displayedSupplyAirFlow = hasExplicitFreeCoolingFlows
+    ? formatFlowWithUnit(explicitSupplyAirFlow, parsedTotalFlow?.unit, lang)
+    : canComputeFreeCoolingFlows
     ? formatFlowWithUnit(computedSupplyAirFlow, parsedTotalFlow.unit, lang)
     : (data.supplyAirFlow ?? data.totalAirflow ?? '-')
   const freeCoolingAfterHeatingStyle = isFreeCoolingSystem
