@@ -2951,10 +2951,12 @@ function HvacDashboardApp() {
   const effectiveOutsideAirCFM = Math.round(outsideAirCFM * activeFraction)
   const calculatedReturnAirCFM = Math.max(0, outsideAirCFM - effectiveOutsideAirCFM)
   const noRecoverySelection = heatRecoverySystems[language][0]
-  const displayedHeatRecoverySystems = heatRecoverySystems[language]
-  const activeSelectedRecoveries = selectedRecoveries?.length > 0
-    ? selectedRecoveries
-    : [noRecoverySelection]
+  const displayedHeatRecoverySystems = isFreeCoolingMode
+    ? [noRecoverySelection]
+    : heatRecoverySystems[language]
+  const activeSelectedRecoveries = isFreeCoolingMode
+    ? [noRecoverySelection]
+    : selectedRecoveries
   const is100OA = ventilationMode.type === 'outside-air'
   const selectedReheatEnergySource = String(selectedReheatSystem?.energie || '')
     .normalize('NFD')
@@ -3327,11 +3329,6 @@ function HvacDashboardApp() {
     grossReheatKW,
     reheatEnergyKW,
     recoveryEnergyReductionKW,
-    isThermalWheel,
-    wheelAirflowCFM,
-    exhaustAirCFM,
-    temperatureDeltaF,
-    wheelRecoveryThermalKw,
     steamEnergyKW,
     recoveredHeatKW,
     netReheatKW,
@@ -3360,14 +3357,6 @@ function HvacDashboardApp() {
   const selectedRecoveryName = selectedRecovery?.nom ?? ''
   const selectedRecoveryNameLower = selectedRecoveryName.toLowerCase()
   const isNoRecovery = Boolean(selectedRecovery?.noRecovery)
-  const effectiveRecoveryReductionKw = Math.max(0, Number(recoveryEnergyReductionKW) || 0)
-  const isWheelBypassedInFreeCooling = Boolean(isFreeCoolingMode && isNoRecovery)
-  const selectedRecoveryDisplayName = isWheelBypassedInFreeCooling
-    ? (language === 'fr' ? 'Roue thermique bypassée' : 'Thermal wheel bypassed')
-    : (selectedRecovery?.nom || (language === 'fr' ? 'Aucune récupération' : 'No recovery'))
-  const selectedRecoveryPowerDisplay = isWheelBypassedInFreeCooling
-    ? (language === 'fr' ? 'bypass' : 'bypassed')
-    : (effectiveRecoveryReductionKw > 0 ? `-${effectiveRecoveryReductionKw} kW` : '0 kW')
   const humidifierType = 'HUMIFOG'
 
   const recoveryGroup = isNoRecovery
@@ -3577,9 +3566,18 @@ function HvacDashboardApp() {
   )
   const annualValidationRows = (freeCoolingHumifogAnalysis.binValidationRows || []).map((row) => {
     const humifogAnnualTotal = freeCoolingHumifogAnalysis.annualComparison.humifog.totalEnergyKwh || 0
+    const appliedMixedDb = Number(row.humifogAppliedMixTempDb ?? row.mixedDb ?? 0)
+    const adiabaticDeltaDb = Math.abs(Number(row.adiabaticCoolingC ?? 0))
+    const humifogOutletAfterAtomizationDb = appliedMixedDb - adiabaticDeltaDb
 
     return {
       ...row,
+      humifogAppliedMixTempDb: appliedMixedDb,
+      adiabaticCoolingC: adiabaticDeltaDb,
+      humifogOutletAfterAtomizationDb,
+      humifogAfterAtomizationDb: humifogOutletAfterAtomizationDb,
+      humifogOutletDb: humifogOutletAfterAtomizationDb,
+      humifogAtomizationWarning: humifogOutletAfterAtomizationDb > appliedMixedDb + 0.0001,
       annualContributionPercent: humifogAnnualTotal > 0
         ? row.humifogOptimized.binEnergyKwh / humifogAnnualTotal * 100
         : 0,
@@ -3594,6 +3592,7 @@ function HvacDashboardApp() {
     (maxRow, row) => row.reheatLoadKw > (maxRow?.reheatLoadKw ?? -1) ? row : maxRow,
     null
   )
+  const humifogAtomizationWarningRows = annualValidationRows.filter((row) => row.humifogAtomizationWarning)
 
   const energyData = monthLabels[language].map((mois, index) => {
     const seasonalFactor = monthlyFactors[index]
@@ -3640,16 +3639,38 @@ function HvacDashboardApp() {
   const chartPreheatBtuHr = 4.5 * effectiveOutsideAirCFM * chartPreheatDeltaHBtuLb
   const chartHeatingThermalKw = chartPreheatBtuHr / 3412
   const chartHeatingHpKw = chartHeatingThermalKw / Math.max(heatPumpCOP, 0.1)
-  const chartHumifogInletState = fallbackAfterHeatingState
-  // Locked validation rule: load = 4.5 * CFM * deltaGrains / 7000, with deltaGrains = after - before.
-  const chartHumifogDeltaGrains = (fallbackAfterHumifogState.w - chartHumifogInletState.w) * 7000
-  const chartHumifogDeltaW = chartHumifogDeltaGrains / 7000
+  const chartOutdoorAirPercent = is100OA ? 100 : Math.min(100, Math.max(0, activeFraction * 100))
+  const chartReturnAirPercent = Math.max(0, 100 - chartOutdoorAirPercent)
+  const chartOutdoorAirFraction = chartOutdoorAirPercent / 100
+  const chartReturnAirFraction = chartReturnAirPercent / 100
+  const chartOutdoorHumidityRatio = fallbackOutdoorState.w
+  const chartReturnHumidityRatio = fallbackReturnState.w
+  const chartMixedHumidityRatio =
+    chartOutdoorAirFraction * chartOutdoorHumidityRatio +
+    chartReturnAirFraction * chartReturnHumidityRatio
+  const chartTargetHumidityRatio = chartReturnHumidityRatio
+  const chartDeltaHumidityRatio = Math.max(0, chartTargetHumidityRatio - chartMixedHumidityRatio)
+  const chartOutdoorGrainsLb = chartOutdoorHumidityRatio * 7000
+  const chartReturnGrainsLb = chartReturnHumidityRatio * 7000
+  const chartMixedGrainsLb = chartMixedHumidityRatio * 7000
+  const chartTargetGrainsLb = chartTargetHumidityRatio * 7000
+  const chartDeltaGrainsLb = chartDeltaHumidityRatio * 7000
+  const chartHumifogInletGrainsLb = fallbackPreHumifogHeatingState.w * 7000
+  const chartHumifogAfterGrainsLb = fallbackAfterHumifogState.w * 7000
+  const chartHumifogDeltaDiagnosticGrainsLb = Math.max(0, chartHumifogAfterGrainsLb - chartHumifogInletGrainsLb)
+  const chartHumifogLoadCfm = outsideAirCFM
   const chartHumifogWaterLbHr = Math.max(
     0,
-    4.5 * effectiveOutsideAirCFM * chartHumifogDeltaW
+    4.5 * chartHumifogLoadCfm * (chartHumifogDeltaDiagnosticGrainsLb / 7000)
   )
   const chartHumifogWaterKgH = chartHumifogWaterLbHr * 0.453592
   const chartHumifogPumpKw = Math.max(0, chartHumifogWaterLbHr * 0.0009)
+  const chartHumifogDiagnosticLocale = language === 'fr' ? 'fr-CA' : 'en-CA'
+  const formatHumifogDiagnosticNumber = (value, digits = 1) => Number(value || 0).toLocaleString(chartHumifogDiagnosticLocale, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })
+  const chartHumifogFormulaText = `4.5 x ${formatHumifogDiagnosticNumber(chartHumifogLoadCfm, 0)} x ${formatHumifogDiagnosticNumber(chartHumifogDeltaDiagnosticGrainsLb, 2)} / 7000 = ${formatHumifogDiagnosticNumber(chartHumifogWaterLbHr, 1)} lb/h`
   const chartHumifogWarning = chartHumifogProcess.warning
   const fallbackPsychrometricPoints = [
     { key: 'oa', label: 'Outdoor air', state: fallbackOutdoorState },
@@ -4264,7 +4285,7 @@ function HvacDashboardApp() {
       ]
     : []
   const activeRaPercent = is100OA ? 0 : 100 - activeOaPercent
-  const imageOutdoorAirPercent = is100OA ? 100 : activeOaPercent
+  const imageOutdoorAirPercent = is100OA ? 100 : Number(minimumOutsideAirPercent)
   const imageReturnAirPercent = is100OA ? 0 : Math.max(0, 100 - imageOutdoorAirPercent)
   const imageOutdoorAirCFM = Math.round(outsideAirCFM * (imageOutdoorAirPercent / 100))
   const imageReturnAirCFM = Math.max(0, outsideAirCFM - imageOutdoorAirCFM)
@@ -4288,6 +4309,9 @@ function HvacDashboardApp() {
   const imageReturnAirFlowDisplay = `${displayFlow(imageReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
   const imageExhaustAirFlowDisplay = `${displayFlow(imageExhaustAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
   const imageSupplyAirFlowDisplay = `${displayFlow(imageSupplyAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
+  const imageFlowDiagnostic = language === 'fr'
+    ? `Débits image utilisés : OA ${formatNumber(imageOutdoorAirPercent, 1)}% / ${displayFlow(imageOutdoorAirCFM).toLocaleString('fr-CA')} ${flowUnit} | RA ${formatNumber(imageReturnAirPercent, 1)}% / ${displayFlow(imageReturnAirCFM).toLocaleString('fr-CA')} ${flowUnit} | Exhaust ${displayFlow(imageExhaustAirCFM).toLocaleString('fr-CA')} ${flowUnit} | Supply ${displayFlow(imageSupplyAirCFM).toLocaleString('fr-CA')} ${flowUnit}`
+    : `Image airflow used: OA ${formatNumber(imageOutdoorAirPercent, 1)}% / ${displayFlow(imageOutdoorAirCFM).toLocaleString('en-CA')} ${flowUnit} | RA ${formatNumber(imageReturnAirPercent, 1)}% / ${displayFlow(imageReturnAirCFM).toLocaleString('en-CA')} ${flowUnit} | Exhaust ${displayFlow(imageExhaustAirCFM).toLocaleString('en-CA')} ${flowUnit} | Supply ${displayFlow(imageSupplyAirCFM).toLocaleString('en-CA')} ${flowUnit}`
   const freeCoolingEnergySavingsDisplay = freeCoolingCalculationComplete
     ? `${formatSavingsAnnualEnergy(freeCoolingHumifogAnalysis.netSavings.netAnnualEnergySavingsKwh)} / ${formatSavingsPercent(freeCoolingHumifogAnalysis.netSavings.energyReductionPercent)}`
     : calculationIncompleteText
@@ -4413,8 +4437,9 @@ function HvacDashboardApp() {
     displayedValues: {
       humidificationLoad: humidificationLoadDisplay,
       totalAirflow: totalAirflowDisplay,
-      outsideAirFlow: outsideAirFlowDisplay,
-      returnAirFlow: returnAirFlowDisplay,
+      outsideAirFlow: displayedOutdoorAirFlowDisplay,
+      returnAirFlow: displayedReturnAirFlowDisplay,
+      exhaustAirFlow: displayedExhaustAirFlowDisplay,
       activeOaPercent,
       activeRaPercent,
       psychrometricGainItems,
@@ -4914,9 +4939,9 @@ function HvacDashboardApp() {
                       <td className="p-4">
                         <input
                           type="number"
-                          min="0"
+                          min="100"
                           max="150000"
-                          step={units === 'metric' ? 500 : 100}
+                          step={units === 'metric' ? 50 : 100}
                           value={displayFlow(outsideAirCFM)}
                           onChange={(event) => setOutsideAirCFM(inputFlowToCfm(Number(event.target.value)))}
                           className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
@@ -4940,9 +4965,9 @@ function HvacDashboardApp() {
                         />
                       </td>
                       <td className="p-4 text-center text-slate-700">
-                        <span className="font-semibold text-cyan-700">{outsideAirFlowDisplay}</span>
+                        <span className="font-semibold text-cyan-700">{displayedOutdoorAirFlowDisplay}</span>
                         <span className="mx-2 text-slate-400">/</span>
-                        <span className="font-semibold text-orange-700">{returnAirFlowDisplay}</span>
+                        <span className="font-semibold text-orange-700">{displayedReturnAirFlowDisplay}</span>
                       </td>
                     </tr>
                   </tbody>
@@ -5141,12 +5166,12 @@ function HvacDashboardApp() {
                   </div>
                   <div className="bg-white rounded-2xl p-4 border border-cyan-100">
                     <div className="text-sm text-slate-500">{language === 'fr' ? 'Débit OA minimum calculé' : 'Calculated minimum OA flow'}</div>
-                    <div className="text-4xl font-bold text-cyan-700 mt-2">{displayFlow(effectiveOutsideAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')}</div>
+                    <div className="text-4xl font-bold text-cyan-700 mt-2">{displayFlow(displayedOutdoorAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')}</div>
                     <div className="text-sm text-slate-500 mt-1">{flowUnit}</div>
                   </div>
                   <div className="bg-white rounded-2xl p-4 border border-cyan-100">
                     <div className="text-sm text-slate-500">{language === 'fr' ? 'Débit air de retour calculé' : 'Calculated return air flow'}</div>
-                    <div className="text-4xl font-bold text-orange-700 mt-2">{displayFlow(calculatedReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')}</div>
+                    <div className="text-4xl font-bold text-orange-700 mt-2">{displayFlow(displayedReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')}</div>
                     <div className="text-sm text-slate-500 mt-1">{flowUnit}</div>
                   </div>
                 </div>
@@ -5283,9 +5308,9 @@ function HvacDashboardApp() {
                 </div>
                 <input
                   type="number"
-                  min="0"
+                  min="100"
                   max="150000"
-                  step={units === 'metric' ? 500 : 100}
+                  step={units === 'metric' ? 50 : 100}
                   value={displayFlow(outsideAirCFM)}
                   onChange={(e) => setOutsideAirCFM(inputFlowToCfm(Number(e.target.value)))}
                   className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
@@ -5306,9 +5331,9 @@ function HvacDashboardApp() {
               <div>
                 <div className="flex justify-between mb-2">
                   <span>{t.heatPumpCOP}</span>
-                  <span>{heatPumpCOP.toFixed(1)}</span>
                 </div>
-                <input
+                <div className="grid grid-cols-[minmax(0,1fr)_64px] items-center gap-2">
+                  <input
                     type="number"
                     min="1"
                     max="8"
@@ -5317,6 +5342,8 @@ function HvacDashboardApp() {
                     onChange={(e) => setHeatPumpCOP(clampValue(Number(e.target.value), 1, 8))}
                     className="rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                   />
+                  <span className="text-sm font-semibold text-slate-500">COP</span>
+                </div>
                 {is100OA && isNoRecovery && (
                   <p className="mt-2 text-sm text-slate-500">
                     {language === 'fr'
@@ -5360,8 +5387,19 @@ function HvacDashboardApp() {
                   : `AHU - 100% outdoor air - ${selectedSystemDiagramLabel} - Humifog - ${selectedReheatSystemDisplayName}`)}
               isFreeCoolingMode={isFreeCoolingMode}
               language={language}
+              outdoorAirPercent={imageOutdoorAirPercent}
+              returnAirPercent={imageReturnAirPercent}
+              outdoorAirCFM={imageOutdoorAirCFM}
+              returnAirCFM={imageReturnAirCFM}
+              exhaustAirCFM={imageExhaustAirCFM}
+              supplyAirCFM={imageSupplyAirCFM}
               data={hvacSystemImageData}
             />
+            {isFreeCoolingMode && (
+              <div className="mt-3 rounded-xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm font-medium text-cyan-900">
+                {imageFlowDiagnostic}
+              </div>
+            )}
           </div>
 
           <PsychrometricChart
@@ -5632,6 +5670,13 @@ function HvacDashboardApp() {
               <div className="text-red-700 mt-2">
                 @ {displayTemp(roomTemperature)}{tempUnit} / {roomRelativeHumidity}% RH
               </div>
+              <div className="mt-3 rounded-2xl border border-red-200 bg-white/70 p-3 text-sm text-red-900">
+                <div>{language === 'fr' ? `CFM utilisé pour charge : ${formatNumber(chartHumifogLoadCfm, 0)} CFM` : `CFM used for load: ${formatNumber(chartHumifogLoadCfm, 0)} CFM`}</div>
+                <div>{language === 'fr' ? `Grains avant Humifog : ${formatNumber(chartHumifogInletGrainsLb, 2)} gr/lb` : `Grains before Humifog: ${formatNumber(chartHumifogInletGrainsLb, 2)} gr/lb`}</div>
+                <div>{language === 'fr' ? `Grains après Humifog : ${formatNumber(chartHumifogAfterGrainsLb, 2)} gr/lb` : `Grains after Humifog: ${formatNumber(chartHumifogAfterGrainsLb, 2)} gr/lb`}</div>
+                <div>{language === 'fr' ? `Delta grains : ${formatNumber(chartHumifogDeltaDiagnosticGrainsLb, 2)} gr/lb` : `Delta grains: ${formatNumber(chartHumifogDeltaDiagnosticGrainsLb, 2)} gr/lb`}</div>
+                <div>{language === 'fr' ? `Formule utilisée : ${chartHumifogFormulaText}` : `Formula used: ${chartHumifogFormulaText}`}</div>
+              </div>
             </div>
 
             <div className="bg-red-50 border border-red-200 rounded-3xl p-6">
@@ -5796,13 +5841,8 @@ function HvacDashboardApp() {
                       <td className="p-4 text-center">-</td>
                       <td className="p-4 text-center">-</td>
                       <td className="p-4 text-center text-green-700 font-bold">
-                        {selectedRecoveryDisplayName}
-                        <div className="mt-2">{selectedRecoveryPowerDisplay}</div>
-                        {isThermalWheel && !isNoRecovery && effectiveRecoveryReductionKw > 0 && (
-                          <div className="mt-1 text-xs font-semibold text-slate-600">
-                            OA {Math.round(wheelAirflowCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} CFM | EXH {Math.round(exhaustAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} CFM | ΔT {formatNumber(temperatureDeltaF, 1)}°F | {formatNumber(wheelRecoveryThermalKw, 1)} kW
-                          </div>
-                        )}
+                        {activeSelectedRecoveries[0]?.nom}
+                        <div className="mt-2">{isNoRecovery ? '0' : `-${recoveryEnergyReductionKW}`} kW</div>
                       </td>
                     </tr>
                   )}
@@ -6798,6 +6838,11 @@ function HvacDashboardApp() {
                     ? 'Le total annuel est la somme de tous les BIN climatiques ci-dessous; il ne provient pas seulement du BIN affiche dans le graphique.'
                     : 'The annual total is the sum of every climate BIN below; it is not calculated from only the BIN shown in the chart.'}
                 </p>
+                <p className="text-sm text-cyan-800 mb-3 font-semibold">
+                  {language === 'fr'
+                    ? 'Validation adiabatique: Sortie Humifog apres atomisation = T melange Humifog appliquee - DeltaT adiabatique.'
+                    : 'Adiabatic validation: Humifog outlet after atomization = applied Humifog mixed T - adiabatic DeltaT.'}
+                </p>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-slate-100">
@@ -6808,7 +6853,8 @@ function HvacDashboardApp() {
                         language === 'fr' ? 'Humifog OA théorique / appliqué' : 'Humifog theoretical / applied OA',
                         language === 'fr' ? 'Écart volets Humifog' : 'Humifog damper difference',
                         language === 'fr' ? 'T mélange vapeur cible / appliquée' : 'Steam target / applied mixed T',
-                        language === 'fr' ? 'T mélange Humifog cible / appliquée' : 'Humifog target / applied mixed T',
+                        language === 'fr' ? 'T mélange Humifog appliquée' : 'Applied Humifog mixed T',
+                        language === 'fr' ? 'T avant Humifog (apres prechauffage)' : 'T before Humifog (after preheat)',
                         language === 'fr' ? 'Sortie Humifog apres atomisation' : 'Humifog outlet after atomization',
                         language === 'fr' ? 'DeltaT adiabatique' : 'Adiabatic deltaT',
                         language === 'fr' ? 'Rechauffage instantane' : 'Instant reheat',
@@ -6822,7 +6868,13 @@ function HvacDashboardApp() {
                     </tr>
                   </thead>
                   <tbody>
-                    {annualValidationRows.map((row) => (
+                    {annualValidationRows.map((row) => {
+                      const displayedHumifogAppliedMixedTempDb = Number(row.humifogAppliedMixTempDb ?? 0)
+                      const displayedAdiabaticDeltaDb = Math.abs(Number(row.adiabaticCoolingC ?? 0))
+                      const displayedHumifogOutletAfterAtomizationDb = displayedHumifogAppliedMixedTempDb - displayedAdiabaticDeltaDb
+                      const displayedHumifogOutletWarning = displayedHumifogOutletAfterAtomizationDb > displayedHumifogAppliedMixedTempDb + 0.0001
+
+                      return (
                       <tr key={`bin-${row.tempC}-${row.hours}`} className="border-b border-slate-100">
                         <td className="p-3 font-bold text-slate-700">{displayTemp(row.tempC)}{tempUnit}</td>
                         <td className="p-3 text-center">{formatNumber(row.hours, 0)} h</td>
@@ -6874,15 +6926,20 @@ function HvacDashboardApp() {
                           </div>
                         </td>
                         <td className="p-3 text-center font-bold text-cyan-700">
-                          <div>
-                            {language === 'fr' ? 'Cible' : 'Target'} {displayTemp(row.targetMixedDb)}{tempUnit}
-                          </div>
-                          <div className="mt-1 text-xs font-semibold text-cyan-600">
-                            {language === 'fr' ? 'Appliquée' : 'Applied'} {displayTemp(row.mixedDb)}{tempUnit}
+                          {displayTemp(displayedHumifogAppliedMixedTempDb)}{tempUnit}
+                        </td>
+                        <td className="p-3 text-center font-bold text-cyan-700">
+                          {displayTemp(row.humifogBeforeAtomizationDb)}{tempUnit}
+                        </td>
+                        <td className="p-3 text-center font-bold text-cyan-700">
+                          <div>{displayTemp(displayedHumifogOutletAfterAtomizationDb)}{tempUnit}</div>
+                          <div className={`mt-1 text-[11px] font-semibold ${displayedHumifogOutletWarning ? 'text-amber-700' : 'text-emerald-700'}`}>
+                            {displayedHumifogOutletWarning
+                              ? (language === 'fr' ? 'Validation Humifog : WARNING (sortie > T melange appliquee)' : 'Humifog validation: WARNING (outlet > applied mixed T)')
+                              : (language === 'fr' ? 'Validation Humifog : OK' : 'Humifog validation: OK')}
                           </div>
                         </td>
-                        <td className="p-3 text-center font-bold text-cyan-700">{displayTemp(row.humifogOutletDb)}{tempUnit}</td>
-                        <td className="p-3 text-center text-blue-700">{displayDeltaTemp(row.adiabaticCoolingC)}{tempUnit}</td>
+                        <td className="p-3 text-center text-blue-700">{displayDeltaTemp(displayedAdiabaticDeltaDb)}{tempUnit}</td>
                         <td className="p-3 text-center">{formatInstantPower(row.reheatLoadKw)}</td>
                         <td className="p-3 text-center font-bold text-red-700">{formatAnnualEnergy(row.steamReference.binEnergyKwh)}</td>
                         <td className="p-3 text-center font-bold text-cyan-700">{formatAnnualEnergy(row.humifogOptimized.binEnergyKwh)}</td>
@@ -6890,8 +6947,9 @@ function HvacDashboardApp() {
                           {formatSavingsAnnualEnergy(row.difference.binEnergyKwh)}
                         </td>
                         <td className="p-3 text-center font-bold text-slate-900">{formatNumber(row.annualContributionPercent, 1)}%</td>
-                      </tr>
-                    ))}
+                        </tr>
+                        )
+                      })}
                     <tr className="bg-slate-50">
                       <td className="p-3 font-bold text-slate-800">{language === 'fr' ? 'Total annuel' : 'Annual total'}</td>
                       <td className="p-3 text-center font-bold">{formatNumber(freeCoolingHumifogAnalysis.annualComparison.humifog.totalHours, 0)} h</td>
@@ -6923,6 +6981,7 @@ function HvacDashboardApp() {
                       <td className="p-3 text-center text-cyan-700">{displayTemp(freeCoolingHumifogAnalysis.annualComparison.humifog.averageMixedDb)}{tempUnit}</td>
                       <td className="p-3 text-center">-</td>
                       <td className="p-3 text-center">-</td>
+                      <td className="p-3 text-center">-</td>
                       <td className="p-3 text-center font-bold">{formatAnnualEnergy(freeCoolingHumifogAnalysis.annualComparison.humifog.reheatEnergyKwh)}</td>
                       <td className="p-3 text-center font-bold text-red-700">{formatAnnualEnergy(freeCoolingHumifogAnalysis.annualComparison.freeCooling.totalEnergyKwh)}</td>
                       <td className="p-3 text-center font-bold text-cyan-700">{formatAnnualEnergy(freeCoolingHumifogAnalysis.annualComparison.humifog.totalEnergyKwh)}</td>
@@ -6948,6 +7007,14 @@ function HvacDashboardApp() {
                     : 'Warning: annual totals do not fully match the BIN sum. Verify Free Cooling logic.')}
               </div>
 
+              {humifogAtomizationWarningRows.length > 0 && (
+                <div className="mb-8 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+                  {language === 'fr'
+                    ? `Alerte coherence Humifog: ${humifogAtomizationWarningRows.length} BIN ont une temperature apres atomisation superieure a la temperature juste avant Humifog.`
+                    : `Humifog coherence warning: ${humifogAtomizationWarningRows.length} BIN rows have an after-atomization temperature higher than the immediate pre-Humifog temperature.`}
+                </div>
+              )}
+
               {criticalHumifogReheatRow && (
                 <div className="mb-8 rounded-2xl border border-amber-200 bg-amber-50 p-5">
                   <h3 className="text-xl font-bold text-amber-950 mb-3">
@@ -6956,8 +7023,11 @@ function HvacDashboardApp() {
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
                     {[
                       [language === 'fr' ? 'BIN / heures' : 'BIN / hours', `${displayTemp(criticalHumifogReheatRow.tempC)}${tempUnit} / ${formatNumber(criticalHumifogReheatRow.hours, 0)} h`],
-                      [language === 'fr' ? 'Cible melange avant Humifog' : 'Target mix before Humifog', `${displayTemp(criticalHumifogReheatRow.targetMixedDb)}${tempUnit}`],
-                      [language === 'fr' ? 'Sortie Humifog' : 'Humifog outlet', `${displayTemp(criticalHumifogReheatRow.humifogOutletDb)}${tempUnit}`],
+                      [language === 'fr' ? 'T melange Humifog appliquee' : 'Applied Humifog mixed T', `${displayTemp(criticalHumifogReheatRow.humifogAppliedMixTempDb)}${tempUnit}`],
+                      [language === 'fr' ? 'T avant Humifog (apres prechauffage)' : 'T before Humifog (after preheat)', `${displayTemp(criticalHumifogReheatRow.humifogBeforeAtomizationDb)}${tempUnit}`],
+                      [language === 'fr' ? 'T apres Humifog (apres atomisation)' : 'T after Humifog (after atomization)', `${displayTemp(criticalHumifogReheatRow.humifogOutletAfterAtomizationDb)}${tempUnit}`],
+                      [language === 'fr' ? 'DeltaT adiabatique' : 'Adiabatic DeltaT', `${displayDeltaTemp(criticalHumifogReheatRow.adiabaticCoolingC)}${tempUnit}`],
+                      [language === 'fr' ? 'Formule validee' : 'Validated formula', `${displayTemp(criticalHumifogReheatRow.humifogAppliedMixTempDb)}${tempUnit} - ${displayDeltaTemp(criticalHumifogReheatRow.adiabaticCoolingC)}${tempUnit} = ${displayTemp(criticalHumifogReheatRow.humifogOutletAfterAtomizationDb)}${tempUnit}`],
                       [language === 'fr' ? 'Delta rechauffage' : 'Reheat delta', `${displayDeltaTemp(criticalHumifogReheatRow.reheatDeltaC)}${tempUnit}`],
                       [language === 'fr' ? 'Puissance thermique' : 'Thermal reheat', formatInstantPower(criticalHumifogReheatRow.reheatThermalKw)],
                       [language === 'fr' ? 'Puissance appliquee' : 'Applied reheat input', formatInstantPower(criticalHumifogReheatRow.reheatLoadKw)],
