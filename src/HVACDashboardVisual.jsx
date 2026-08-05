@@ -2371,10 +2371,12 @@ function HvacDashboardApp() {
   const inputTempToC = (value) => units === 'imperial' ? round1((value - 32) * 5 / 9) : value
   const tempUnit = units === 'imperial' ? '\u00B0F' : '\u00B0C'
   const displayFlow = (cfm) => units === 'metric' ? Math.round(cfm * 0.47195) : cfm
+  const inputFlowToCfm = (value) => units === 'metric' ? Math.round((value || 0) / 0.47195) : value
   const flowUnit = units === 'metric' ? 'L/s' : 'CFM'
   const displayGasFlow = (m3h) => units === 'imperial' ? Math.round(m3h * 35.3147 * 10) / 10 : m3h
   const gasFlowUnit = units === 'imperial' ? 'ft\u00B3/h' : 'm\u00B3/h'
   const displayGasRate = (rM3) => units === 'imperial' ? Math.round((rM3 / 0.0366) * 100) / 100 : rM3
+  const inputGasRateToMetric = (value) => units === 'imperial' ? (value || 0) * 0.0366 : value
   const gasRateUnit = units === 'imperial' ? '$/MMBTU' : '$/m\u00B3'
   const displayHumidity = (grLb) => units === 'metric' ? Math.round(grLb * 0.142857 * 10) / 10 : grLb
   const humidityUnit = units === 'metric' ? 'g/kg' : 'gr/lb'
@@ -4259,9 +4261,20 @@ function HvacDashboardApp() {
       ]
     : []
   const activeRaPercent = is100OA ? 0 : 100 - activeOaPercent
+  const displayedOaPercentForFlow = is100OA
+    ? 100
+    : isFreeCoolingMode
+      ? minimumOutsideAirPercent
+      : activeOaPercent
+  const displayedOutdoorAirCFM = Math.round(outsideAirCFM * (displayedOaPercentForFlow / 100))
+  const displayedReturnAirCFM = Math.max(0, outsideAirCFM - displayedOutdoorAirCFM)
+  const displayedExhaustAirCFM = displayedOutdoorAirCFM
   const totalAirflowDisplay = `${displayFlow(outsideAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
   const outsideAirFlowDisplay = `${displayFlow(effectiveOutsideAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
   const returnAirFlowDisplay = `${displayFlow(calculatedReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
+  const displayedOutdoorAirFlowDisplay = `${displayFlow(displayedOutdoorAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
+  const displayedReturnAirFlowDisplay = `${displayFlow(displayedReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
+  const displayedExhaustAirFlowDisplay = `${displayFlow(displayedExhaustAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
   const freeCoolingEnergySavingsDisplay = freeCoolingCalculationComplete
     ? `${formatSavingsAnnualEnergy(freeCoolingHumifogAnalysis.netSavings.netAnnualEnergySavingsKwh)} / ${formatSavingsPercent(freeCoolingHumifogAnalysis.netSavings.energyReductionPercent)}`
     : calculationIncompleteText
@@ -4318,13 +4331,13 @@ function HvacDashboardApp() {
     recoveryKw: `${formatNumber(chartRecoveryThermalKw, 1)} kW`,
     heatingKw: `${formatNumber(chartHeatingHpKw, 1)} kW`,
     humifogKw: `${formatNumber(chartHumifogPumpKw, 1)} kW`,
-    airflow: outsideAirFlowDisplay,
-    oaPercent: `${activeOaPercent}%`,
-    raPercent: `${activeRaPercent}%`,
+    airflow: totalAirflowDisplay,
+    oaPercent: `${formatNumber(displayedOaPercentForFlow, 1)}%`,
+    raPercent: `${formatNumber(is100OA ? 0 : 100 - displayedOaPercentForFlow, 1)}%`,
     totalAirflow: totalAirflowDisplay,
-    outsideAirFlow: outsideAirFlowDisplay,
-    returnAirFlow: returnAirFlowDisplay,
-    exhaustAirFlow: returnAirFlowDisplay,
+    outsideAirFlow: displayedOutdoorAirFlowDisplay,
+    returnAirFlow: displayedReturnAirFlowDisplay,
+    exhaustAirFlow: displayedExhaustAirFlowDisplay,
     supplyAirFlow: totalAirflowDisplay,
     humifogLoad: humidificationLoadDisplay,
     energySavings: freeCoolingEnergySavingsDisplay,
@@ -4847,9 +4860,13 @@ function HvacDashboardApp() {
                       <td className="p-4 text-center font-bold text-slate-800">{displayTemp(roomTemperature)}{tempUnit}</td>
                       <td className="p-4">
                         <input
-                          type="range" min="18" max="30" step="1" value={roomTemperature}
-                          onChange={(event) => setRoomTemperature(Number(event.target.value))}
-                          className="w-full"
+                          type="number"
+                          min={displayTemp(18)}
+                          max={displayTemp(30)}
+                          step="0.1"
+                          value={displayTemp(roomTemperature)}
+                          onChange={(event) => setRoomTemperature(inputTempToC(Number(event.target.value)))}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                         />
                       </td>
                       <td className="p-4 text-center text-slate-600">
@@ -4862,9 +4879,9 @@ function HvacDashboardApp() {
                       <td className="p-4 text-center font-bold text-slate-800">{roomRelativeHumidity}%</td>
                       <td className="p-4">
                         <input
-                          type="range" min="20" max="70" step="1" value={roomRelativeHumidity}
+                          type="number" min="0" max="100" step="1" value={roomRelativeHumidity}
                           onChange={(event) => setRoomRelativeHumidity(Number(event.target.value))}
-                          className="w-full"
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                         />
                       </td>
                       <td className="p-4 text-center text-slate-600">
@@ -4879,9 +4896,13 @@ function HvacDashboardApp() {
                       <td className="p-4 text-center font-bold text-slate-800">{displayFlow(outsideAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} {flowUnit}</td>
                       <td className="p-4">
                         <input
-                          type="range" min="1000" max="150000" step="1000" value={outsideAirCFM}
-                          onChange={(event) => setOutsideAirCFM(Number(event.target.value))}
-                          className="w-full"
+                          type="number"
+                          min="0"
+                          max="150000"
+                          step={units === 'metric' ? 500 : 100}
+                          value={displayFlow(outsideAirCFM)}
+                          onChange={(event) => setOutsideAirCFM(inputFlowToCfm(Number(event.target.value)))}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                         />
                       </td>
                       <td className="p-4 text-center text-slate-600">
@@ -4896,9 +4917,9 @@ function HvacDashboardApp() {
                       <td className="p-4 text-center font-bold text-cyan-700">{minimumOutsideAirPercent}% OA / {100 - minimumOutsideAirPercent}% RA</td>
                       <td className="p-4">
                         <input
-                          type="range" min="10" max="60" step="5" value={minimumOutsideAirPercent}
+                          type="number" min="0" max="100" step="0.1" value={minimumOutsideAirPercent}
                           onChange={(event) => setMinimumOutsideAirPercent(Number(event.target.value))}
-                          className="w-full"
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                         />
                       </td>
                       <td className="p-4 text-center text-slate-700">
@@ -5185,9 +5206,13 @@ function HvacDashboardApp() {
                   <span>{displayTemp(roomTemperature)}{tempUnit}</span>
                 </div>
                 <input
-                  type="range" min="18" max="30" step="1" value={roomTemperature}
-                  onChange={(e) => setRoomTemperature(Number(e.target.value))}
-                  className="w-full"
+                  type="number"
+                  min={displayTemp(18)}
+                  max={displayTemp(30)}
+                  step="0.1"
+                  value={displayTemp(roomTemperature)}
+                  onChange={(e) => setRoomTemperature(inputTempToC(Number(e.target.value)))}
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                 />
                 </div>
               )}
@@ -5199,9 +5224,9 @@ function HvacDashboardApp() {
                   <span>{roomRelativeHumidity}%</span>
                 </div>
                 <input
-                  type="range" min="20" max="70" step="1" value={roomRelativeHumidity}
+                  type="number" min="0" max="100" step="1" value={roomRelativeHumidity}
                   onChange={(e) => setRoomRelativeHumidity(Number(e.target.value))}
-                  className="w-full"
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                 />
                 </div>
               )}
@@ -5219,9 +5244,13 @@ function HvacDashboardApp() {
                   </div>
                 ) : (
                   <input
-                    type="range" min="15" max="40" step="1" value={supplyAirTemperature}
-                    onChange={(e) => setSupplyAirTemperature(Number(e.target.value))}
-                    className="w-full"
+                    type="number"
+                    min={displayTemp(15)}
+                    max={displayTemp(40)}
+                    step="0.1"
+                    value={displayTemp(supplyAirTemperature)}
+                    onChange={(e) => setSupplyAirTemperature(inputTempToC(Number(e.target.value)))}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                   />
                 )}
               </div>
@@ -5236,9 +5265,13 @@ function HvacDashboardApp() {
                   <span>{displayFlow(outsideAirCFM).toLocaleString()} {flowUnit}</span>
                 </div>
                 <input
-                  type="range" min="1000" max="150000" step="1000" value={outsideAirCFM}
-                  onChange={(e) => setOutsideAirCFM(Number(e.target.value))}
-                  className="w-full"
+                  type="number"
+                  min="0"
+                  max="150000"
+                  step={units === 'metric' ? 500 : 100}
+                  value={displayFlow(outsideAirCFM)}
+                  onChange={(e) => setOutsideAirCFM(inputFlowToCfm(Number(e.target.value)))}
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                 />
                 </div>
               )}
@@ -5259,9 +5292,9 @@ function HvacDashboardApp() {
                   <span>{heatPumpCOP.toFixed(1)}</span>
                 </div>
                 <input
-                  type="range" min="1" max="8" step="0.1" value={heatPumpCOP}
+                  type="number" min="1" max="8" step="0.1" value={heatPumpCOP}
                   onChange={(e) => setHeatPumpCOP(Number(e.target.value))}
-                  className="w-full"
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                 />
                 <div className="mt-3 grid grid-cols-[minmax(0,1fr)_64px] items-center gap-2">
                   <input
@@ -5291,9 +5324,9 @@ function HvacDashboardApp() {
                     <span>{wheelEfficiency}%</span>
                   </div>
                   <input
-                    type="range" min="40" max="90" step="1" value={wheelEfficiency}
+                    type="number" min="0" max="100" step="1" value={wheelEfficiency}
                     onChange={(e) => setWheelEfficiency(Number(e.target.value))}
-                    className="w-full"
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                   />
                 </div>
               )}
@@ -5375,9 +5408,9 @@ function HvacDashboardApp() {
                   <td className="p-4 text-center font-bold text-slate-800">{electricityRate.toFixed(2)} $/kWh</td>
                   <td className="p-4">
                     <input
-                      type="range" min="0.03" max="0.50" step="0.01" value={electricityRate}
+                      type="number" min="0.03" max="0.50" step="0.001" value={electricityRate}
                       onChange={(e) => setElectricityRate(Number(e.target.value))}
-                      className="w-full"
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                     />
                   </td>
                   <td className="p-4 text-center text-slate-700">
@@ -5390,9 +5423,13 @@ function HvacDashboardApp() {
                   <td className="p-4 text-center font-bold text-slate-800">{displayGasRate(naturalGasRate).toFixed(2)} {gasRateUnit}</td>
                   <td className="p-4">
                     <input
-                      type="range" min="0.10" max="2.00" step="0.01" value={naturalGasRate}
-                      onChange={(e) => setNaturalGasRate(Number(e.target.value))}
-                      className="w-full"
+                      type="number"
+                      min="0.10"
+                      max={units === 'imperial' ? 54.64 : 2.00}
+                      step="0.01"
+                      value={displayGasRate(naturalGasRate)}
+                      onChange={(e) => setNaturalGasRate(inputGasRateToMetric(Number(e.target.value)))}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                     />
                   </td>
                   <td className="p-4 text-center text-yellow-700 font-semibold">
@@ -5405,9 +5442,9 @@ function HvacDashboardApp() {
                   <td className="p-4 text-center font-bold text-slate-800">{steamBoilerEfficiency}%</td>
                   <td className="p-4">
                     <input
-                      type="range" min="60" max="98" step="1" value={steamBoilerEfficiency}
+                      type="number" min="0" max="100" step="1" value={steamBoilerEfficiency}
                       onChange={(e) => setSteamBoilerEfficiency(Number(e.target.value))}
-                      className="w-full"
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                     />
                   </td>
                   <td className="p-4 text-center text-yellow-700 font-semibold">
@@ -5420,9 +5457,9 @@ function HvacDashboardApp() {
                   <td className="p-4 text-center font-bold text-slate-800">{atmosphericGasHumidifierEfficiency}%</td>
                   <td className="p-4">
                     <input
-                      type="range" min="50" max="98" step="1" value={atmosphericGasHumidifierEfficiency}
+                      type="number" min="0" max="100" step="1" value={atmosphericGasHumidifierEfficiency}
                       onChange={(e) => setAtmosphericGasHumidifierEfficiency(Number(e.target.value))}
-                      className="w-full"
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
                     />
                   </td>
                   <td className="p-4 text-center text-amber-700 font-semibold">

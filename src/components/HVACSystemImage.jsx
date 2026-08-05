@@ -160,9 +160,24 @@ function parseDisplayNumber(value) {
 
   const match = value.match(/-?[\d\s.,\u00A0]+/)
   if (!match) return null
-  const normalized = match[0]
-    .replace(/[\s\u00A0]/g, '')
-    .replace(/,/g, '')
+  const compact = match[0].replace(/[\s\u00A0]/g, '')
+  let normalized = compact
+
+  const hasComma = compact.includes(',')
+  const hasDot = compact.includes('.')
+  if (hasComma && hasDot) {
+    if (compact.lastIndexOf(',') > compact.lastIndexOf('.')) {
+      normalized = compact.replace(/\./g, '').replace(/,/g, '.')
+    } else {
+      normalized = compact.replace(/,/g, '')
+    }
+  } else if (hasComma) {
+    const commaThousandsPattern = /^-?\d{1,3}(,\d{3})+$/
+    normalized = commaThousandsPattern.test(compact)
+      ? compact.replace(/,/g, '')
+      : compact.replace(/,/g, '.')
+  }
+
   const parsed = Number(normalized)
   return Number.isFinite(parsed) ? parsed : null
 }
