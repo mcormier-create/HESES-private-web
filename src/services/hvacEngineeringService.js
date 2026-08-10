@@ -24,6 +24,7 @@ export function calculateHvacDashboardMetrics({
   selectedCity,
   economizerTargetTemp,
   is100OA,
+  outsideRelativeHumidity = 90,
   scheduleFactor = 1,
   latentRecoveryEfficiency = 0,
 }) {
@@ -37,97 +38,144 @@ export function calculateHvacDashboardMetrics({
     ? 0
     : clampValue(Number(latentRecoveryEfficiency), 0, 95)
   const indoorHumidityRatio = humidityRatioFromRH(roomTemperature, roomRelativeHumidity)
-  const outdoorHumidityRatio = humidityRatioFromRH(outsideWinterTemp, 90)
+  const outdoorHumidityRatio = humidityRatioFromRH(outsideWinterTemp, outsideRelativeHumidity)
   const recoveredHumidityRatioRaw = outdoorHumidityRatio +
     (effectiveLatentRecoveryEfficiency / 100) * (indoorHumidityRatio - outdoorHumidityRatio)
   const enteringHumidityRatio = clampHumidityRatioBetween(outdoorHumidityRatio, indoorHumidityRatio, recoveredHumidityRatioRaw)
   const deltaW = Math.max(0, indoorHumidityRatio - enteringHumidityRatio)
 
-  const indoorGrains = Math.round(grainsFromHumidityRatio(indoorHumidityRatio))
-  const outdoorGrains = Math.round(grainsFromHumidityRatio(enteringHumidityRatio))
-  const indoorEnthalpy = Math.round(moistAirEnthalpyBtuLb(roomTemperature, indoorHumidityRatio))
-  const outdoorEnthalpy = Math.round(moistAirEnthalpyBtuLb(outsideWinterTemp, enteringHumidityRatio))
+  const indoorGrainsRaw = grainsFromHumidityRatio(indoorHumidityRatio)
+  const outdoorGrainsRaw = grainsFromHumidityRatio(enteringHumidityRatio)
+  const indoorEnthalpyRaw = moistAirEnthalpyBtuLb(roomTemperature, indoorHumidityRatio)
+  const outdoorEnthalpyRaw = moistAirEnthalpyBtuLb(outsideWinterTemp, enteringHumidityRatio)
 
-  const steamHumidificationLoad = Math.max(0, Math.round(4.5 * effectiveOutsideAirCFM * deltaW))
-  const correctedHumidificationLoad = steamHumidificationLoad
+  const steamHumidificationLoadRaw = Math.max(0, 4.5 * effectiveOutsideAirCFM * deltaW)
+  const correctedHumidificationLoadRaw = steamHumidificationLoadRaw
 
   const combinedRecoveryEfficiency = sensibleRecoveryEfficiency
   const cappedRecoveryEfficiency = Math.min(combinedRecoveryEfficiency, 95)
-  const baseSteamEnergyKW = Math.round(correctedHumidificationLoad * 0.345)
-  const adiabaticLoad = correctedHumidificationLoad
+  const baseSteamEnergyKWRaw = correctedHumidificationLoadRaw * 0.345
+  const adiabaticLoadRaw = correctedHumidificationLoadRaw
+  const humidificationTolerance = 1e-9
+  const hasActiveHumidification = adiabaticLoadRaw > humidificationTolerance
 
   const latentWheelReductionFactor = 1
   const effectiveDeltaW = deltaW * latentWheelReductionFactor
 
-  const adiabaticTemperatureDrop = Number(
-    Math.max(0.3, Math.min(12, effectiveDeltaW * 7000 * 0.22)).toFixed(1)
-  )
+  const adiabaticTemperatureDropRaw = hasActiveHumidification
+    ? Math.max(0.3, Math.min(12, effectiveDeltaW * 7000 * 0.22))
+    : 0
 
   const oaTempCalc = selectedCity?.hiver ?? outsideWinterTemp
   const mixTempCalc = is100OA ? oaTempCalc : economizerTargetTemp
   const temperatureRecoveryEfficiency = sensibleRecoveryEfficiency
-  const afterWheelTemp = Math.round((mixTempCalc + (temperatureRecoveryEfficiency / 100) * (roomTemperature - mixTempCalc)) * 10) / 10
-  const afterHumifogTemp = Math.round((afterWheelTemp - adiabaticTemperatureDrop) * 10) / 10
+  const afterWheelTempRaw = mixTempCalc + (temperatureRecoveryEfficiency / 100) * (roomTemperature - mixTempCalc)
+  const afterHumifogTempRaw = afterWheelTempRaw - adiabaticTemperatureDropRaw
 
-  const leavingAirTemperature = Number((supplyAirTemperature - adiabaticTemperatureDrop).toFixed(1))
-  const reheatDeltaT = Math.max(0, supplyAirTemperature - leavingAirTemperature)
-  const enteringHumifogEnthalpy = moistAirEnthalpyBtuLb(afterWheelTemp, enteringHumidityRatio)
-  const preheatBtuPerHr = Math.max(0, 4.5 * effectiveOutsideAirCFM * (indoorEnthalpy - enteringHumifogEnthalpy))
-  const grossHumifogPreheatKW = Math.round(preheatBtuPerHr / 3412)
-  const baseHvacHeatingThermalKW = Math.round(
-    sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, supplyAirTemperature - afterWheelTemp))
-  )
-  const grossReheatKW = Math.max(0, grossHumifogPreheatKW - baseHvacHeatingThermalKW)
+  const leavingAirTemperatureRaw = supplyAirTemperature - adiabaticTemperatureDropRaw
+  const reheatDeltaTRaw = Math.max(0, supplyAirTemperature - leavingAirTemperatureRaw)
+  const enteringHumifogEnthalpyRaw = moistAirEnthalpyBtuLb(afterWheelTempRaw, enteringHumidityRatio)
+  const preheatBtuPerHrRaw = hasActiveHumidification
+    ? Math.max(0, 4.5 * effectiveOutsideAirCFM * (indoorEnthalpyRaw - enteringHumifogEnthalpyRaw))
+    : 0
+  const grossHumifogPreheatKWRaw = hasActiveHumidification ? (preheatBtuPerHrRaw / 3412) : 0
+  const baseHvacHeatingThermalKWRaw = sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, supplyAirTemperature - afterWheelTempRaw))
+  const grossReheatKWRaw = hasActiveHumidification
+    ? Math.max(0, grossHumifogPreheatKWRaw - baseHvacHeatingThermalKWRaw)
+    : 0
 
   const cassetteBoostFactor = isEnthalpyCassette(selectedRecovery) ? 1.18 : 1
-  const recoveryEnergyReductionKW = isNoRecovery
+  const recoveryEnergyReductionKWRaw = isNoRecovery
     ? 0
-    : Math.round(sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, afterWheelTemp - oaTempCalc)))
+    : sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, afterWheelTempRaw - oaTempCalc))
 
-  const steamEnergyKW = baseSteamEnergyKW
-  const adiabaticPumpKW = Math.max(1, Math.round(adiabaticLoad * 0.0009))
-  const recoveredHeatKW = recoveryEnergyReductionKW
-  const exchangerRecoveredKW = recoveryEnergyReductionKW
-  const netReheatKW = grossReheatKW
+  const steamEnergyKWRaw = baseSteamEnergyKWRaw
+  const adiabaticPumpKWRaw = hasActiveHumidification
+    ? Math.max(1, adiabaticLoadRaw * 0.0009)
+    : 0
+  const recoveredHeatKWRaw = recoveryEnergyReductionKWRaw
+  const exchangerRecoveredKWRaw = recoveryEnergyReductionKWRaw
+  const netReheatKWRaw = grossReheatKWRaw
   const reheatEnergySource = String(selectedReheatSystem?.energie || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
   const usesHeatPumpReheat = reheatEnergySource.includes('thermopompe') || reheatEnergySource.includes('heat pump')
-  const reheatEnergyKW = usesHeatPumpReheat
-    ? Number((netReheatKW / Math.max(heatPumpCOP, 0.1)).toFixed(2))
-    : Number((netReheatKW * (selectedReheatSystem?.facteur ?? 1)).toFixed(2))
-  const adiabaticHumidificationKW = Math.max(1, adiabaticPumpKW)
-  const rawAdiabaticEnergyKW = Number((adiabaticHumidificationKW + reheatEnergyKW).toFixed(2))
+  const reheatEnergyKWRaw = usesHeatPumpReheat
+    ? netReheatKWRaw / Math.max(heatPumpCOP, 0.1)
+    : netReheatKWRaw * (selectedReheatSystem?.facteur ?? 1)
+  const adiabaticHumidificationKWRaw = adiabaticPumpKWRaw
+  const rawAdiabaticEnergyKW = Math.max(0, adiabaticHumidificationKWRaw + reheatEnergyKWRaw)
   const noRecoveryEnergyParityApplied = false
   const adiabaticEnergyKW = rawAdiabaticEnergyKW
 
-  const naturalGasSteamInputKW = Math.round(steamEnergyKW / (steamBoilerEfficiency / 100))
-  const naturalGasM3PerHour = Number((naturalGasSteamInputKW / 10.35).toFixed(1))
-  const atmosphericGasHumidifierInputKW = Math.round(steamEnergyKW / (atmosphericGasHumidifierEfficiency / 100))
-  const atmosphericGasHumidifierM3PerHour = Number((atmosphericGasHumidifierInputKW / 10.35).toFixed(1))
+  const naturalGasSteamInputKWRaw = steamEnergyKWRaw / Math.max(steamBoilerEfficiency / 100, 0.01)
+  const naturalGasM3PerHourRaw = naturalGasSteamInputKWRaw / 10.35
+  const atmosphericGasHumidifierInputKWRaw = steamEnergyKWRaw / Math.max(atmosphericGasHumidifierEfficiency / 100, 0.01)
+  const atmosphericGasHumidifierM3PerHourRaw = atmosphericGasHumidifierInputKWRaw / 10.35
   const climateSeverityFactor = Math.max(0.4, Math.abs(selectedCity.hiver) / 23)
-  const annualHumidificationHours = Math.round(4300 * climateSeverityFactor * scheduleFactor)
+  const annualHumidificationHoursRaw = 4300 * climateSeverityFactor * scheduleFactor
 
-  const annualSteamCost = Math.round(steamEnergyKW * electricityRate * annualHumidificationHours)
-  const annualNaturalGasCost = Math.round(naturalGasM3PerHour * naturalGasRate * annualHumidificationHours)
-  const annualAtmosphericGasHumidifierCost = Math.round(
-    atmosphericGasHumidifierM3PerHour * naturalGasRate * annualHumidificationHours
-  )
-  const annualAdiabaticPumpCost = Math.round(adiabaticHumidificationKW * electricityRate * annualHumidificationHours)
-  const annualAdiabaticReheatCost = Math.round(reheatEnergyKW * electricityRate * annualHumidificationHours)
-  const annualAdiabaticCost = Math.round(adiabaticEnergyKW * electricityRate * annualHumidificationHours)
-  const savings = steamEnergyKW > 0 ? Math.round((1 - adiabaticEnergyKW / steamEnergyKW) * 100) : 0
+  const annualSteamCostRaw = steamEnergyKWRaw * electricityRate * annualHumidificationHoursRaw
+  const annualNaturalGasCostRaw = naturalGasM3PerHourRaw * naturalGasRate * annualHumidificationHoursRaw
+  const annualAtmosphericGasHumidifierCostRaw = atmosphericGasHumidifierM3PerHourRaw * naturalGasRate * annualHumidificationHoursRaw
+  const annualAdiabaticPumpCostRaw = adiabaticHumidificationKWRaw * electricityRate * annualHumidificationHoursRaw
+  const annualAdiabaticReheatCostRaw = reheatEnergyKWRaw * electricityRate * annualHumidificationHoursRaw
+  const annualAdiabaticCostRaw = adiabaticEnergyKW * electricityRate * annualHumidificationHoursRaw
+  const savingsRaw = steamEnergyKWRaw > 0 ? (1 - adiabaticEnergyKW / steamEnergyKWRaw) * 100 : 0
 
-  const naturalGasGES = Number(((naturalGasSteamInputKW * annualHumidificationHours * 0.182) / 1000).toFixed(1))
-  const atmosphericGasHumidifierGES = Number(
-    ((atmosphericGasHumidifierInputKW * annualHumidificationHours * 0.182) / 1000).toFixed(1)
-  )
+  const naturalGasGESRaw = (naturalGasSteamInputKWRaw * annualHumidificationHoursRaw * 0.182) / 1000
+  const atmosphericGasHumidifierGESRaw = (atmosphericGasHumidifierInputKWRaw * annualHumidificationHoursRaw * 0.182) / 1000
   const usesNaturalGasReheat = reheatEnergySource.includes('gaz naturel') || reheatEnergySource.includes('natural gas')
-  const adiabaticGES = usesNaturalGasReheat
-    ? Number(((reheatEnergyKW * annualHumidificationHours * 0.182) / 1000).toFixed(1))
+  const adiabaticGESRaw = usesNaturalGasReheat
+    ? (reheatEnergyKWRaw * annualHumidificationHoursRaw * 0.182) / 1000
     : 0
-  const eliminatedGES = Number((naturalGasGES - adiabaticGES).toFixed(1))
+  const eliminatedGESRaw = naturalGasGESRaw - adiabaticGESRaw
+
+  const indoorGrains = Math.round(indoorGrainsRaw)
+  const outdoorGrains = Math.round(outdoorGrainsRaw)
+  const indoorEnthalpy = Math.round(indoorEnthalpyRaw)
+  const outdoorEnthalpy = Math.round(outdoorEnthalpyRaw)
+  const steamHumidificationLoad = Math.round(steamHumidificationLoadRaw)
+  const correctedHumidificationLoad = steamHumidificationLoad
+  const baseSteamEnergyKW = Math.round(baseSteamEnergyKWRaw)
+  const adiabaticLoad = steamHumidificationLoad
+  const adiabaticTemperatureDrop = Number(adiabaticTemperatureDropRaw.toFixed(1))
+  const afterWheelTemp = Math.round(afterWheelTempRaw * 10) / 10
+  const afterHumifogTemp = Math.round(afterHumifogTempRaw * 10) / 10
+  const leavingAirTemperature = Number(leavingAirTemperatureRaw.toFixed(1))
+  const reheatDeltaT = reheatDeltaTRaw
+  const grossHumifogPreheatKW = Math.round(grossHumifogPreheatKWRaw)
+  const baseHvacHeatingThermalKW = Math.round(baseHvacHeatingThermalKWRaw)
+  const grossReheatKW = Math.round(grossReheatKWRaw)
+  const recoveryEnergyReductionKW = Math.round(recoveryEnergyReductionKWRaw)
+  const steamEnergyKW = Math.round(steamEnergyKWRaw)
+  const adiabaticPumpKW = hasActiveHumidification
+    ? Math.max(1, Math.round(adiabaticPumpKWRaw))
+    : 0
+  const recoveredHeatKW = Math.round(recoveredHeatKWRaw)
+  const exchangerRecoveredKW = Math.round(exchangerRecoveredKWRaw)
+  const netReheatKW = grossReheatKW
+  const reheatEnergyKW = Number(reheatEnergyKWRaw.toFixed(2))
+  const adiabaticHumidificationKW = hasActiveHumidification
+    ? Math.max(1, Math.round(adiabaticHumidificationKWRaw))
+    : 0
+  const naturalGasSteamInputKW = Math.round(naturalGasSteamInputKWRaw)
+  const naturalGasM3PerHour = Number(naturalGasM3PerHourRaw.toFixed(1))
+  const atmosphericGasHumidifierInputKW = Math.round(atmosphericGasHumidifierInputKWRaw)
+  const atmosphericGasHumidifierM3PerHour = Number(atmosphericGasHumidifierM3PerHourRaw.toFixed(1))
+  const annualHumidificationHours = Math.round(annualHumidificationHoursRaw)
+  const annualSteamCost = Math.round(annualSteamCostRaw)
+  const annualNaturalGasCost = Math.round(annualNaturalGasCostRaw)
+  const annualAtmosphericGasHumidifierCost = Math.round(annualAtmosphericGasHumidifierCostRaw)
+  const annualAdiabaticPumpCost = Math.round(annualAdiabaticPumpCostRaw)
+  const annualAdiabaticReheatCost = Math.round(annualAdiabaticReheatCostRaw)
+  const annualAdiabaticCost = Math.round(annualAdiabaticCostRaw)
+  const savings = Math.round(savingsRaw)
+  const naturalGasGES = Number(naturalGasGESRaw.toFixed(1))
+  const atmosphericGasHumidifierGES = Number(atmosphericGasHumidifierGESRaw.toFixed(1))
+  const adiabaticGES = Number(adiabaticGESRaw.toFixed(1))
+  const eliminatedGES = Number(eliminatedGESRaw.toFixed(1))
 
   return {
     indoorHumidityRatio,
@@ -190,6 +238,50 @@ export function calculateHvacDashboardMetrics({
     adiabaticGES,
     eliminatedGES,
     outsideAirCFM,
+    outsideRelativeHumidity,
+    indoorGrainsRaw,
+    outdoorGrainsRaw,
+    indoorEnthalpyRaw,
+    outdoorEnthalpyRaw,
+    steamHumidificationLoadRaw,
+    correctedHumidificationLoadRaw,
+    baseSteamEnergyKWRaw,
+    adiabaticLoadRaw,
+    adiabaticTemperatureDropRaw,
+    afterWheelTempRaw,
+    afterHumifogTempRaw,
+    leavingAirTemperatureRaw,
+    reheatDeltaTRaw,
+    enteringHumifogEnthalpyRaw,
+    preheatBtuPerHrRaw,
+    grossHumifogPreheatKWRaw,
+    baseHvacHeatingThermalKWRaw,
+    grossReheatKWRaw,
+    recoveryEnergyReductionKWRaw,
+    steamEnergyKWRaw,
+    adiabaticPumpKWRaw,
+    recoveredHeatKWRaw,
+    exchangerRecoveredKWRaw,
+    netReheatKWRaw,
+    reheatEnergyKWRaw,
+    adiabaticHumidificationKWRaw,
+    adiabaticEnergyKWRaw: rawAdiabaticEnergyKW,
+    naturalGasSteamInputKWRaw,
+    naturalGasM3PerHourRaw,
+    atmosphericGasHumidifierInputKWRaw,
+    atmosphericGasHumidifierM3PerHourRaw,
+    annualHumidificationHoursRaw,
+    annualSteamCostRaw,
+    annualNaturalGasCostRaw,
+    annualAtmosphericGasHumidifierCostRaw,
+    annualAdiabaticPumpCostRaw,
+    annualAdiabaticReheatCostRaw,
+    annualAdiabaticCostRaw,
+    savingsRaw,
+    naturalGasGESRaw,
+    atmosphericGasHumidifierGESRaw,
+    adiabaticGESRaw,
+    eliminatedGESRaw,
   }
 }
 

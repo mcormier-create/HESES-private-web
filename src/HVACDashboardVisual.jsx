@@ -3415,6 +3415,7 @@ function HvacDashboardApp() {
     selectedCity,
     economizerTargetTemp,
     is100OA,
+    outsideRelativeHumidity: 90,
     scheduleFactor,
   })
 
@@ -3448,14 +3449,26 @@ function HvacDashboardApp() {
     annualSteamCost,
     annualNaturalGasCost,
     annualAtmosphericGasHumidifierCost,
-    annualAdiabaticPumpCost,
-    annualAdiabaticReheatCost,
     annualAdiabaticCost,
     savings,
-    naturalGasGES,
-    atmosphericGasHumidifierGES,
-    adiabaticGES,
-    eliminatedGES,
+    steamEnergyKWRaw,
+    adiabaticEnergyKWRaw,
+    naturalGasSteamInputKWRaw,
+    atmosphericGasHumidifierInputKWRaw,
+    adiabaticHumidificationKWRaw,
+    reheatEnergyKWRaw,
+    grossReheatKWRaw,
+    annualHumidificationHoursRaw,
+    annualSteamCostRaw,
+    annualNaturalGasCostRaw,
+    annualAtmosphericGasHumidifierCostRaw,
+    annualAdiabaticCostRaw,
+    annualAdiabaticPumpCostRaw,
+    annualAdiabaticReheatCostRaw,
+    naturalGasGESRaw,
+    atmosphericGasHumidifierGESRaw,
+    adiabaticGESRaw,
+    eliminatedGESRaw,
   } = metrics
 
   const selectedRecovery = activeSelectedRecoveries[0]
@@ -3643,15 +3656,29 @@ function HvacDashboardApp() {
       selectedCity: { ...selectedCity, hiver: bin.tempC },
       economizerTargetTemp,
       is100OA,
+      outsideRelativeHumidity: bin.rh,
       scheduleFactor: 1,
     })
 
-    const steamPowerKW = Number(binMetrics.steamEnergyKW || 0)
-    const adiabaticPumpPowerKW = Number(binMetrics.adiabaticPumpKW || 0)
-    const additionalHeatPumpPowerKW = Number(binMetrics.reheatEnergyKW || 0)
-    const adiabaticTotalPowerKW = Number(binMetrics.adiabaticEnergyKW || 0)
+    const steamPowerKW = Number(binMetrics.steamEnergyKWRaw || binMetrics.steamEnergyKW || 0)
+    const adiabaticPumpPowerKW = Number(binMetrics.adiabaticPumpKWRaw || binMetrics.adiabaticPumpKW || 0)
+    const additionalSelectedPreheatInputKW = Number(binMetrics.reheatEnergyKWRaw || binMetrics.reheatEnergyKW || 0)
+    const additionalThermalPreheatKW = Number(binMetrics.grossReheatKWRaw || binMetrics.grossReheatKW || 0)
+    const additionalElectricPreheatKW = additionalThermalPreheatKW
+    const additionalHeatPumpPowerKW = additionalThermalPreheatKW / Math.max(heatPumpCOP, 0.1)
+    const adiabaticTotalPowerKW = Number(binMetrics.adiabaticEnergyKWRaw || binMetrics.adiabaticEnergyKW || 0)
+    const naturalGasSteamInputKWBin = Number(binMetrics.naturalGasSteamInputKWRaw || binMetrics.naturalGasSteamInputKW || 0)
+    const atmosphericGasInputKWBin = Number(binMetrics.atmosphericGasHumidifierInputKWRaw || binMetrics.atmosphericGasHumidifierInputKW || 0)
     const steamBinEnergyKwh = steamPowerKW * bin.hours
     const adiabaticBinEnergyKwh = adiabaticTotalPowerKW * bin.hours
+    const naturalGasSteamEnergyKwhBin = naturalGasSteamInputKWBin * bin.hours
+    const atmosphericGasEnergyKwhBin = atmosphericGasInputKWBin * bin.hours
+    const adiabaticPumpEnergyKwhBin = adiabaticPumpPowerKW * bin.hours
+    const selectedPreheatEnergyKwhBin = additionalSelectedPreheatInputKW * bin.hours
+    const electricPreheatEnergyKwhBin = additionalElectricPreheatKW * bin.hours
+    const heatPumpPreheatEnergyKwhBin = additionalHeatPumpPowerKW * bin.hours
+    const adiabaticElectricTotalEnergyKwhBin = (adiabaticPumpPowerKW + additionalElectricPreheatKW) * bin.hours
+    const adiabaticHeatPumpTotalEnergyKwhBin = (adiabaticPumpPowerKW + additionalHeatPumpPowerKW) * bin.hours
 
     return {
       tempC: bin.tempC,
@@ -3660,9 +3687,22 @@ function HvacDashboardApp() {
       steamPowerKW,
       steamBinEnergyKwh,
       adiabaticPumpPowerKW,
+      additionalThermalPreheatKW,
+      additionalSelectedPreheatInputKW,
+      additionalElectricPreheatKW,
       additionalHeatPumpPowerKW,
       adiabaticTotalPowerKW,
       adiabaticBinEnergyKwh,
+      naturalGasSteamInputKWBin,
+      atmosphericGasInputKWBin,
+      naturalGasSteamEnergyKwhBin,
+      atmosphericGasEnergyKwhBin,
+      adiabaticPumpEnergyKwhBin,
+      selectedPreheatEnergyKwhBin,
+      electricPreheatEnergyKwhBin,
+      heatPumpPreheatEnergyKwhBin,
+      adiabaticElectricTotalEnergyKwhBin,
+      adiabaticHeatPumpTotalEnergyKwhBin,
       recoveryPowerKW: Number(binMetrics.recoveryEnergyReductionKW || 0),
       afterRecoveryTempC: Number(binMetrics.afterWheelTemp || 0),
       enteringHumidityRatio: Number(binMetrics.enteringHumidityRatio || 0),
@@ -3670,38 +3710,96 @@ function HvacDashboardApp() {
   })
   const binAnnualSteamEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.steamBinEnergyKwh, 0)
   const binAnnualAdiabaticEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.adiabaticBinEnergyKwh, 0)
+  const binAnnualNaturalGasSteamEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.naturalGasSteamEnergyKwhBin, 0)
+  const binAnnualAtmosphericGasEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.atmosphericGasEnergyKwhBin, 0)
+  const binAnnualHumifogPumpEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.adiabaticPumpEnergyKwhBin, 0)
+  const binAnnualHumifogSelectedPreheatEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.selectedPreheatEnergyKwhBin, 0)
+  const binAnnualHumifogElectricPreheatEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.electricPreheatEnergyKwhBin, 0)
+  const binAnnualHumifogHeatPumpPreheatEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.heatPumpPreheatEnergyKwhBin, 0)
+  const binAnnualHumifogElectricTotalEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.adiabaticElectricTotalEnergyKwhBin, 0)
+  const binAnnualHumifogHeatPumpTotalEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.adiabaticHeatPumpTotalEnergyKwhBin, 0)
   const binEnergyReductionPercent = binAnnualSteamEnergyKwh > 0
     ? Math.round((1 - binAnnualAdiabaticEnergyKwh / binAnnualSteamEnergyKwh) * 100)
     : 0
   const usesBinAnnualTotals = calculationMethod === 'bin' && !isFreeCoolingMode
+  const selectedReheatEnergySourceNormalized = String(selectedReheatSystem?.energie || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+  const selectedReheatUsesNaturalGas = selectedReheatEnergySourceNormalized.includes('gaz naturel') ||
+    selectedReheatEnergySourceNormalized.includes('natural gas')
   const annualSteamEnergyKwhResolved = usesBinAnnualTotals
     ? binAnnualSteamEnergyKwh
-    : steamEnergyKW * annualHumidificationHours
+    : steamEnergyKWRaw * annualHumidificationHoursRaw
   const annualAdiabaticEnergyKwhResolved = usesBinAnnualTotals
     ? binAnnualAdiabaticEnergyKwh
-    : adiabaticEnergyKW * annualHumidificationHours
+    : adiabaticEnergyKWRaw * annualHumidificationHoursRaw
   const annualNaturalGasSteamEnergyKwhResolved = usesBinAnnualTotals
-    ? annualSteamEnergyKwhResolved / Math.max(steamBoilerEfficiency / 100, 0.01)
-    : naturalGasSteamInputKW * annualHumidificationHours
+    ? binAnnualNaturalGasSteamEnergyKwh
+    : naturalGasSteamInputKWRaw * annualHumidificationHoursRaw
   const annualAtmosphericGasHumidifierEnergyKwhResolved = usesBinAnnualTotals
-    ? annualSteamEnergyKwhResolved / Math.max(atmosphericGasHumidifierEfficiency / 100, 0.01)
-    : atmosphericGasHumidifierInputKW * annualHumidificationHours
+    ? binAnnualAtmosphericGasEnergyKwh
+    : atmosphericGasHumidifierInputKWRaw * annualHumidificationHoursRaw
+  const annualHumifogPumpEnergyKwhResolved = usesBinAnnualTotals
+    ? binAnnualHumifogPumpEnergyKwh
+    : adiabaticHumidificationKWRaw * annualHumidificationHoursRaw
+  const annualHumifogSelectedPreheatEnergyKwhResolved = usesBinAnnualTotals
+    ? binAnnualHumifogSelectedPreheatEnergyKwh
+    : reheatEnergyKWRaw * annualHumidificationHoursRaw
+  const annualHumifogElectricPreheatEnergyKwhResolved = usesBinAnnualTotals
+    ? binAnnualHumifogElectricPreheatEnergyKwh
+    : grossReheatKWRaw * annualHumidificationHoursRaw
+  const annualHumifogHeatPumpPreheatEnergyKwhResolved = usesBinAnnualTotals
+    ? binAnnualHumifogHeatPumpPreheatEnergyKwh
+    : (grossReheatKWRaw / Math.max(heatPumpCOP, 0.1)) * annualHumidificationHoursRaw
+  const annualHumifogElectricTotalEnergyKwhResolved = usesBinAnnualTotals
+    ? binAnnualHumifogElectricTotalEnergyKwh
+    : (adiabaticHumidificationKWRaw + grossReheatKWRaw) * annualHumidificationHoursRaw
+  const annualHumifogHeatPumpTotalEnergyKwhResolved = usesBinAnnualTotals
+    ? binAnnualHumifogHeatPumpTotalEnergyKwh
+    : (adiabaticHumidificationKWRaw + grossReheatKWRaw / Math.max(heatPumpCOP, 0.1)) * annualHumidificationHoursRaw
   const annualSteamCostResolved = usesBinAnnualTotals
     ? annualSteamEnergyKwhResolved * electricityRate
     : annualSteamCost
+  const annualHumifogPumpCostResolved = usesBinAnnualTotals
+    ? annualHumifogPumpEnergyKwhResolved * electricityRate
+    : annualAdiabaticPumpCostRaw
+  const annualHumifogSelectedPreheatCostResolved = usesBinAnnualTotals
+    ? (selectedReheatUsesNaturalGas
+      ? (annualHumifogSelectedPreheatEnergyKwhResolved / 10.35) * naturalGasRate
+      : annualHumifogSelectedPreheatEnergyKwhResolved * electricityRate)
+    : annualAdiabaticReheatCostRaw
   const annualAdiabaticCostResolved = usesBinAnnualTotals
-    ? annualAdiabaticEnergyKwhResolved * electricityRate
-    : annualAdiabaticCost
+    ? annualHumifogPumpCostResolved + annualHumifogSelectedPreheatCostResolved
+    : annualAdiabaticCostRaw
   const annualNaturalGasCostResolved = usesBinAnnualTotals
     ? (annualNaturalGasSteamEnergyKwhResolved / 10.35) * naturalGasRate
-    : annualNaturalGasCost
+    : annualNaturalGasCostRaw
   const annualAtmosphericGasHumidifierCostResolved = usesBinAnnualTotals
     ? (annualAtmosphericGasHumidifierEnergyKwhResolved / 10.35) * naturalGasRate
-    : annualAtmosphericGasHumidifierCost
+    : annualAtmosphericGasHumidifierCostRaw
+  const annualHumifogElectricCostResolved = usesBinAnnualTotals
+    ? annualHumifogElectricTotalEnergyKwhResolved * electricityRate
+    : (adiabaticHumidificationKWRaw + grossReheatKWRaw) * annualHumidificationHoursRaw * electricityRate
+  const annualHumifogHeatPumpCostResolved = usesBinAnnualTotals
+    ? annualHumifogHeatPumpTotalEnergyKwhResolved * electricityRate
+    : (adiabaticHumidificationKWRaw + grossReheatKWRaw / Math.max(heatPumpCOP, 0.1)) * annualHumidificationHoursRaw * electricityRate
   const annualSavingsPercentResolved = annualSteamEnergyKwhResolved > 0
     ? Math.round((1 - annualAdiabaticEnergyKwhResolved / annualSteamEnergyKwhResolved) * 100)
     : 0
-  const annualHumidificationHoursResolved = usesBinAnnualTotals ? totalBinHours : annualHumidificationHours
+  const annualHumidificationHoursResolved = usesBinAnnualTotals ? totalBinHours : annualHumidificationHoursRaw
+  const annualNaturalGasGESResolved = usesBinAnnualTotals
+    ? (annualNaturalGasSteamEnergyKwhResolved * 0.182) / 1000
+    : naturalGasGESRaw
+  const annualAtmosphericGasGESResolved = usesBinAnnualTotals
+    ? (annualAtmosphericGasHumidifierEnergyKwhResolved * 0.182) / 1000
+    : atmosphericGasHumidifierGESRaw
+  const annualAdiabaticGESResolved = usesBinAnnualTotals
+    ? (selectedReheatUsesNaturalGas
+      ? (annualHumifogSelectedPreheatEnergyKwhResolved * 0.182) / 1000
+      : 0)
+    : adiabaticGESRaw
+  const annualEliminatedGESResolved = annualNaturalGasGESResolved - annualAdiabaticGESResolved
 
   const freeCoolingHumifogAnalysis = calculateFreeCoolingHumifogComparison({
     bins: selectedBinWeatherData,
@@ -4147,10 +4245,10 @@ function HvacDashboardApp() {
       scheduleDescription: scheduleDescriptionText,
       recoveryEnergyReductionKW,
       annualHumidificationHours: annualHumidificationHoursResolved,
-      naturalGasGES,
-      atmosphericGasHumidifierGES,
-      adiabaticGES,
-      eliminatedGES,
+      naturalGasGES: Number(annualNaturalGasGESResolved.toFixed(1)),
+      atmosphericGasHumidifierGES: Number(annualAtmosphericGasGESResolved.toFixed(1)),
+      adiabaticGES: Number(annualAdiabaticGESResolved.toFixed(1)),
+      eliminatedGES: Number(annualEliminatedGESResolved.toFixed(1)),
       savings: annualSavingsPercentResolved,
     },
     psychrometricPoints: psychrometricChartPoints,
@@ -4177,8 +4275,16 @@ function HvacDashboardApp() {
         annualCost: annualAdiabaticCostResolved,
         pumpPowerKw: adiabaticHumidificationKW,
         reheatPowerKw: reheatEnergyKW,
-        annualPumpCost: annualAdiabaticPumpCost,
-        annualReheatCost: annualAdiabaticReheatCost,
+        annualPumpEnergyKwh: annualHumifogPumpEnergyKwhResolved,
+        annualReheatEnergyKwh: annualHumifogSelectedPreheatEnergyKwhResolved,
+        annualPumpCost: annualHumifogPumpCostResolved,
+        annualReheatCost: annualHumifogSelectedPreheatCostResolved,
+        annualElectricPreheatEnergyKwh: annualHumifogElectricPreheatEnergyKwhResolved,
+        annualHeatPumpPreheatEnergyKwh: annualHumifogHeatPumpPreheatEnergyKwhResolved,
+        annualElectricTotalEnergyKwh: annualHumifogElectricTotalEnergyKwhResolved,
+        annualHeatPumpTotalEnergyKwh: annualHumifogHeatPumpTotalEnergyKwhResolved,
+        annualElectricCost: annualHumifogElectricCostResolved,
+        annualHeatPumpCost: annualHumifogHeatPumpCostResolved,
       },
       annualSavingsVsSteam: annualSteamCostResolved - annualAdiabaticCostResolved,
     },
@@ -5938,7 +6044,7 @@ function HvacDashboardApp() {
 
             <div className="bg-emerald-50 border border-emerald-200 rounded-3xl p-6">
               <div className="text-sm text-emerald-700">{t.eliminatedGHG}</div>
-              <div className="text-5xl font-bold text-emerald-800 mt-3">{eliminatedGES}</div>
+              <div className="text-5xl font-bold text-emerald-800 mt-3">{Number(annualEliminatedGESResolved.toFixed(1))}</div>
               <div className="text-emerald-700 mt-2">tonnes CO2/an</div>
             </div>
 
@@ -6120,17 +6226,17 @@ function HvacDashboardApp() {
                         <div className="mt-1 text-xs font-semibold text-cyan-700 leading-relaxed">
                           <div>
                             {language === 'fr'
-                              ? `Pompe Humifog : ${annualAdiabaticPumpCost.toLocaleString()} $/an`
-                              : `Humifog pump: ${annualAdiabaticPumpCost.toLocaleString()} $/year`}
+                              ? `Pompe Humifog : ${Math.round(annualHumifogPumpCostResolved).toLocaleString()} $/an`
+                              : `Humifog pump: ${Math.round(annualHumifogPumpCostResolved).toLocaleString()} $/year`}
                           </div>
                           <div>
                           {language === 'fr'
                             ? (usesHeatPumpReheat
-                              ? `Réchauffage thermopompe COP ${heatPumpCOP.toFixed(1)} : ${annualAdiabaticReheatCost.toLocaleString()} $/an`
-                              : `Réchauffage ${selectedReheatSystem.nom} : ${annualAdiabaticReheatCost.toLocaleString()} $/an`)
+                              ? `Réchauffage thermopompe COP ${heatPumpCOP.toFixed(1)} : ${Math.round(annualHumifogSelectedPreheatCostResolved).toLocaleString()} $/an`
+                              : `Réchauffage ${selectedReheatSystem.nom} : ${Math.round(annualHumifogSelectedPreheatCostResolved).toLocaleString()} $/an`)
                             : (usesHeatPumpReheat
-                              ? `Heat-pump reheat COP ${heatPumpCOP.toFixed(1)}: ${annualAdiabaticReheatCost.toLocaleString()} $/year`
-                              : `${selectedReheatSystem.nom} reheat: ${annualAdiabaticReheatCost.toLocaleString()} $/year`)}
+                              ? `Heat-pump reheat COP ${heatPumpCOP.toFixed(1)}: ${Math.round(annualHumifogSelectedPreheatCostResolved).toLocaleString()} $/year`
+                              : `${selectedReheatSystem.nom} reheat: ${Math.round(annualHumifogSelectedPreheatCostResolved).toLocaleString()} $/year`)}
                           </div>
                         </div>
                       )}
@@ -6139,9 +6245,9 @@ function HvacDashboardApp() {
                   <tr className="bg-slate-50">
                     <td className="p-4 font-semibold">{language === 'fr' ? 'GES annuel' : 'Annual GHG'}</td>
                     <td className="p-4 text-center text-red-700 font-bold">-</td>
-                    <td className="p-4 text-center text-yellow-700 font-bold">{naturalGasGES.toLocaleString()} t</td>
-                    <td className="p-4 text-center text-amber-700 font-bold">{atmosphericGasHumidifierGES.toLocaleString()} t</td>
-                    <td className="p-4 text-center text-cyan-700 font-bold">{adiabaticGES.toLocaleString()} t</td>
+                    <td className="p-4 text-center text-yellow-700 font-bold">{Number(annualNaturalGasGESResolved.toFixed(1)).toLocaleString()} t</td>
+                    <td className="p-4 text-center text-amber-700 font-bold">{Number(annualAtmosphericGasGESResolved.toFixed(1)).toLocaleString()} t</td>
+                    <td className="p-4 text-center text-cyan-700 font-bold">{Number(annualAdiabaticGESResolved.toFixed(1)).toLocaleString()} t</td>
                   </tr>
                 </tbody>
               </table>

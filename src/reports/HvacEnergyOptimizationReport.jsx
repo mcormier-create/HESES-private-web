@@ -59,10 +59,43 @@ const PROFESSIONAL_REPORT_CSS = `
     gap: 12px;
   }
 
-  .cover-logo {
-    width: 165px;
-    height: auto;
-    display: block;
+  .cover-logo-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 248px;
+    max-width: 280px;
+    min-height: 72px;
+    padding: 10px 14px;
+    border-radius: 16px;
+    background: #ffffff;
+    box-shadow: 0 6px 20px rgba(15, 23, 42, 0.1);
+    border: 1px solid rgba(20, 184, 212, 0.2);
+  }
+
+  .cover-logo-title {
+    font-size: 27px;
+    font-weight: 900;
+    color: #163b73;
+    letter-spacing: 0.4px;
+    line-height: 1;
+  }
+
+  .cover-logo-accent {
+    width: 44px;
+    height: 3px;
+    margin-top: 5px;
+    margin-bottom: 5px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #1e63b5, #14b8d4);
+  }
+
+  .cover-logo-subtitle {
+    font-size: 11px;
+    font-weight: 700;
+    color: #5b6f8e;
+    white-space: nowrap;
+    line-height: 1.2;
   }
 
   .cover-brand {
@@ -451,8 +484,9 @@ const PROFESSIONAL_REPORT_CSS = `
       font-size: 31px;
     }
 
-    .cover-logo {
-      width: 135px;
+    .cover-logo-card {
+      box-shadow: none;
+      border-color: #cbd5e1;
     }
 
     .report-cover .cover-figure {
@@ -466,6 +500,21 @@ const PROFESSIONAL_REPORT_CSS = `
     .cover-figure img {
       max-height: 240px;
     }
+
+      .cover-logo-card {
+        min-width: 230px;
+        max-width: 250px;
+        min-height: 66px;
+        padding: 8px 12px;
+      }
+
+      .cover-logo-title {
+        font-size: 24px;
+      }
+
+      .cover-logo-subtitle {
+        font-size: 10px;
+      }
 
     .report-cover .cover-summary,
     .report-cover .cover-certification {
@@ -834,7 +883,11 @@ export default function HvacEnergyOptimizationReport({ data }) {
       <header className="report-cover page-break">
         <div className="cover-topline">
           <span className="cover-logo-lockup">
-            <img src="/heses-logo.svg" alt="HESES" className="cover-logo" />
+            <span className="cover-logo-card" role="img" aria-label="HESES Humidification Energy Software">
+              <span className="cover-logo-title">HESES</span>
+              <span className="cover-logo-accent" aria-hidden="true" />
+              <span className="cover-logo-subtitle">Humidification Energy Software</span>
+            </span>
             <span>ENERSOL / CAREL</span>
           </span>
           <span>Professional HVAC Engineering Report</span>

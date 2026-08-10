@@ -12,6 +12,7 @@
     "preview": "vite preview --config vite.config.mjs",
     "start": "node scripts/start-preview.mjs",
     "test:free-cooling": "node scripts/free-cooling-regression.mjs",
+    "test:100oa": "node scripts/100oa-regression.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.app.json"
   },
   "dependencies": {
