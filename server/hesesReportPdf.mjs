@@ -447,8 +447,12 @@ export function createHesesReportPdfMiddleware() {
           await writeLatestReportFiles({ html, pdfBuffer })
           pdfReady = true
         } catch (error) {
-          await writeLatestReportFiles({ html })
-          pdfError = error instanceof Error ? error.message : 'Erreur generation PDF Chrome.'
+          const fallbackPdfBuffer = createPdfBufferFromReportHtml(html, title)
+          report.renderedPdf = fallbackPdfBuffer
+          latestRenderedPdf = fallbackPdfBuffer
+          await writeLatestReportFiles({ html, pdfBuffer: fallbackPdfBuffer })
+          pdfReady = true
+          pdfError = ''
         }
 
         sendJson(response, 200, {
