@@ -569,6 +569,13 @@ export default function HvacEnergyOptimizationReport({ data }) {
   const selectedOaPercent = system.selectedOaPercent ?? system.oaMinimumPercent ?? system.oaPercent
   const selectedRaPercent = system.selectedRaPercent ?? Math.max(0, 100 - selectedOaPercent)
   const calculatedAverageOaPercent = system.calculatedAverageOaPercent ?? system.oaPercent
+  const recoverySensibleEfficiency = Number.isFinite(Number(system.recoverySensibleEfficiency))
+    ? Number(system.recoverySensibleEfficiency)
+    : Number(system.recoveryEfficiency || 0)
+  const recoveryLatentEfficiency = Number.isFinite(Number(system.recoveryLatentEfficiency))
+    ? Number(system.recoveryLatentEfficiency)
+    : 0
+  const hasLatentRecovery = Boolean(system.hasLatentRecovery)
   const sectionNumbers = includesFreeCoolingAnalysis
     ? {
       design: '1',
@@ -709,7 +716,10 @@ export default function HvacEnergyOptimizationReport({ data }) {
     ['Room dry bulb entered in software', formatTemp(returnAir?.db ?? design.roomState?.db, data.units)],
     ['Room RH entered in software', `${formatNumber(returnAir?.rh ?? design.roomState?.rh, 0)}%`],
     ['Recovery type selected', system.recoveryType || '-'],
-    ['Recovery efficiency selected', `${formatNumber(system.recoveryEfficiency, 0)}%`],
+    [tr('Efficacité sensible sélectionnée', 'Sensible recovery efficiency selected'), `${formatNumber(recoverySensibleEfficiency, 0)}%`],
+    ...(hasLatentRecovery
+      ? [[tr('Efficacité latente sélectionnée', 'Latent recovery efficiency selected'), `${formatNumber(recoveryLatentEfficiency, 0)}%`]]
+      : []),
     ['Reheat / preheat method selected', selectedReheatName],
     ['Electricity rate entered', `${formatNumber(economics.electricityRate, 2)} $/kWh`],
     ['Natural gas rate entered', `${formatNumber(economics.naturalGasRate, 2)} $/m3`],
@@ -887,8 +897,12 @@ export default function HvacEnergyOptimizationReport({ data }) {
             <strong>{formatNumber(selectedOaPercent, 0)}%</strong>
           </div>
           <div className="cover-kpi">
-            <span>Recovery Efficiency</span>
-            <strong>{formatNumber(system.recoveryEfficiency, 0)}%</strong>
+            <span>{hasLatentRecovery ? tr('Récupération (S/L)', 'Recovery Efficiency (S/L)') : tr('Efficacité de récupération', 'Recovery Efficiency')}</span>
+            <strong>
+              {hasLatentRecovery
+                ? `${formatNumber(recoverySensibleEfficiency, 0)}% / ${formatNumber(recoveryLatentEfficiency, 0)}%`
+                : `${formatNumber(recoverySensibleEfficiency, 0)}%`}
+            </strong>
           </div>
           <div className="cover-kpi">
             <span>Heating Type</span>
@@ -989,7 +1003,10 @@ export default function HvacEnergyOptimizationReport({ data }) {
             ? [['Calculated Average Humifog OA %', `${formatNumber(calculatedAverageOaPercent, 0)}%`]]
             : []),
           ['Recovery Type', system.recoveryType],
-          ['Recovery Efficiency', `${formatNumber(system.recoveryEfficiency, 0)}%`],
+          [tr('Efficacité sensible', 'Sensible Efficiency'), `${formatNumber(recoverySensibleEfficiency, 0)}%`],
+          ...(hasLatentRecovery
+            ? [[tr('Efficacité latente', 'Latent Efficiency'), `${formatNumber(recoveryLatentEfficiency, 0)}%`]]
+            : []),
           ['Humidification Technology', system.humidificationTechnology],
           ['Heating Technology', selectedReheatName],
         ]} />
@@ -1171,7 +1188,10 @@ export default function HvacEnergyOptimizationReport({ data }) {
         <ReportSection title={reportSectionTitle('recovery', 'ENERGY RECOVERY ANALYSIS')} pageBreak allowPageBreak>
           <KeyValueTable rows={[
             ['Recovery Device', system.recoveryType],
-            ['Recovery Efficiency', `${formatNumber(system.recoveryEfficiency, 0)}%`],
+            [tr('Efficacité sensible', 'Sensible Efficiency'), `${formatNumber(recoverySensibleEfficiency, 0)}%`],
+            ...(hasLatentRecovery
+              ? [[tr('Efficacité latente', 'Latent Efficiency'), `${formatNumber(recoveryLatentEfficiency, 0)}%`]]
+              : []),
             ['Recovered Energy', formatEnergy(recoveredAnnualEnergy)],
             ['Annual Savings', formatMoney(recoveredAnnualEnergy * economics.electricityRate)],
           ]} />

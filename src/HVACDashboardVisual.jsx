@@ -5,7 +5,7 @@ import PsychrometricChart from './components/PsychrometricChart'
 import HvacEnergyOptimizationReport from './reports/HvacEnergyOptimizationReport'
 import { calculateFreeCoolingHumifogComparison } from './services/freeCoolingHumifogService'
 import { calculateHvacDashboardMetrics } from './services/hvacEngineeringService'
-import { dryBulbFromEnthalpyHumidityRatio, humidityRatioFromRH, mixAirStates, psychrometricState, sensibleHeatingKw, stateFromDbW } from './calculations/psychrometrics'
+import { dryBulbFromEnthalpyHumidityRatio, humidityRatioFromRH, mixAirStates, moistAirEnthalpyBtuLb, psychrometricState, sensibleHeatingKw, stateFromDbW } from './calculations/psychrometrics'
 import { getSystemSchematic, resolveSystemSchematicId, systemImages } from './utils/systemImages'
 import {
   ResponsiveContainer,
@@ -436,6 +436,7 @@ function calculateHourlySimulation(records, options) {
     roomRelativeHumidity,
     selectedRecoveries,
     wheelEfficiency,
+    latentRecoveryEfficiency,
     supplyAirTemperature,
     selectedReheatSystem,
     heatPumpCOP,
@@ -447,8 +448,15 @@ function calculateHourlySimulation(records, options) {
 
   const indoorHumidityRatio = humidityRatioFromRH(roomTemperature, roomRelativeHumidity)
   const selectedRecovery = selectedRecoveries[0]
-  const latentRecoveryEffect = getLatentRecoveryEffect(selectedRecovery)
   const isNoRecovery = Boolean(selectedRecovery?.noRecovery)
+  const latentRecoverySupported = supportsLatentRecovery(selectedRecovery)
+  const sensibleRecoveryEfficiency = isNoRecovery
+    ? 0
+    : clampValue(Number(wheelEfficiency), 0, 95)
+  const effectiveLatentRecoveryEfficiency = isNoRecovery || !latentRecoverySupported
+    ? 0
+    : clampValue(Number(latentRecoveryEfficiency), 0, 95)
+  const indoorEnthalpy = moistAirEnthalpyBtuLb(roomTemperature, indoorHumidityRatio)
   const effectiveOutsideAirCFM = Math.round(outsideAirCFM * activeFraction)
   const reheatEnergySource = String(selectedReheatSystem?.energie || '')
     .normalize('NFD')
@@ -461,20 +469,38 @@ function calculateHourlySimulation(records, options) {
   const hourlyRows = filtered.map((record) => {
     const pressureKPa = record.pressurePa / 1000
     const outdoorHumidityRatio = humidityRatioFromRH(record.dryBulbC, record.relativeHumidity, pressureKPa)
-    const deltaW = Math.max(0.00001, indoorHumidityRatio - outdoorHumidityRatio)
+    const recoveredHumidityRatioRaw = outdoorHumidityRatio +
+      (effectiveLatentRecoveryEfficiency / 100) * (indoorHumidityRatio - outdoorHumidityRatio)
+    const recoveredHumidityRatio = clampValue(
+      recoveredHumidityRatioRaw,
+      Math.max(0, Math.min(outdoorHumidityRatio, indoorHumidityRatio)),
+      Math.max(outdoorHumidityRatio, indoorHumidityRatio)
+    )
+    const deltaW = Math.max(0.00001, indoorHumidityRatio - recoveredHumidityRatio)
     const steamHumidificationLoad = Math.max(0, Math.round(4.5 * effectiveOutsideAirCFM * deltaW))
-    const correctedHumidificationLoad = Math.max(0, Math.round(steamHumidificationLoad * (1 - Math.min(latentRecoveryEffect, 45) / 100)))
+    const correctedHumidificationLoad = steamHumidificationLoad
     const steamEnergyKW = Math.round(correctedHumidificationLoad * 0.345)
     const adiabaticLoad = correctedHumidificationLoad
     const adiabaticPumpKW = Math.max(1, Math.round(adiabaticLoad * 0.0009))
-    const grossReheatKW = Math.round(sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, supplyAirTemperature - (supplyAirTemperature - Math.max(0.3, Math.min(12, deltaW * 7000 * 0.22))))) )
-    const cassetteBoostFactor = isEnthalpyCassette(selectedRecovery) ? 1.18 : 1
-    const recoveryEnergyReductionKW = Math.round(grossReheatKW * (Math.min(selectedRecovery?.efficacite ?? 0, 95) / 100) * 0.18 * cassetteBoostFactor)
-    const netReheatKW = Math.max(0, grossReheatKW - recoveryEnergyReductionKW)
+    const adiabaticTemperatureDrop = Number(
+      Math.max(0.3, Math.min(12, deltaW * 7000 * 0.22)).toFixed(1)
+    )
+    const recoveredDryBulbC = record.dryBulbC + (sensibleRecoveryEfficiency / 100) * (roomTemperature - record.dryBulbC)
+    const enteringHumifogEnthalpy = moistAirEnthalpyBtuLb(recoveredDryBulbC, recoveredHumidityRatio)
+    const preheatBtuPerHr = Math.max(0, 4.5 * effectiveOutsideAirCFM * (indoorEnthalpy - enteringHumifogEnthalpy))
+    const grossHumifogPreheatKW = Math.round(preheatBtuPerHr / 3412)
+    const baseHvacHeatingThermalKW = Math.round(
+      sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, supplyAirTemperature - recoveredDryBulbC))
+    )
+    const grossReheatKW = Math.max(0, grossHumifogPreheatKW - baseHvacHeatingThermalKW)
+    const recoveryEnergyReductionKW = isNoRecovery
+      ? 0
+      : Math.round(sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, recoveredDryBulbC - record.dryBulbC)))
+    const netReheatKW = grossReheatKW
     const reheatEnergyKW = usesHeatPumpReheat
-      ? Math.round(netReheatKW / Math.max(heatPumpCOP, 0.1))
-      : Math.round(netReheatKW * (selectedReheatSystem.facteur ?? 1))
-    const adiabaticEnergyKW = Math.max(2, adiabaticPumpKW + reheatEnergyKW)
+      ? Number((netReheatKW / Math.max(heatPumpCOP, 0.1)).toFixed(2))
+      : Number((netReheatKW * (selectedReheatSystem?.facteur ?? 1)).toFixed(2))
+    const adiabaticEnergyKW = Number(Math.max(0, adiabaticPumpKW + reheatEnergyKW).toFixed(2))
     const naturalGasSteamInputKW = Math.round(steamEnergyKW / Math.max(steamBoilerEfficiency / 100, 0.01))
     const atmosphericGasHumidifierInputKW = Math.round(steamEnergyKW / Math.max(atmosphericGasHumidifierEfficiency / 100, 0.01))
     const atmosphericGasHumidifierM3PerHour = Number((atmosphericGasHumidifierInputKW / 10.35).toFixed(1))
@@ -553,14 +579,6 @@ function calculateHourlySimulation(records, options) {
     hoursBelowMinusTwenty,
     hoursWithHumidificationRequired,
   }
-}
-
-function getLatentRecoveryEffect(recovery) {
-  const name = String(recovery?.nom || '').toLowerCase()
-  if (!recovery) return 0
-  if (name.includes('roue') || name.includes('thermal wheel')) return recovery.efficacite * 0.55
-  if (name.includes('cassette') && (name.includes('enthalpique') || name.includes('enthalpy'))) return 38
-  return 0
 }
 
 function blobToBase64(blob) {
@@ -1783,7 +1801,7 @@ const translations = {
     climateDescription: 'Sélection ASHRAE des conditions climatiques',
     hvacRegions: 'Régions HVAC',
     heatRecovery: 'Systèmes de récupération de chaleur',
-    heatRecoveryDescription: 'Sélection d’un seul système de récupération énergétique HVAC',
+    heatRecoveryDescription: 'Sélection d\'un système de récupération d\'énergie CVAC',
     combinedRecovery: 'Une seule récupération',
     hvacParameters: 'Paramètres HVAC',
     reheatSystem: 'Mode préchauffage / chauffage',
@@ -1843,8 +1861,8 @@ const translations = {
     designTemperature: 'Température de conception',
     binTemperature: 'Température BIN',
     annualHours: 'Heures annuelles',
-    correctedRecoveryLoad: 'Charge corrigée récupération',
-    adiabaticLoad: 'Charge adiabatique',
+    correctedRecoveryLoad: 'Énergie vapeur après récupération',
+    adiabaticLoad: 'Énergie électrique adiabatique',
     annualHeatingHours: 'Heures chauffage annuel',
     dominantTemperature: 'Température dominante',
     energyReduction: 'Réduction énergétique',
@@ -1853,6 +1871,9 @@ const translations = {
     summer: 'été',
     summerHumidity: 'Humidité été',
     efficiency: 'Efficacité',
+    sensibleEfficiency: 'Efficacité sensible',
+    latentEfficiency: 'Efficacité latente',
+    designRecoveryEfficiency: 'Efficacité de récupération de conception',
     systemTotal: 'Total système',
     airBeforeReheat: 'Air avant réchauffe',
     reportNotFound: 'Rapport introuvable',
@@ -2011,8 +2032,8 @@ const translations = {
     designTemperature: 'Design Temperature',
     binTemperature: 'BIN Temperature',
     annualHours: 'Annual Hours',
-    correctedRecoveryLoad: 'Corrected Recovery Load',
-    adiabaticLoad: 'Adiabatic Load',
+    correctedRecoveryLoad: 'Steam Energy After Recovery',
+    adiabaticLoad: 'Adiabatic Electric Energy',
     annualHeatingHours: 'Annual Heating Hours',
     dominantTemperature: 'Dominant Temperature',
     energyReduction: 'Energy Reduction',
@@ -2021,6 +2042,9 @@ const translations = {
     summer: 'summer',
     summerHumidity: 'Summer humidity',
     efficiency: 'Efficiency',
+    sensibleEfficiency: 'Sensible efficiency',
+    latentEfficiency: 'Latent efficiency',
+    designRecoveryEfficiency: 'Design recovery efficiency',
     systemTotal: 'System total',
     airBeforeReheat: 'Air before reheat',
     reportNotFound: 'Report not found',
@@ -2111,20 +2135,20 @@ const translations = {
 
 const heatRecoverySystems = {
   fr: [
-    { nom: 'Aucun', efficacite: 0, type: 'Sans récupération de chaleur', couleur: 'slate', noRecovery: true },
-    { nom: 'Roue thermique', efficacite: 78, type: 'Sensible + latent', couleur: 'cyan' },
-    { nom: 'Échangeur à débit croisé', efficacite: 62, type: 'Sensible seulement', couleur: 'sky' },
-    { nom: 'Échangeur à cassette sensible', efficacite: 88, type: 'Cassette modulaire sensible', couleur: 'indigo' },
-    { nom: 'Échangeur à cassette enthalpique', efficacite: 92, type: 'Cassette sensible + latent', couleur: 'violet' },
-    { nom: 'Boucle glycolée', efficacite: 48, type: 'Boucle run-around', couleur: 'slate' },
+    { nom: 'Aucun', efficacite: 0, efficaciteSensible: 0, efficaciteLatente: 0, type: 'Aucune récupération de chaleur', couleur: 'slate', noRecovery: true, latentCapable: false },
+    { nom: 'Roue thermique', efficacite: 78, efficaciteSensible: 78, efficaciteLatente: 70, type: 'Efficacité de récupération de conception', couleur: 'cyan', latentCapable: true },
+    { nom: 'Échangeur à débit croisé', efficacite: 62, efficaciteSensible: 62, efficaciteLatente: 0, type: 'Efficacité de récupération de conception', couleur: 'sky', latentCapable: false },
+    { nom: 'Échangeur à cassettes sensible', efficacite: 88, efficaciteSensible: 88, efficaciteLatente: 0, type: 'Efficacité de récupération de conception', couleur: 'indigo', latentCapable: false },
+    { nom: 'Échangeur à cassettes enthalpique', efficacite: 92, efficaciteSensible: 92, efficaciteLatente: 75, type: 'Efficacité de récupération de conception', couleur: 'violet', latentCapable: true },
+    { nom: 'Boucle glycolée', efficacite: 48, efficaciteSensible: 48, efficaciteLatente: 0, type: 'Efficacité de récupération de conception', couleur: 'slate', latentCapable: false },
   ],
   en: [
-    { nom: 'None', efficacite: 0, type: 'No heat recovery', couleur: 'slate', noRecovery: true },
-    { nom: 'Thermal Wheel', efficacite: 78, type: 'Sensible + latent', couleur: 'cyan' },
-    { nom: 'Cross-flow Exchanger', efficacite: 62, type: 'Sensible only', couleur: 'sky' },
-    { nom: 'Sensible Cassette Exchanger', efficacite: 88, type: 'Modular sensible cassette', couleur: 'indigo' },
-    { nom: 'Enthalpy Cassette Exchanger', efficacite: 92, type: 'Sensible + latent cassette', couleur: 'violet' },
-    { nom: 'Glycol Loop', efficacite: 48, type: 'Run-around loop', couleur: 'slate' },
+    { nom: 'None', efficacite: 0, efficaciteSensible: 0, efficaciteLatente: 0, type: 'No heat recovery', couleur: 'slate', noRecovery: true, latentCapable: false },
+    { nom: 'Thermal Wheel', efficacite: 78, efficaciteSensible: 78, efficaciteLatente: 70, type: 'Design recovery efficiency', couleur: 'cyan', latentCapable: true },
+    { nom: 'Cross-flow Exchanger', efficacite: 62, efficaciteSensible: 62, efficaciteLatente: 0, type: 'Design recovery efficiency', couleur: 'sky', latentCapable: false },
+    { nom: 'Sensible Cassette Exchanger', efficacite: 88, efficaciteSensible: 88, efficaciteLatente: 0, type: 'Design recovery efficiency', couleur: 'indigo', latentCapable: false },
+    { nom: 'Enthalpy Cassette Exchanger', efficacite: 92, efficaciteSensible: 92, efficaciteLatente: 75, type: 'Design recovery efficiency', couleur: 'violet', latentCapable: true },
+    { nom: 'Glycol Loop', efficacite: 48, efficaciteSensible: 48, efficaciteLatente: 0, type: 'Design recovery efficiency', couleur: 'slate', latentCapable: false },
   ]
 }
 
@@ -2170,6 +2194,31 @@ function isThermalWheelRecovery(recovery) {
   return label.includes('roue thermique') || label.includes('thermal wheel')
 }
 
+function isEnthalpyCassetteRecovery(recovery) {
+  const label = normalizeLabel(`${recovery?.nom || ''} ${recovery?.type || ''}`)
+  return label.includes('cassette') && (label.includes('enthalpique') || label.includes('enthalpy'))
+}
+
+function supportsLatentRecovery(recovery) {
+  if (!recovery) return false
+  if (recovery.noRecovery) return false
+  if (typeof recovery.latentCapable === 'boolean') return recovery.latentCapable
+  return isThermalWheelRecovery(recovery) || isEnthalpyCassetteRecovery(recovery)
+}
+
+function defaultSensibleRecoveryEfficiency(recovery) {
+  if (!recovery) return 0
+  if (Number.isFinite(Number(recovery.efficaciteSensible))) return Number(recovery.efficaciteSensible)
+  if (Number.isFinite(Number(recovery.efficacite))) return Number(recovery.efficacite)
+  return 0
+}
+
+function defaultLatentRecoveryEfficiency(recovery) {
+  if (!supportsLatentRecovery(recovery)) return 0
+  if (Number.isFinite(Number(recovery.efficaciteLatente))) return Number(recovery.efficaciteLatente)
+  return isEnthalpyCassetteRecovery(recovery) ? 75 : 70
+}
+
 function heatRecoveryImageFor(recovery) {
   const label = normalizeLabel(`${recovery?.nom || ''} ${recovery?.type || ''}`)
 
@@ -2181,21 +2230,51 @@ function heatRecoveryImageFor(recovery) {
   return systemImages.basic
 }
 
+function localizeRecoveryDisplayName(recovery, language) {
+  const label = normalizeLabel(`${recovery?.nom || ''} ${recovery?.type || ''}`)
+  if (label.includes('none') || label.includes('aucun')) {
+    return language === 'fr' ? 'Aucun' : 'None'
+  }
+  if (label.includes('thermal wheel') || label.includes('roue thermique')) {
+    return language === 'fr' ? 'Roue thermique' : 'Thermal Wheel'
+  }
+  if (label.includes('cross') || label.includes('crois')) {
+    return language === 'fr' ? 'Échangeur à débit croisé' : 'Cross-flow Exchanger'
+  }
+  if (label.includes('cassette') && (label.includes('enthalpique') || label.includes('enthalpy'))) {
+    return language === 'fr' ? 'Échangeur à cassettes enthalpique' : 'Enthalpy Cassette Exchanger'
+  }
+  if (label.includes('cassette')) {
+    return language === 'fr' ? 'Échangeur à cassettes sensible' : 'Sensible Cassette Exchanger'
+  }
+  if (label.includes('glycol') || label.includes('boucle')) {
+    return language === 'fr' ? 'Boucle glycolée' : 'Glycol Loop'
+  }
+  return recovery?.nom || '-'
+}
+
 function calculateRecoveryChartState(inletState, returnAirState, {
-  recoveryGroup,
-  recoveryEfficiency,
+  sensibleRecoveryEfficiency,
+  latentRecoveryEfficiency,
+  latentRecoverySupported,
   isNoRecovery,
 }) {
-  if (isNoRecovery || recoveryEfficiency <= 0) return inletState
+  if (isNoRecovery || sensibleRecoveryEfficiency <= 0) return inletState
 
-  const sensibleEffectiveness = clampValue(recoveryEfficiency / 100, 0, 0.95)
-  const latentEffectiveness = recoveryGroup === 'WHEEL'
-    ? Math.min(sensibleEffectiveness * 0.82, 0.88)
+  const sensibleEffectiveness = clampValue(sensibleRecoveryEfficiency / 100, 0, 0.95)
+  const latentEffectiveness = latentRecoverySupported
+    ? clampValue(latentRecoveryEfficiency / 100, 0, 0.95)
     : 0
+  const recoveredHumidityRatio = inletState.w + latentEffectiveness * (returnAirState.w - inletState.w)
+  const boundedHumidityRatio = clampValue(
+    recoveredHumidityRatio,
+    Math.max(0, Math.min(inletState.w, returnAirState.w)),
+    Math.max(inletState.w, returnAirState.w)
+  )
 
   return stateFromDbW({
     dryBulbC: inletState.db + sensibleEffectiveness * (returnAirState.db - inletState.db),
-    humidityRatio: inletState.w + latentEffectiveness * (returnAirState.w - inletState.w),
+    humidityRatio: boundedHumidityRatio,
   })
 }
 
@@ -2668,13 +2747,30 @@ function HvacDashboardApp() {
   const [supplyAirTemperature, setSupplyAirTemperature] = useState(() => finiteSetting(initialProjectSettings, 'supplyAirTemperature', 30))
   const [heatPumpCOP, setHeatPumpCOP] = useState(() => finiteSetting(initialProjectSettings, 'heatPumpCOP', 3.8))
 
-  const initialRecoverySelection = heatRecoverySystems[language].find((item) =>
-    item.type === initialProjectSettings.selectedRecoveryType ||
-    item.nom === initialProjectSettings.selectedRecoveryName
-  ) || heatRecoverySystems[language][1]
+  const savedRecoveryName = normalizeLabel(initialProjectSettings.selectedRecoveryName)
+  const savedRecoveryType = normalizeLabel(initialProjectSettings.selectedRecoveryType)
+  const initialRecoverySelection = heatRecoverySystems[language].find((item) => {
+    const itemName = normalizeLabel(item.nom)
+    const itemType = normalizeLabel(item.type)
+    return (
+      itemType === savedRecoveryType ||
+      itemName === savedRecoveryName ||
+      (savedRecoveryName.includes('cassette sensible') && itemName.includes('cassettes sensible')) ||
+      (savedRecoveryName.includes('cassette enthalpique') && itemName.includes('cassettes enthalpique'))
+    )
+  }) || heatRecoverySystems[language][1]
   const [selectedRecoveries, setSelectedRecoveries] = useState([initialRecoverySelection])
 
-  const [wheelEfficiency, setWheelEfficiency] = useState(() => finiteSetting(initialProjectSettings, 'wheelEfficiency', 78))
+  const [wheelEfficiency, setWheelEfficiency] = useState(() => finiteSetting(
+    initialProjectSettings,
+    'recoverySensibleEfficiency',
+    finiteSetting(initialProjectSettings, 'wheelEfficiency', defaultSensibleRecoveryEfficiency(initialRecoverySelection))
+  ))
+  const [latentRecoveryEfficiency, setLatentRecoveryEfficiency] = useState(() => {
+    const savedLatentEfficiency = Number(initialProjectSettings?.recoveryLatentEfficiency)
+    if (Number.isFinite(savedLatentEfficiency)) return savedLatentEfficiency
+    return defaultLatentRecoveryEfficiency(initialRecoverySelection)
+  })
 
   const climateCities = [
     { nom: 'Montr\u00E9al', hiver: -23, ete: 30, humidite: 65, zone: 'Zone 6' },
@@ -2776,6 +2872,8 @@ function HvacDashboardApp() {
     selectedRecoveryName: selectedRecoveries[0]?.nom || '',
     selectedRecoveryType: selectedRecoveries[0]?.type || '',
     wheelEfficiency,
+    recoverySensibleEfficiency: wheelEfficiency,
+    recoveryLatentEfficiency: latentRecoveryEfficiency,
     selectedCityName: selectedCity.nom,
     electricityRate,
     naturalGasRate,
@@ -2828,6 +2926,7 @@ function HvacDashboardApp() {
     heatPumpCOP,
     selectedRecoveries,
     wheelEfficiency,
+    latentRecoveryEfficiency,
     selectedCity,
     electricityRate,
     naturalGasRate,
@@ -3157,6 +3256,7 @@ function HvacDashboardApp() {
           roomRelativeHumidity,
           selectedRecoveries: activeSelectedRecoveries,
           wheelEfficiency,
+          latentRecoveryEfficiency,
           supplyAirTemperature: effectiveSupplyAirTemperature,
           selectedReheatSystem,
           heatPumpCOP,
@@ -3242,6 +3342,7 @@ function HvacDashboardApp() {
         roomRelativeHumidity,
         selectedRecoveries: activeSelectedRecoveries,
         wheelEfficiency,
+        latentRecoveryEfficiency,
         supplyAirTemperature: effectiveSupplyAirTemperature,
         selectedReheatSystem,
         heatPumpCOP,
@@ -3274,6 +3375,7 @@ function HvacDashboardApp() {
     roomRelativeHumidity,
     activeSelectedRecoveries,
     wheelEfficiency,
+    latentRecoveryEfficiency,
     effectiveSupplyAirTemperature,
     selectedReheatSystem,
     heatPumpCOP,
@@ -3302,6 +3404,7 @@ function HvacDashboardApp() {
     outsideWinterTemp,
     selectedRecoveries: activeSelectedRecoveries,
     wheelEfficiency,
+    latentRecoveryEfficiency,
     supplyAirTemperature: effectiveSupplyAirTemperature,
     selectedReheatSystem,
     heatPumpCOP,
@@ -3327,6 +3430,8 @@ function HvacDashboardApp() {
     oaTempCalc,
     adiabaticTemperatureDrop,
     grossReheatKW,
+    grossHumifogPreheatKW,
+    baseHvacHeatingThermalKW,
     reheatEnergyKW,
     recoveryEnergyReductionKW,
     steamEnergyKW,
@@ -3354,9 +3459,15 @@ function HvacDashboardApp() {
   } = metrics
 
   const selectedRecovery = activeSelectedRecoveries[0]
+  const selectedRecoveryDisplayName = localizeRecoveryDisplayName(selectedRecovery, language)
   const selectedRecoveryName = selectedRecovery?.nom ?? ''
   const selectedRecoveryNameLower = selectedRecoveryName.toLowerCase()
   const isNoRecovery = Boolean(selectedRecovery?.noRecovery)
+  const selectedRecoverySupportsLatent = supportsLatentRecovery(selectedRecovery)
+  const effectiveSensibleRecoveryEfficiency = isNoRecovery ? 0 : clampValue(Number(wheelEfficiency), 0, 95)
+  const effectiveLatentRecoveryEfficiency = isNoRecovery || !selectedRecoverySupportsLatent
+    ? 0
+    : clampValue(Number(latentRecoveryEfficiency), 0, 95)
   const humidifierType = 'HUMIFOG'
 
   const recoveryGroup = isNoRecovery
@@ -3512,6 +3623,85 @@ function HvacDashboardApp() {
     hours,
     rh: Math.round(Math.max(35, Math.min(90, selectedCity.humidite + (10 - tempC) * 0.45))),
   }))
+  const binEnergyRows = selectedBinWeatherData.map((bin) => {
+    const binMetrics = calculateHvacDashboardMetrics({
+      outsideAirCFM,
+      effectiveOutsideAirCFM,
+      roomTemperature,
+      roomRelativeHumidity,
+      outsideWinterTemp: bin.tempC,
+      selectedRecoveries: activeSelectedRecoveries,
+      wheelEfficiency,
+      latentRecoveryEfficiency,
+      supplyAirTemperature: effectiveSupplyAirTemperature,
+      selectedReheatSystem,
+      heatPumpCOP,
+      steamBoilerEfficiency,
+      atmosphericGasHumidifierEfficiency,
+      electricityRate,
+      naturalGasRate,
+      selectedCity: { ...selectedCity, hiver: bin.tempC },
+      economizerTargetTemp,
+      is100OA,
+      scheduleFactor: 1,
+    })
+
+    const steamPowerKW = Number(binMetrics.steamEnergyKW || 0)
+    const adiabaticPumpPowerKW = Number(binMetrics.adiabaticPumpKW || 0)
+    const additionalHeatPumpPowerKW = Number(binMetrics.reheatEnergyKW || 0)
+    const adiabaticTotalPowerKW = Number(binMetrics.adiabaticEnergyKW || 0)
+    const steamBinEnergyKwh = steamPowerKW * bin.hours
+    const adiabaticBinEnergyKwh = adiabaticTotalPowerKW * bin.hours
+
+    return {
+      tempC: bin.tempC,
+      rh: bin.rh,
+      hours: bin.hours,
+      steamPowerKW,
+      steamBinEnergyKwh,
+      adiabaticPumpPowerKW,
+      additionalHeatPumpPowerKW,
+      adiabaticTotalPowerKW,
+      adiabaticBinEnergyKwh,
+      recoveryPowerKW: Number(binMetrics.recoveryEnergyReductionKW || 0),
+      afterRecoveryTempC: Number(binMetrics.afterWheelTemp || 0),
+      enteringHumidityRatio: Number(binMetrics.enteringHumidityRatio || 0),
+    }
+  })
+  const binAnnualSteamEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.steamBinEnergyKwh, 0)
+  const binAnnualAdiabaticEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.adiabaticBinEnergyKwh, 0)
+  const binEnergyReductionPercent = binAnnualSteamEnergyKwh > 0
+    ? Math.round((1 - binAnnualAdiabaticEnergyKwh / binAnnualSteamEnergyKwh) * 100)
+    : 0
+  const usesBinAnnualTotals = calculationMethod === 'bin' && !isFreeCoolingMode
+  const annualSteamEnergyKwhResolved = usesBinAnnualTotals
+    ? binAnnualSteamEnergyKwh
+    : steamEnergyKW * annualHumidificationHours
+  const annualAdiabaticEnergyKwhResolved = usesBinAnnualTotals
+    ? binAnnualAdiabaticEnergyKwh
+    : adiabaticEnergyKW * annualHumidificationHours
+  const annualNaturalGasSteamEnergyKwhResolved = usesBinAnnualTotals
+    ? annualSteamEnergyKwhResolved / Math.max(steamBoilerEfficiency / 100, 0.01)
+    : naturalGasSteamInputKW * annualHumidificationHours
+  const annualAtmosphericGasHumidifierEnergyKwhResolved = usesBinAnnualTotals
+    ? annualSteamEnergyKwhResolved / Math.max(atmosphericGasHumidifierEfficiency / 100, 0.01)
+    : atmosphericGasHumidifierInputKW * annualHumidificationHours
+  const annualSteamCostResolved = usesBinAnnualTotals
+    ? annualSteamEnergyKwhResolved * electricityRate
+    : annualSteamCost
+  const annualAdiabaticCostResolved = usesBinAnnualTotals
+    ? annualAdiabaticEnergyKwhResolved * electricityRate
+    : annualAdiabaticCost
+  const annualNaturalGasCostResolved = usesBinAnnualTotals
+    ? (annualNaturalGasSteamEnergyKwhResolved / 10.35) * naturalGasRate
+    : annualNaturalGasCost
+  const annualAtmosphericGasHumidifierCostResolved = usesBinAnnualTotals
+    ? (annualAtmosphericGasHumidifierEnergyKwhResolved / 10.35) * naturalGasRate
+    : annualAtmosphericGasHumidifierCost
+  const annualSavingsPercentResolved = annualSteamEnergyKwhResolved > 0
+    ? Math.round((1 - annualAdiabaticEnergyKwhResolved / annualSteamEnergyKwhResolved) * 100)
+    : 0
+  const annualHumidificationHoursResolved = usesBinAnnualTotals ? totalBinHours : annualHumidificationHours
 
   const freeCoolingHumifogAnalysis = calculateFreeCoolingHumifogComparison({
     bins: selectedBinWeatherData,
@@ -3619,8 +3809,9 @@ function HvacDashboardApp() {
   const fallbackRecoveryInletState = is100OA ? fallbackOutdoorState : fallbackMixedState
   const hasChartRecovery = !isFreeCoolingMode && !isNoRecovery && cappedRecoveryEfficiency > 0
   const fallbackRecoveredState = calculateRecoveryChartState(fallbackRecoveryInletState, fallbackReturnState, {
-    recoveryGroup,
-    recoveryEfficiency: cappedRecoveryEfficiency,
+    sensibleRecoveryEfficiency: effectiveSensibleRecoveryEfficiency,
+    latentRecoveryEfficiency: effectiveLatentRecoveryEfficiency,
+    latentRecoverySupported: selectedRecoverySupportsLatent,
     isNoRecovery,
   })
   const fallbackConditionedInletState = hasChartRecovery ? fallbackRecoveredState : fallbackRecoveryInletState
@@ -3629,6 +3820,7 @@ function HvacDashboardApp() {
   const fallbackPreHumifogHeatingState = chartHumifogProcess.preheatState
   const fallbackAfterHumifogState = chartHumifogProcess.afterHumifogState
   const fallbackAfterHeatingState = fallbackPreHumifogHeatingState
+  const adiabaticDisplayDropC = Math.max(0, fallbackPreHumifogHeatingState.db - fallbackAfterHumifogState.db)
   const recoveryPointLabel = recoveryGroup === 'WHEEL' ? 'After thermal wheel' : 'After recovery'
   const chartHeatingInletState = fallbackConditionedInletState
   const chartHeatingOutletState = fallbackAfterHeatingState
@@ -3720,26 +3912,26 @@ function HvacDashboardApp() {
   }
   const referenceAnnualCost = isFreeCoolingMode
     ? freeCoolingHumifogAnalysis.annualComparison.freeCooling.annualCost
-    : annualSteamCost
+    : annualSteamCostResolved
   const roiOptions = [
     {
       key: 'electricSteam',
       label: language === 'fr' ? 'Humidificateur électrique vapeur' : 'Electric steam humidifier',
       installedCost: electricSteamInstalledCost,
-      annualCost: isFreeCoolingMode ? freeCoolingHumifogAnalysis.annualComparison.freeCooling.annualCost : annualSteamCost,
+      annualCost: isFreeCoolingMode ? freeCoolingHumifogAnalysis.annualComparison.freeCooling.annualCost : annualSteamCostResolved,
       reference: true,
     },
     {
       key: 'naturalGasSteam',
       label: language === 'fr' ? 'Bouilloire vapeur gaz naturel' : 'Natural gas steam boiler',
       installedCost: naturalGasSteamInstalledCost,
-      annualCost: annualNaturalGasCost,
+      annualCost: annualNaturalGasCostResolved,
     },
     {
       key: 'atmosphericGasHumidifier',
       label: language === 'fr' ? 'Humidificateur gaz atmosphérique' : 'Atmospheric gas humidifier',
       installedCost: atmosphericGasHumidifierInstalledCost,
-      annualCost: annualAtmosphericGasHumidifierCost,
+      annualCost: annualAtmosphericGasHumidifierCostResolved,
     },
     {
       key: 'humifog',
@@ -3747,7 +3939,7 @@ function HvacDashboardApp() {
         ? (language === 'fr' ? 'Humifog optimisé + Free Cooling' : 'Humifog optimized + Free Cooling')
         : (language === 'fr' ? 'Humifog adiabatique' : 'Humifog adiabatic'),
       installedCost: selectedHumifogInstalledCost,
-      annualCost: isFreeCoolingMode ? freeCoolingHumifogAnalysis.annualComparison.humifog.annualCost : annualAdiabaticCost,
+      annualCost: isFreeCoolingMode ? freeCoolingHumifogAnalysis.annualComparison.humifog.annualCost : annualAdiabaticCostResolved,
     },
   ]
   const roiRows = roiOptions.map((option) => {
@@ -3916,8 +4108,12 @@ function HvacDashboardApp() {
       calculatedAverageOaPercent: activeOaPercent,
       raPercent: is100OA ? 0 : 100 - activeOaPercent,
       selectedRaPercent: is100OA ? 0 : 100 - minimumOutsideAirPercent,
-      recoveryType: isNoRecovery ? 'None' : selectedSystemDiagramLabel,
-      recoveryEfficiency: isNoRecovery ? 0 : cappedRecoveryEfficiency,
+      recoveryType: selectedRecoveryDisplayName || (language === 'fr' ? 'Aucun' : 'None'),
+      recoveryTypeDisplay: selectedRecoveryDisplayName,
+      recoveryEfficiency: isNoRecovery ? 0 : effectiveSensibleRecoveryEfficiency,
+      recoverySensibleEfficiency: isNoRecovery ? 0 : effectiveSensibleRecoveryEfficiency,
+      recoveryLatentEfficiency: isNoRecovery ? 0 : effectiveLatentRecoveryEfficiency,
+      hasLatentRecovery: Boolean(!isNoRecovery && selectedRecoverySupportsLatent),
       heatingType: selectedReheatSystem?.nom || '',
       reheatMethodLabel: selectedReheatSystemDisplayName,
       reheatEnergySource: selectedReheatSystem?.energie || '',
@@ -3950,41 +4146,41 @@ function HvacDashboardApp() {
       scheduleFactor,
       scheduleDescription: scheduleDescriptionText,
       recoveryEnergyReductionKW,
-      annualHumidificationHours,
+      annualHumidificationHours: annualHumidificationHoursResolved,
       naturalGasGES,
       atmosphericGasHumidifierGES,
       adiabaticGES,
       eliminatedGES,
-      savings,
+      savings: annualSavingsPercentResolved,
     },
     psychrometricPoints: psychrometricChartPoints,
     energySummary: {
-      annualHumidificationHours,
+      annualHumidificationHours: annualHumidificationHoursResolved,
       steam: {
         powerKw: steamEnergyKW,
-        annualEnergyKwh: steamEnergyKW * annualHumidificationHours,
-        annualCost: annualSteamCost,
+        annualEnergyKwh: annualSteamEnergyKwhResolved,
+        annualCost: annualSteamCostResolved,
       },
       naturalGasSteam: {
         powerKw: naturalGasSteamInputKW,
-        annualEnergyKwh: naturalGasSteamInputKW * annualHumidificationHours,
-        annualCost: annualNaturalGasCost,
+        annualEnergyKwh: annualNaturalGasSteamEnergyKwhResolved,
+        annualCost: annualNaturalGasCostResolved,
       },
       atmosphericGasHumidifier: {
         powerKw: atmosphericGasHumidifierInputKW,
-        annualEnergyKwh: atmosphericGasHumidifierInputKW * annualHumidificationHours,
-        annualCost: annualAtmosphericGasHumidifierCost,
+        annualEnergyKwh: annualAtmosphericGasHumidifierEnergyKwhResolved,
+        annualCost: annualAtmosphericGasHumidifierCostResolved,
       },
       humifog: {
         powerKw: adiabaticEnergyKW,
-        annualEnergyKwh: adiabaticEnergyKW * annualHumidificationHours,
-        annualCost: annualAdiabaticCost,
+        annualEnergyKwh: annualAdiabaticEnergyKwhResolved,
+        annualCost: annualAdiabaticCostResolved,
         pumpPowerKw: adiabaticHumidificationKW,
         reheatPowerKw: reheatEnergyKW,
         annualPumpCost: annualAdiabaticPumpCost,
         annualReheatCost: annualAdiabaticReheatCost,
       },
-      annualSavingsVsSteam: annualSteamCost - annualAdiabaticCost,
+      annualSavingsVsSteam: annualSteamCostResolved - annualAdiabaticCostResolved,
     },
     economics: {
       electricityRate,
@@ -4019,6 +4215,14 @@ function HvacDashboardApp() {
     const formatted = Math.abs(rounded).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')
     return rounded < 0 ? `-${formatted}` : formatted
   }
+  const annualSteamCostDisplay = isHourlySimulationActive && hourlyWeatherSummary
+    ? Math.round((hourlyWeatherSummary.annualSteamKwh || 0) * electricityRate)
+    : Math.round(annualSteamCostResolved)
+  const annualNaturalGasCostDisplay = Math.round(annualNaturalGasCostResolved)
+  const annualAtmosphericGasHumidifierCostDisplay = Math.round(annualAtmosphericGasHumidifierCostResolved)
+  const annualAdiabaticCostDisplay = isHourlySimulationActive && hourlyWeatherSummary
+    ? Math.round(hourlyWeatherSummary.annualCost || 0)
+    : Math.round(annualAdiabaticCostResolved)
   const formatAnnualEnergy = (value) => `${formatEnergy(value)} kWh/year`
   const formatAnnualCost = (value) => `${formatCost(value)} $/year`
   const formatInstalledCost = (value) => `${formatCost(value)} $`
@@ -4391,7 +4595,7 @@ function HvacDashboardApp() {
       'After thermal wheel': language === 'fr' ? 'Après roue thermique' : 'After thermal wheel',
       'After recovery': language === 'fr' ? 'Après récupération' : 'After recovery',
       'After Humifog': language === 'fr' ? 'Après Humifog' : 'After Humifog',
-      'After preheat Humifog': language === 'fr' ? 'Après préchauffage Humifog' : 'After Humifog preheat',
+      'After preheat Humifog': language === 'fr' ? 'Après préchauffage' : 'After Preheat',
       Room: language === 'fr' ? 'Pièce' : 'Room',
     }
 
@@ -5027,7 +5231,11 @@ function HvacDashboardApp() {
                   {displayedHeatRecoverySystems.map((item, index) => (
                     <div
                       key={index}
-                      onClick={() => setSelectedRecoveries([item])}
+                      onClick={() => {
+                        setSelectedRecoveries([item])
+                        setWheelEfficiency(defaultSensibleRecoveryEfficiency(item))
+                        setLatentRecoveryEfficiency(defaultLatentRecoveryEfficiency(item))
+                      }}
                       className={`rounded-2xl p-5 border-2 cursor-pointer transition hover:shadow-lg ${
                         activeSelectedRecoveries.some(r => r.nom === item.nom)
                           ? 'border-cyan-500 bg-cyan-50'
@@ -5046,12 +5254,57 @@ function HvacDashboardApp() {
                       <div className="font-bold text-slate-800 text-lg">{item.nom}</div>
                       <div className="text-slate-500 text-sm mt-2">{item.type}</div>
                       <div className="mt-5 flex justify-between items-center">
-                        <div className="text-sm text-slate-500">{t.efficiency}</div>
-                        <div className="text-3xl font-bold text-cyan-700">{item.efficacite}%</div>
+                        <div className="text-sm text-slate-500">{t.designRecoveryEfficiency}</div>
+                        <div className="text-3xl font-bold text-cyan-700">
+                          {activeSelectedRecoveries.some(r => r.nom === item.nom)
+                            ? `${Math.round(effectiveSensibleRecoveryEfficiency)}%`
+                            : `${Math.round(defaultSensibleRecoveryEfficiency(item))}%`}
+                        </div>
                       </div>
                     </div>
                   ))}
                 </div>
+
+                {!isNoRecovery && (
+                  <div className="mt-6 rounded-2xl border border-orange-200 bg-white p-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <div className="flex justify-between mb-2">
+                          <span className="text-sm font-semibold text-slate-700">{t.sensibleEfficiency}</span>
+                          <span className="text-sm font-bold text-slate-800">{Math.round(effectiveSensibleRecoveryEfficiency)}%</span>
+                        </div>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="1"
+                          value={Math.round(wheelEfficiency)}
+                          onChange={(event) => setWheelEfficiency(clampValue(Number(event.target.value), 0, 100))}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
+                        />
+                        <div className="mt-1 text-xs text-slate-500">{t.designRecoveryEfficiency}</div>
+                      </div>
+                      {selectedRecoverySupportsLatent ? (
+                        <div>
+                          <div className="flex justify-between mb-2">
+                            <span className="text-sm font-semibold text-slate-700">{t.latentEfficiency}</span>
+                            <span className="text-sm font-bold text-slate-800">{Math.round(effectiveLatentRecoveryEfficiency)}%</span>
+                          </div>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={Math.round(latentRecoveryEfficiency)}
+                            onChange={(event) => setLatentRecoveryEfficiency(clampValue(Number(event.target.value), 0, 100))}
+                            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
+                          />
+                          <div className="mt-1 text-xs text-slate-500">{t.designRecoveryEfficiency}</div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -5353,19 +5606,7 @@ function HvacDashboardApp() {
                 )}
               </div>
 
-              {!isFreeCoolingMode && (
-                <div>
-                  <div className="flex justify-between mb-2">
-                    <span>{t.thermalWheel}</span>
-                    <span>{wheelEfficiency}%</span>
-                  </div>
-                  <input
-                    type="number" min="0" max="100" step="1" value={wheelEfficiency}
-                    onChange={(e) => setWheelEfficiency(Number(e.target.value))}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
-                  />
-                </div>
-              )}
+              {!isFreeCoolingMode && <div />}
 
             </div>
           </div>
@@ -5480,7 +5721,7 @@ function HvacDashboardApp() {
                     />
                   </td>
                   <td className="p-4 text-center text-yellow-700 font-semibold">
-                    {annualNaturalGasCost.toLocaleString()} $/an
+                    {annualNaturalGasCostDisplay.toLocaleString()} $/an
                   </td>
                 </tr>
 
@@ -5510,7 +5751,7 @@ function HvacDashboardApp() {
                     />
                   </td>
                   <td className="p-4 text-center text-amber-700 font-semibold">
-                    {atmosphericGasHumidifierInputKW.toLocaleString()} kW / {displayGasFlow(atmosphericGasHumidifierM3PerHour)} {gasFlowUnit} / {annualAtmosphericGasHumidifierCost.toLocaleString()} $/an
+                    {atmosphericGasHumidifierInputKW.toLocaleString()} kW / {displayGasFlow(atmosphericGasHumidifierM3PerHour)} {gasFlowUnit} / {annualAtmosphericGasHumidifierCostDisplay.toLocaleString()} $/an
                   </td>
                 </tr>
               </tbody>
@@ -5807,13 +6048,31 @@ function HvacDashboardApp() {
                     <td className="p-4 text-center">0 kW</td>
                     <td className="p-4 text-center">{grossReheatKW} kW</td>
                   </tr>
+                  <tr className="border-b border-slate-200 bg-slate-50">
+                    <td className="p-4 font-semibold">
+                      {language === 'fr' ? 'Chauffage CVC de base (commun)' : 'Base HVAC heating (common)'}
+                    </td>
+                    <td className="p-4 text-center">{baseHvacHeatingThermalKW} kW</td>
+                    <td className="p-4 text-center">{baseHvacHeatingThermalKW} kW</td>
+                    <td className="p-4 text-center">{baseHvacHeatingThermalKW} kW</td>
+                    <td className="p-4 text-center">{baseHvacHeatingThermalKW} kW</td>
+                  </tr>
+                  <tr className="border-b border-slate-200 bg-slate-50">
+                    <td className="p-4 font-semibold">
+                      {language === 'fr' ? 'Préchauffage adiabatique additionnel' : 'Additional adiabatic preheat'}
+                    </td>
+                    <td className="p-4 text-center">0 kW</td>
+                    <td className="p-4 text-center">0 kW</td>
+                    <td className="p-4 text-center">0 kW</td>
+                    <td className="p-4 text-center">{grossReheatKW} kW / {grossHumifogPreheatKW} kW</td>
+                  </tr>
                   <tr className="border-b border-slate-200 bg-blue-50">
                     <td className="p-4 font-semibold">{t.adiabaticCoolingShort}</td>
                     <td className="p-4 text-center">-</td>
                     <td className="p-4 text-center">-</td>
                     <td className="p-4 text-center">-</td>
                     <td className="p-4 text-center text-blue-700 font-bold">
-                      -{displayDeltaTemp(adiabaticTemperatureDrop)}{tempUnit}
+                      -{displayDeltaTemp(adiabaticDisplayDropC)}{tempUnit}
                       <div className="mt-2">{t.airBeforeReheat} : {displayTemp(fallbackAfterHumifogState.db)}{tempUnit}</div>
                     </td>
                   </tr>
@@ -5828,31 +6087,35 @@ function HvacDashboardApp() {
                       {usesHeatPumpReheat && (
                         <div className="mt-1 text-xs font-semibold text-green-700">
                           {language === 'fr'
-                            ? `Réchauffage électrique = ${netReheatKW} kW thermique / COP ${heatPumpCOP.toFixed(1)}`
-                            : `Electric reheat = ${netReheatKW} thermal kW / COP ${heatPumpCOP.toFixed(1)}`}
+                            ? `Consommation thermopompe = ${Number(reheatEnergyKW || 0).toLocaleString('fr-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kW électrique (${Number(netReheatKW || 0).toLocaleString('fr-CA', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} kW thermique / COP ${heatPumpCOP.toLocaleString('fr-CA', { minimumFractionDigits: 1, maximumFractionDigits: 1 })})`
+                            : `Heat pump input = ${Number(reheatEnergyKW || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kW electric (${Number(netReheatKW || 0).toLocaleString('en-CA', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} kW thermal / COP ${heatPumpCOP.toLocaleString('en-CA', { minimumFractionDigits: 1, maximumFractionDigits: 1 })})`}
                         </div>
                       )}
                     </td>
                   </tr>
                   {activeSelectedRecoveries.length > 0 && (
                     <tr className="border-b border-slate-200">
-                      <td className="p-4 font-semibold">{t.selectedRecoveries}</td>
+                      <td className="p-4 font-semibold">
+                        {language === 'fr'
+                          ? 'Récupération sélectionnée (énergie sensible récupérée)'
+                          : 'Selected Recovery (sensible recovered energy)'}
+                      </td>
                       <td className="p-4 text-center">-</td>
                       <td className="p-4 text-center">-</td>
                       <td className="p-4 text-center">-</td>
                       <td className="p-4 text-center text-green-700 font-bold">
-                        {activeSelectedRecoveries[0]?.nom}
-                        <div className="mt-2">{isNoRecovery ? '0' : `-${recoveryEnergyReductionKW}`} kW</div>
+                        {selectedRecoveryDisplayName}
+                        <div className="mt-2">{isNoRecovery ? '0' : `${recoveryEnergyReductionKW}`} kW</div>
                       </td>
                     </tr>
                   )}
                   <tr className="bg-slate-50">
                     <td className="p-4 font-semibold">{t.annualCost}</td>
-                    <td className="p-4 text-center text-red-700 font-bold">{annualSteamCost.toLocaleString()} $</td>
-                    <td className="p-4 text-center text-yellow-700 font-bold">{annualNaturalGasCost.toLocaleString()} $</td>
-                    <td className="p-4 text-center text-amber-700 font-bold">{annualAtmosphericGasHumidifierCost.toLocaleString()} $</td>
+                    <td className="p-4 text-center text-red-700 font-bold">{annualSteamCostDisplay.toLocaleString()} $</td>
+                    <td className="p-4 text-center text-yellow-700 font-bold">{annualNaturalGasCostDisplay.toLocaleString()} $</td>
+                    <td className="p-4 text-center text-amber-700 font-bold">{annualAtmosphericGasHumidifierCostDisplay.toLocaleString()} $</td>
                     <td className="p-4 text-center text-cyan-700 font-bold">
-                      {annualAdiabaticCost.toLocaleString()} $
+                      {annualAdiabaticCostDisplay.toLocaleString()} $
                       {isNoRecovery && (
                         <div className="mt-1 text-xs font-semibold text-cyan-700 leading-relaxed">
                           <div>
@@ -6538,22 +6801,25 @@ function HvacDashboardApp() {
                   </tr>
                 </thead>
                 <tbody>
-                  {displayedBinData.map((item, index) => (
-                    <tr
-                      key={index}
-                      className={`${index % 2 === 0 ? 'bg-slate-50' : 'bg-white'} border-b border-slate-200`}
-                    >
-                      <td className="p-4 font-semibold text-slate-700">{item.temperature}</td>
-                      <td className="p-4 text-center font-semibold text-slate-800">{item.originalHours} h</td>
-                      <td className="p-4 text-center font-bold text-slate-800">{item.heures} h</td>
-                      <td className="p-4 text-center text-red-700 font-bold">
-                        {Math.round(item.heures * steamEnergyKW * 0.001)} kWh
-                      </td>
-                      <td className="p-4 text-center text-cyan-700 font-bold">
-                        {Math.round(item.heures * adiabaticEnergyKW * 0.001)} kWh
-                      </td>
-                    </tr>
-                  ))}
+                  {displayedBinData.map((item, index) => {
+                    const binEnergyRow = binEnergyRows[index]
+                    return (
+                      <tr
+                        key={index}
+                        className={`${index % 2 === 0 ? 'bg-slate-50' : 'bg-white'} border-b border-slate-200`}
+                      >
+                        <td className="p-4 font-semibold text-slate-700">{item.temperature}</td>
+                        <td className="p-4 text-center font-semibold text-slate-800">{item.originalHours} h</td>
+                        <td className="p-4 text-center font-bold text-slate-800">{item.heures} h</td>
+                        <td className="p-4 text-center text-red-700 font-bold">
+                          {Math.round(binEnergyRow?.steamBinEnergyKwh || 0).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} kWh
+                        </td>
+                        <td className="p-4 text-center text-cyan-700 font-bold">
+                          {Math.round(binEnergyRow?.adiabaticBinEnergyKwh || 0).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} kWh
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -6569,7 +6835,7 @@ function HvacDashboardApp() {
               </div>
               <div className="bg-green-50 border border-green-200 rounded-2xl p-5">
                 <div className="text-sm text-green-700">{t.energyReduction}</div>
-                <div className="text-4xl font-bold text-green-800 mt-2">{savings}%</div>
+                <div className="text-4xl font-bold text-green-800 mt-2">{binEnergyReductionPercent}%</div>
               </div>
             </div>
 

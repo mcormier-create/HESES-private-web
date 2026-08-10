@@ -40,7 +40,7 @@ const componentText = {
     afterThermalWheel: 'Après roue thermique',
     afterRecovery: 'Après récupération',
     afterHumifog: 'Après Humifog',
-    afterHeating: 'Après préchauffage Humifog',
+    afterHeating: 'Après préchauffage',
     supplyAir: "Air d'alimentation (SA)",
   },
   en: {
@@ -74,7 +74,7 @@ const componentText = {
     afterThermalWheel: 'After thermal wheel',
     afterRecovery: 'After recovery',
     afterHumifog: 'After Humifog',
-    afterHeating: 'After Humifog preheat',
+    afterHeating: 'After Preheat',
     supplyAir: 'Supply air (SA)',
   },
 }
