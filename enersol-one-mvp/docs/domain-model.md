@@ -1,0 +1,58 @@
+# Domain Model
+
+## Project fields
+
+- projectNumber
+- projectName
+- clientName
+- clientEmail
+- engineer
+- contractor
+- salesRep
+- owner
+- clientPo
+- carelPo
+- status
+- priority
+- expectedDeliveryDate
+- notes
+
+## Status values
+
+- QUOTATION
+- QUOTATION_SENT
+- CLIENT_PO_RECEIVED
+- ORDER_SENT_TO_CAREL
+- ORDER_ACK_RECEIVED
+- ENGINEERING
+- PRODUCTION
+- SHIPPED
+- RECEIVED
+- DELIVERED
+- COMMISSIONING
+- COMPLETED
+
+## Status transition rules (MVP)
+
+- QUOTATION -> QUOTATION_SENT
+- QUOTATION_SENT -> CLIENT_PO_RECEIVED
+- CLIENT_PO_RECEIVED -> ORDER_SENT_TO_CAREL
+- ORDER_SENT_TO_CAREL -> ORDER_ACK_RECEIVED
+- ORDER_ACK_RECEIVED -> ENGINEERING
+- ENGINEERING -> PRODUCTION
+- PRODUCTION -> SHIPPED
+- SHIPPED -> RECEIVED
+- RECEIVED -> DELIVERED
+- DELIVERED -> COMMISSIONING
+- COMMISSIONING -> COMPLETED
+
+## Document types
+
+- QUOTATION
+- PURCHASE_ORDER
+- ORDER_ACKNOWLEDGEMENT
+- DRAWING
+- MANUAL
+- INVOICE
+- EMAIL
+- PHOTO
