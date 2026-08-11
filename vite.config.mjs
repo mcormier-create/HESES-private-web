@@ -13,17 +13,17 @@ const montrealWeatherFile = path.join(publicWeatherDirectory, 'montreal.epw');
 const ottawaWeatherFile = path.join(publicWeatherDirectory, 'ottawa.epw');
 
 const HESES_SYSTEM_PROMPT = `
-Tu es Assistant HESES - Beta, une fonction secondaire de presentation et d'explication pour le logiciel HESES. Tu es specialise en HVAC, humidification, psychrometrie, recuperation d'energie, free cooling, vapeur et Humifog.
+Tu es Assistant HESA - Beta, une fonction secondaire de presentation et d'explication pour le logiciel HESA. Tu es specialise en HVAC, humidification, psychrometrie, recuperation d'energie, free cooling, vapeur et Humifog.
 
 Regles strictes:
-- Tu n'es jamais le moteur de calcul HESES.
+- Tu n'es jamais le moteur de calcul HESA.
 - Tu ne modifies jamais les calculs, les hypotheses, les resultats, les BIN, les OA/RA, les temperatures, les energies, les couts ou le ROI.
-- Tu expliques, resumes et commentes uniquement les resultats deja calcules par HESES.
-- Utilise uniquement les donnees HESES fournies dans le contexte JSON de la requete.
+- Tu expliques, resumes et commentes uniquement les resultats deja calcules par HESA.
+- Utilise uniquement les donnees HESA fournies dans le contexte JSON de la requete.
 - Ne jamais inventer de valeur, de cout, d'economie, de temperature, de debit, de rendement, de charge ou de conclusion.
-- Si une donnee manque, reponds clairement: "L'information est manquante dans les donnees HESES fournies."
+- Si une donnee manque, reponds clairement: "L'information est manquante dans les donnees HESA fournies."
 - Explique les resultats en langage d'ingenierie clair et prudent.
-- Les calculs fiables, PDF, Excel, graphiques, ROI, comparaison vapeur vs Humifog et images HVAC sont prioritaires dans HESES; ton role est secondaire.
+- Les calculs fiables, PDF, Excel, graphiques, ROI, comparaison vapeur vs Humifog et images HVAC sont prioritaires dans HESA; ton role est secondaire.
 - Compare Vapeur vs Humifog seulement avec les donnees presentes.
 - Ne compare jamais Humifog a la vapeur en supposant la meme temperature de melange.
 - Pour la vapeur, utilise le scenario vapeur/free cooling fourni. Pour Humifog, utilise le scenario Humifog fourni, avec son propre OA/RA, sa propre temperature de melange, son refroidissement adiabatique et son rechauffage eventuel.
@@ -32,7 +32,7 @@ Regles strictes:
 - Indique les limites: estimation preliminaire, validation d'ingenierie requise, controles de gel et contraintes de conception a verifier.
 - Ne mentionne jamais une valeur qui n'est pas explicitement dans le contexte.
 - Ne demande jamais la cle API et ne dis jamais qu'elle est cote client.
-- Reponds dans la langue demandee par l'interface HESES quand elle est fournie.
+- Reponds dans la langue demandee par l'interface HESA quand elle est fournie.
 `.trim();
 
 function sendJson(response, statusCode, payload) {
@@ -124,10 +124,10 @@ function createHesesAssistantPlugin(env) {
             {
               role: 'user',
               content: [
-                'Question utilisateur HESES:',
+                'Question utilisateur HESA:',
                 question,
                 '',
-                'Contexte JSON HESES actuellement affiche dans linterface:',
+                'Contexte JSON HESA actuellement affiche dans linterface:',
                 compactContext(context),
               ].join('\n'),
             },
@@ -139,7 +139,7 @@ function createHesesAssistantPlugin(env) {
         answer: createLocalHesesAnswer({ question, context }),
         configured: true,
         provider: 'local-heses-context',
-        fallbackReason: "OpenAI ne repond pas; mode local HESES actif.",
+        fallbackReason: "OpenAI ne repond pas; mode local HESA actif.",
       };
     }
 
@@ -150,7 +150,7 @@ function createHesesAssistantPlugin(env) {
         answer: createLocalHesesAnswer({ question, context }),
         configured: true,
         provider: 'local-heses-context',
-        fallbackReason: payload?.error?.message || `OpenAI API error ${response.status}; mode local HESES actif.`,
+        fallbackReason: payload?.error?.message || `OpenAI API error ${response.status}; mode local HESA actif.`,
       };
     }
 
@@ -253,7 +253,7 @@ function createHesesAccessGatePlugin(env) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Acces prive HESES</title>
+  <title>Acces prive HESA</title>
   <style>
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: Arial, sans-serif; background: #f1f5f9; color: #0f172a; }
     main { width: min(92vw, 420px); padding: 28px; border: 1px solid #cbd5e1; border-radius: 16px; background: #fff; box-shadow: 0 20px 45px rgba(15, 23, 42, 0.12); }
@@ -267,13 +267,13 @@ function createHesesAccessGatePlugin(env) {
 </head>
 <body>
   <main>
-    <h1>HESES prive</h1>
+    <h1>HESA prive</h1>
     <p>Entrez le code d'acces pour valider la version web du logiciel.</p>
     ${hasError ? '<div class="error">Code invalide. Reessayez.</div>' : ''}
     <form method="post" action="/heses-login">
       <label for="accessCode">Code d'acces</label>
       <input id="accessCode" name="accessCode" type="password" autocomplete="current-password" autofocus />
-      <button type="submit">Ouvrir HESES</button>
+      <button type="submit">Ouvrir HESA</button>
     </form>
   </main>
 </body>
@@ -312,7 +312,7 @@ function createHesesAccessGatePlugin(env) {
     }
 
     if (requestUrl.pathname.startsWith('/api/')) {
-      sendJson(response, 401, { error: 'Acces prive HESES requis.' });
+      sendJson(response, 401, { error: 'Acces prive HESA requis.' });
       return;
     }
 

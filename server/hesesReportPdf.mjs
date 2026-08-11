@@ -10,8 +10,8 @@ let latestReportId = ''
 let latestRenderedPdf = null
 const execFileAsync = promisify(execFile)
 const GENERATED_REPORT_DIR = path.resolve(process.cwd(), 'generated')
-const GENERATED_REPORT_PDF_PATH = path.join(GENERATED_REPORT_DIR, 'rapport-heses.pdf')
-const GENERATED_REPORT_HTML_PATH = path.join(GENERATED_REPORT_DIR, 'rapport-heses.html')
+const GENERATED_REPORT_PDF_PATH = path.join(GENERATED_REPORT_DIR, 'HESA_Energy_Analysis_Report.pdf')
+const GENERATED_REPORT_HTML_PATH = path.join(GENERATED_REPORT_DIR, 'HESA_Energy_Analysis_Report.html')
 const CHROME_CANDIDATES = [
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
@@ -68,8 +68,8 @@ async function createChromePdfBufferFromHtml(html, id) {
   const workDir = path.join(os.tmpdir(), 'heses-report-pdf')
   await fs.mkdir(workDir, { recursive: true })
 
-  const htmlPath = path.join(workDir, `rapport-heses-${id}.html`)
-  const pdfPath = path.join(workDir, `rapport-heses-${id}.pdf`)
+  const htmlPath = path.join(workDir, `rapport-hesa-${id}.html`)
+  const pdfPath = path.join(workDir, `rapport-hesa-${id}.pdf`)
   const profilePath = path.join(workDir, `profile-${id}`)
   const htmlForPrint = String(html || '').replace(
     '</head>',
@@ -142,7 +142,7 @@ async function writeLatestReportFiles({ html, pdfBuffer }) {
 function localReportPdfPath(id) {
   const safeId = String(id || '').replace(/[^a-z0-9-]/gi, '')
   return safeId
-    ? path.join(GENERATED_REPORT_DIR, `rapport-heses-${safeId}.pdf`)
+    ? path.join(GENERATED_REPORT_DIR, `rapport-hesa-${safeId}.pdf`)
     : GENERATED_REPORT_PDF_PATH
 }
 
@@ -154,7 +154,7 @@ async function openLocalPdfInWindows(id = '') {
     await fs.mkdir(GENERATED_REPORT_DIR, { recursive: true })
     await fs.writeFile(localPdfPath, report.renderedPdf)
   } else if (id) {
-    throw new Error('PDF courant introuvable. Regenerer le rapport depuis HESES.')
+    throw new Error('PDF courant introuvable. Regenerer le rapport depuis HESA.')
   }
 
   await fs.access(localPdfPath)
@@ -290,7 +290,7 @@ function utf16BeHex(text) {
   return hex
 }
 
-export function createPdfBufferFromReportHtml(html, title = 'Rapport HESES') {
+export function createPdfBufferFromReportHtml(html, title = 'Rapport HESA') {
   const sourceLines = stripReportHtmlToLines(html)
   const pages = []
   let page = []
@@ -316,7 +316,7 @@ export function createPdfBufferFromReportHtml(html, title = 'Rapport HESES') {
   y -= 10
 
   for (const line of sourceLines) {
-    const isTitle = /^(rapport|heses|section|executive|sommaire|analyse|conditions|energy|economic|greenhouse|recommendation)/i.test(line)
+    const isTitle = /^(rapport|hesa|section|executive|sommaire|analyse|conditions|energy|economic|greenhouse|recommendation)/i.test(line)
     addLine(line, {
       size: isTitle ? 11 : 8.5,
       bold: isTitle,
@@ -342,7 +342,7 @@ export function createPdfBufferFromReportHtml(html, title = 'Rapport HESES') {
 
   pages.forEach((lines, pageIndex) => {
     const content = [
-      `BT /F2 8 Tf 54 28 Td <${utf16BeHex(`HESES - ${pageIndex + 1}/${pages.length}`)}> Tj ET`,
+      `BT /F2 8 Tf 54 28 Td <${utf16BeHex(`HESA - ${pageIndex + 1}/${pages.length}`)}> Tj ET`,
       ...lines.map((line) => {
         const font = line.bold ? 'F2' : 'F1'
         return `BT /${font} ${line.size} Tf 54 ${line.y.toFixed(1)} Td <${utf16BeHex(line.text)}> Tj ET`
@@ -395,7 +395,7 @@ export function createHesesReportPdfMiddleware() {
         if (request.method === 'GET') {
           response.statusCode = 200
           response.setHeader('Content-Type', 'text/html; charset=utf-8')
-          response.end('<!doctype html><html><body style="font-family:Arial,sans-serif;padding:32px"><h1>PDF HESES ouvert dans Windows</h1><p>Utilisez Ctrl+P dans le lecteur PDF externe pour imprimer ou enregistrer.</p><p><a href="/">Retour à HESES</a></p></body></html>')
+          response.end('<!doctype html><html><body style="font-family:Arial,sans-serif;padding:32px"><h1>PDF HESA ouvert dans Windows</h1><p>Utilisez Ctrl+P dans le lecteur PDF externe pour imprimer ou enregistrer.</p><p><a href="/">Retour à HESA</a></p></body></html>')
           return
         }
         sendJson(response, 200, { ok: true, localPdfPath })
@@ -404,7 +404,7 @@ export function createHesesReportPdfMiddleware() {
         if (request.method === 'GET') {
           response.statusCode = 500
           response.setHeader('Content-Type', 'text/html; charset=utf-8')
-          response.end(`<!doctype html><html><body style="font-family:Arial,sans-serif;padding:32px"><h1>Impossible douvrir le PDF HESES</h1><p>${message}</p><p>Regenerer le rapport depuis HESES.</p><p><a href="/">Retour à HESES</a></p></body></html>`)
+          response.end(`<!doctype html><html><body style="font-family:Arial,sans-serif;padding:32px"><h1>Impossible douvrir le PDF HESA</h1><p>${message}</p><p>Regenerer le rapport depuis HESA.</p><p><a href="/">Retour à HESA</a></p></body></html>`)
           return
         }
         sendJson(response, 500, { error: message })
@@ -417,7 +417,7 @@ export function createHesesReportPdfMiddleware() {
         const rawBody = await readBody(request)
         const payload = JSON.parse(rawBody || '{}')
         const html = String(payload.html || '')
-        const title = normalizeText(payload.title || 'Rapport HESES')
+        const title = normalizeText(payload.title || 'Rapport HESA')
 
         if (!html.trim()) {
           sendJson(response, 400, { error: 'Rapport HTML manquant.' })
@@ -425,7 +425,7 @@ export function createHesesReportPdfMiddleware() {
         }
 
         if (!isLikelyReportHtml(html)) {
-          sendJson(response, 400, { error: 'Rapport HTML invalide. Generez le rapport depuis HESES.' })
+          sendJson(response, 400, { error: 'Rapport HTML invalide. Generez le rapport depuis HESA.' })
           return
         }
 
@@ -453,8 +453,8 @@ export function createHesesReportPdfMiddleware() {
 
         sendJson(response, 200, {
           id,
-          pdfUrl: `/generated/rapport-heses.pdf?t=${id}`,
-          htmlUrl: `/generated/rapport-heses.html?t=${id}`,
+          pdfUrl: `/generated/HESA_Energy_Analysis_Report.pdf?t=${id}`,
+          htmlUrl: `/generated/HESA_Energy_Analysis_Report.html?t=${id}`,
           apiPdfUrl: `/api/heses-report-pdf/${id}`,
           apiHtmlUrl: `/api/heses-report-html/${id}`,
           localPdfPath: localReportPdfPath(id),
@@ -477,7 +477,7 @@ export function createHesesReportPdfMiddleware() {
         const report = REPORTS.get(id)
 
         if (!id || !report) {
-          sendJson(response, 404, { error: 'Rapport HESES introuvable.' })
+          sendJson(response, 404, { error: 'Rapport HESA introuvable.' })
           return
         }
 
@@ -500,7 +500,7 @@ export function createHesesReportPdfMiddleware() {
 
         sendJson(response, 200, {
           id,
-          pdfUrl: `/generated/rapport-heses.pdf?t=${id}`,
+          pdfUrl: `/generated/HESA_Energy_Analysis_Report.pdf?t=${id}`,
           localPdfPath: localReportPdfPath(id),
         })
       } catch (error) {
@@ -520,20 +520,20 @@ export function createHesesReportPdfMiddleware() {
 
       if (!report.renderedPdf) {
         response.statusCode = 409
-        response.end('PDF visuel non disponible. Regenerer le rapport HESES.')
+        response.end('PDF visuel non disponible. Regenerer le rapport HESA.')
         return
       }
 
       const pdf = report.renderedPdf
       response.statusCode = 200
       response.setHeader('Content-Type', 'application/pdf')
-      response.setHeader('Content-Disposition', 'attachment; filename="rapport-heses.pdf"')
+      response.setHeader('Content-Disposition', 'attachment; filename="HESA_Energy_Analysis_Report.pdf"')
       response.setHeader('Content-Length', String(pdf.length))
       response.end(pdf)
       return
     }
 
-    const generatedPdfMatch = request.url.match(/^\/generated\/rapport-heses\.pdf(?:\?.*)?$/i)
+    const generatedPdfMatch = request.url.match(/^\/generated\/HESA_Energy_Analysis_Report\.pdf(?:\?.*)?$/i)
     if (request.method === 'GET' && generatedPdfMatch) {
       const requestedId = getQueryValue(request.url, 't')
       const report = REPORTS.get(requestedId) || REPORTS.get(latestReportId)
@@ -542,33 +542,33 @@ export function createHesesReportPdfMiddleware() {
           const pdfFromDisk = await fs.readFile(GENERATED_REPORT_PDF_PATH)
           response.statusCode = 200
           response.setHeader('Content-Type', 'application/pdf')
-          response.setHeader('Content-Disposition', 'inline; filename="rapport-heses.pdf"')
+          response.setHeader('Content-Disposition', 'inline; filename="HESA_Energy_Analysis_Report.pdf"')
           response.setHeader('Content-Length', String(pdfFromDisk.length))
           response.end(pdfFromDisk)
           return
         } catch {
           response.statusCode = 404
-          response.end('Aucun rapport HESES genere.')
+          response.end('Aucun rapport HESA genere.')
           return
         }
       }
 
       if (!report.renderedPdf) {
         response.statusCode = 409
-        response.end('PDF visuel non disponible. Regenerer le rapport HESES.')
+        response.end('PDF visuel non disponible. Regenerer le rapport HESA.')
         return
       }
 
       const pdf = report.renderedPdf
       response.statusCode = 200
       response.setHeader('Content-Type', 'application/pdf')
-      response.setHeader('Content-Disposition', 'inline; filename="rapport-heses.pdf"')
+      response.setHeader('Content-Disposition', 'inline; filename="HESA_Energy_Analysis_Report.pdf"')
       response.setHeader('Content-Length', String(pdf.length))
       response.end(pdf)
       return
     }
 
-    const generatedHtmlMatch = request.url.match(/^\/generated\/rapport-heses\.html(?:\?.*)?$/i)
+    const generatedHtmlMatch = request.url.match(/^\/generated\/HESA_Energy_Analysis_Report\.html(?:\?.*)?$/i)
     if (request.method === 'GET' && generatedHtmlMatch) {
       const requestedId = getQueryValue(request.url, 't')
       const report = REPORTS.get(requestedId) || REPORTS.get(latestReportId)
@@ -577,13 +577,13 @@ export function createHesesReportPdfMiddleware() {
           const htmlFromDisk = await fs.readFile(GENERATED_REPORT_HTML_PATH)
           response.statusCode = 200
           response.setHeader('Content-Type', 'text/html; charset=utf-8')
-          response.setHeader('Content-Disposition', 'inline; filename="rapport-heses.html"')
+          response.setHeader('Content-Disposition', 'inline; filename="HESA_Energy_Analysis_Report.html"')
           response.setHeader('Content-Length', String(htmlFromDisk.length))
           response.end(htmlFromDisk)
           return
         } catch {
           response.statusCode = 404
-          response.end('Aucun rapport HESES genere.')
+          response.end('Aucun rapport HESA genere.')
           return
         }
       }
@@ -591,7 +591,7 @@ export function createHesesReportPdfMiddleware() {
       const html = Buffer.from(report.html, 'utf8')
       response.statusCode = 200
       response.setHeader('Content-Type', 'text/html; charset=utf-8')
-      response.setHeader('Content-Disposition', 'inline; filename="rapport-heses.html"')
+      response.setHeader('Content-Disposition', 'inline; filename="HESA_Energy_Analysis_Report.html"')
       response.setHeader('Content-Length', String(html.length))
       response.end(html)
       return
@@ -609,7 +609,7 @@ export function createHesesReportPdfMiddleware() {
       const html = Buffer.from(report.html, 'utf8')
       response.statusCode = 200
       response.setHeader('Content-Type', 'text/html; charset=utf-8')
-      response.setHeader('Content-Disposition', 'attachment; filename="rapport-heses.html"')
+      response.setHeader('Content-Disposition', 'attachment; filename="HESA_Energy_Analysis_Report.html"')
       response.setHeader('Content-Length', String(html.length))
       response.end(html)
       return

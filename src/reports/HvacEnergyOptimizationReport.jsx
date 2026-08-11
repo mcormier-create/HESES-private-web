@@ -883,17 +883,17 @@ export default function HvacEnergyOptimizationReport({ data }) {
       <header className="report-cover page-break">
         <div className="cover-topline">
           <span className="cover-logo-lockup">
-            <span className="cover-logo-card" role="img" aria-label="HESES Humidification Energy Software">
-              <span className="cover-logo-title">HESES</span>
+            <span className="cover-logo-card" role="img" aria-label="HESA Humidification Energy System Analysis">
+              <span className="cover-logo-title">HESA</span>
               <span className="cover-logo-accent" aria-hidden="true" />
-              <span className="cover-logo-subtitle">Humidification Energy Software</span>
+              <span className="cover-logo-subtitle">{tr('Analyse énergétique des systèmes d’humidification', 'Humidification Energy System Analysis')}</span>
             </span>
             <span>ENERSOL / CAREL</span>
           </span>
           <span>Professional HVAC Engineering Report</span>
         </div>
         <div className="cover-title-block">
-          <div className="cover-brand">HESES Energy Engineering Platform</div>
+          <div className="cover-brand">HESA Energy Engineering Platform</div>
           <h1>HVAC ENERGY OPTIMIZATION REPORT</h1>
           <p className="cover-subtitle">Prepared for technical review, energy comparison and preliminary decision support</p>
           <div className="cover-badges">
@@ -904,7 +904,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
         </div>
         <div className="document-meta-row">
           <span>Document status: Preliminary engineering report</span>
-          <span>Revision: HESES generated</span>
+          <span>Revision: HESA generated</span>
           <span>Units: {data.units === 'imperial' ? 'IP' : 'SI'}</span>
         </div>
         <div className="cover-grid">
@@ -928,7 +928,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
             <div className="cover-certification">
               <strong>Engineering Use Notice</strong>
               <span>
-                Results are generated from the displayed HESES inputs and are intended for preliminary HVAC comparison.
+                Results are generated from the displayed HESA inputs and are intended for preliminary HVAC comparison.
                 Final equipment sizing, code compliance and stamped design remain by the engineer of record.
               </span>
             </div>
@@ -1018,8 +1018,8 @@ export default function HvacEnergyOptimizationReport({ data }) {
           ]} />
         <div className="professional-note">
           {tr(
-            'La comparaison est basée uniquement sur les valeurs disponibles dans le jeu de données du projet HESES. Les valeurs spécifiques au projet manquantes sont présentées intentionnellement comme intrants de projet ou hypothèses d’ingénierie plutôt que comme valeurs inférées.',
-            'The comparison is based only on values available in the HESES project dataset. Missing project-specific values are intentionally shown as project inputs or engineering assumptions rather than inferred values.'
+            'La comparaison est basée uniquement sur les valeurs disponibles dans le jeu de données du projet HESA. Les valeurs spécifiques au projet manquantes sont présentées intentionnellement comme intrants de projet ou hypothèses d’ingénierie plutôt que comme valeurs inférées.',
+            'The comparison is based only on values available in the HESA project dataset. Missing project-specific values are intentionally shown as project inputs or engineering assumptions rather than inferred values.'
           )}
         </div>
       </ReportSection>
@@ -1507,7 +1507,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
 
       <ReportSection title="APPENDIX C - PDF DATA VALIDATION" pageBreak allowPageBreak>
         <p className="report-text">
-          This audit lists the HESES software inputs and calculated values used directly by this PDF report.
+          This audit lists the HESA software inputs and calculated values used directly by this PDF report.
         </p>
         {hourlyWeatherSummaryRows.length > 0 && (
           <>
@@ -1549,7 +1549,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
         <div className="signature-grid">
           <div>
             <span>Prepared by</span>
-            <strong>{project.preparedBy || 'HESES'}</strong>
+            <strong>{project.preparedBy || 'HESA'}</strong>
           </div>
           <div>
             <span>Reviewed by</span>
@@ -1562,7 +1562,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
         </div>
       </ReportSection>
       <footer className="report-footer">
-        <span>HESES - HVAC Energy and Humidification Analysis Platform</span>
+        <span>HESA - Humidification Energy System Analysis | https://hesahvac.com</span>
         <span>{project.name || 'Project report'}</span>
       </footer>
     </article>
@@ -1622,7 +1622,7 @@ function WeatherBinTable({ bins, units }) {
 
 function CompleteBinCalculationTable({ rows, conventionalRows, units }) {
   if (!rows || rows.length === 0) {
-    return <p className="report-text">No detailed free cooling BIN rows are available in the current HESES dataset.</p>
+    return <p className="report-text">No detailed free cooling BIN rows are available in the current HESA dataset.</p>
   }
 
   return (

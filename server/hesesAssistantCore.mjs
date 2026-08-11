@@ -19,8 +19,8 @@ export function createLocalHesesAnswer({ question = '', context = {} }) {
 
   const lines = []
   const missing = language === 'fr'
-    ? "L'information est manquante dans les donnees HESES fournies."
-    : 'The information is missing from the provided HESES data.'
+    ? "L'information est manquante dans les donnees HESA fournies."
+    : 'The information is missing from the provided HESA data.'
 
   const add = (label, value) => {
     if (value === undefined || value === null || value === '') return
@@ -33,8 +33,8 @@ export function createLocalHesesAnswer({ question = '', context = {} }) {
   }
 
   lines.push(language === 'fr'
-    ? 'Mode local HESES actif - reponse basee uniquement sur les donnees actuellement affichees.'
-    : 'HESES local mode active - response based only on the currently displayed data.')
+    ? 'Mode local HESA actif - reponse basee uniquement sur les donnees actuellement affichees.'
+    : 'HESA local mode active - response based only on the currently displayed data.')
 
   add(language === 'fr' ? 'Question' : 'Question', question)
   add(language === 'fr' ? 'Mode' : 'Mode', context.mode?.ventilationModeName || system.type)
@@ -83,14 +83,14 @@ export function createLocalHesesAnswer({ question = '', context = {} }) {
       addNumber(language === 'fr' ? 'Rechauffage Humifog applique' : 'Applied Humifog reheat', debug.selectedReheatEnergyKwh ?? humifog.reheatEnergyKwh, ' kWh/year')
       addNumber(language === 'fr' ? 'Rechauffage thermique requis' : 'Required thermal reheat', debug.adiabaticReheatThermalKwh, ' kWh/year')
       lines.push(language === 'fr'
-        ? "Le rechauffage apparait seulement lorsque les donnees HESES indiquent que la temperature apres Humifog descend sous la consigne utilisee par le calcul."
-        : 'Reheat appears only when the HESES data indicates the temperature after Humifog falls below the calculation setpoint.')
+        ? "Le rechauffage apparait seulement lorsque les donnees HESA indiquent que la temperature apres Humifog descend sous la consigne utilisee par le calcul."
+        : 'Reheat appears only when the HESA data indicates the temperature after Humifog falls below the calculation setpoint.')
     }
 
     if (normalizedQuestion.includes('client') || normalizedQuestion.includes('rapport') || normalizedQuestion.includes('texte')) {
       lines.push(language === 'fr'
-        ? 'Resume client: selon les resultats affiches par HESES, le scenario Humifog avec Free Cooling reduit la consommation annuelle par rapport au scenario vapeur. Les economies proviennent des valeurs BIN, OA/RA, refroidissement adiabatique et rechauffage deja calcules par HESES. Une validation finale d ingenierie demeure requise.'
-        : 'Client summary: according to the results displayed by HESES, the Humifog with Free Cooling scenario reduces annual consumption compared with the steam scenario. Savings come from the BIN, OA/RA, adiabatic cooling and reheat values already calculated by HESES. Final engineering validation remains required.')
+        ? 'Resume client: selon les resultats affiches par HESA, le scenario Humifog avec Free Cooling reduit la consommation annuelle par rapport au scenario vapeur. Les economies proviennent des valeurs BIN, OA/RA, refroidissement adiabatique et rechauffage deja calcules par HESA. Une validation finale d ingenierie demeure requise.'
+        : 'Client summary: according to the results displayed by HESA, the Humifog with Free Cooling scenario reduces annual consumption compared with the steam scenario. Savings come from the BIN, OA/RA, adiabatic cooling and reheat values already calculated by HESA. Final engineering validation remains required.')
     }
   } else if (freeCooling.incompleteReason) {
     add(language === 'fr' ? 'Calcul Free Cooling incomplet' : 'Incomplete Free Cooling calculation', freeCooling.incompleteReason)
@@ -109,8 +109,8 @@ export function createLocalHesesAnswer({ question = '', context = {} }) {
   }
 
   lines.push(language === 'fr'
-    ? "Note: l'assistant explique les resultats; il ne modifie pas les calculs HESES."
-    : 'Note: the assistant explains results; it does not modify HESES calculations.')
+    ? "Note: l'assistant explique les resultats; il ne modifie pas les calculs HESA."
+    : 'Note: the assistant explains results; it does not modify HESA calculations.')
 
   return lines.join('\n')
 }

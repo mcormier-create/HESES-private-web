@@ -233,7 +233,7 @@ function localizeWeatherMetadataValue(label, value, language) {
 function getBuiltInHourlyFallbackMessage(cityName, translations) {
   const normalized = normalizeCityKey(cityName)
   if (normalized === normalizeCityKey('Ottawa')) {
-    return 'Le fichier météo horaire intégré pour Ottawa est introuvable. HESES continue avec la méthode des heures BIN.'
+    return 'Le fichier météo horaire intégré pour Ottawa est introuvable. HESA continue avec la méthode des heures BIN.'
   }
   return translations.noBuiltInWeatherAvailable
 }
@@ -654,7 +654,7 @@ function HesesPrintableReportPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         html: reportHtml,
-        title: 'Rapport HESES',
+        title: 'Rapport HESA',
       }),
     })
       .then(async (response) => {
@@ -730,16 +730,16 @@ function HesesPrintableReportPage() {
     return (
       <main className="min-h-screen bg-slate-100 p-6">
         <section className="mx-auto max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
-          <h1 className="text-2xl font-bold text-slate-900">Rapport HESES non disponible</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Rapport HESA non disponible</h1>
           <p className="mt-2 font-semibold text-slate-600">
-            Retournez dans HESES et cliquez de nouveau sur Générer rapport PDF.
+            Retournez dans HESA et cliquez de nouveau sur Générer rapport PDF.
           </p>
           <button
             type="button"
             onClick={returnToHesesApp}
             className="mt-5 rounded-xl bg-sky-700 px-5 py-3 font-bold text-white hover:bg-sky-800"
           >
-            Retour à HESES
+            Retour à HESA
           </button>
         </section>
       </main>
@@ -780,7 +780,7 @@ function HesesPrintableReportPage() {
           onClick={returnToHesesApp}
           className="rounded-xl bg-slate-700 px-5 py-3 font-bold text-white hover:bg-slate-600"
         >
-          Retour à HESES
+          Retour à HESA
         </button>
         <button
           type="button"
@@ -799,7 +799,7 @@ function HesesPrintableReportPage() {
           Ouvrir PDF dans Windows
         </button>
         <span className="text-sm font-semibold text-slate-200">
-          {pdfReportStatus || 'PDF disponible à /generated/rapport-heses.pdf après génération.'}
+          {pdfReportStatus || 'PDF disponible après génération.'}
         </span>
         {localPdfPath && (
           <span className="w-full text-center text-xs font-semibold text-slate-300">
@@ -821,7 +821,7 @@ function HesesPrintableReportPage() {
           <div className="mt-4 flex flex-wrap gap-3">
             <a
               href={pdfDownloadUrl || '#'}
-              download="rapport-heses.pdf"
+              download="HESA_Energy_Analysis_Report.pdf"
               className={`rounded-lg px-4 py-2 font-bold text-white ${
                 pdfDownloadUrl ? 'bg-cyan-700 hover:bg-cyan-800' : 'pointer-events-none bg-slate-500'
               }`}
@@ -830,7 +830,7 @@ function HesesPrintableReportPage() {
             </a>
             <a
               href={htmlReportUrl || '#'}
-              download="rapport-heses-imprimable.html"
+              download="HESA_Energy_Analysis_Report.html"
               className="rounded-lg bg-sky-700 px-4 py-2 font-bold text-white hover:bg-sky-800"
             >
               Télécharger HTML
@@ -1191,7 +1191,7 @@ const REPORT_FR_REPLACEMENTS = [
   ['Enthalpy: h = 1.006 x T + W x (2501 + 1.86 x T)', 'Enthalpie : h = 1.006 x T + W x (2501 + 1.86 x T)'],
   ['Wet bulb and dew point are calculated from psychrometric correlations.', 'Le bulbe humide et le point de rosée sont calculés avec des corrélations psychrométriques.'],
   ['Specific volume: v = Rda x Tdb,K x (1 + 1.6078W) / P', 'Volume spécifique : v = Rda x Tdb,K x (1 + 1.6078W) / P'],
-  ['This audit lists the HESES software inputs and calculated values used directly by this PDF report.', 'Cet audit liste les intrants du logiciel HESES et les valeurs calculées utilisées directement par ce rapport PDF.'],
+  ['This audit lists the HESA software inputs and calculated values used directly by this PDF report.', 'Cet audit liste les intrants du logiciel HESA et les valeurs calculées utilisées directement par ce rapport PDF.'],
   ['Project location', 'Emplacement du projet'],
   ['Report mode', 'Mode du rapport'],
   ['100% Outdoor Air', '100 % air extérieur'],
@@ -1231,13 +1231,13 @@ const REPORT_FR_REPLACEMENTS = [
   ['Reheat', 'Réchauffage'],
   ['Measured value used', 'Valeur mesurée utilisée'],
   ['Calculated value used', 'Valeur calculée utilisée'],
-  ['HESES Energy Engineering Platform', 'Plateforme HESES d’analyse énergétique HVAC'],
+  ['HESA Energy Engineering Platform', 'Plateforme HESA d’analyse énergétique HVAC'],
   ['Prepared for technical review, energy comparison and preliminary decision support', 'Préparé pour revue technique, comparaison énergétique et aide à la décision préliminaire'],
   ['Document status: Preliminary engineering report', 'Statut du document : rapport d’ingénierie préliminaire'],
-  ['Revision: HESES generated', 'Révision : générée par HESES'],
+  ['Revision: HESA generated', 'Révision : générée par HESA'],
   ['Units:', 'Unités :'],
   ['Engineering Use Notice', 'Avis d’utilisation en ingénierie'],
-  ['Results are generated from the displayed HESES inputs and are intended for preliminary HVAC comparison.', 'Les résultats sont générés à partir des données HESES affichées et servent à une comparaison HVAC préliminaire.'],
+  ['Results are generated from the displayed HESA inputs and are intended for preliminary HVAC comparison.', 'Les résultats sont générés à partir des données HESA affichées et servent à une comparaison HVAC préliminaire.'],
   ['Final equipment sizing, code compliance and stamped design remain by the engineer of record.', 'Le dimensionnement final des équipements, la conformité au code et les plans scellés demeurent sous la responsabilité de l’ingénieur responsable.'],
   ['Recommended annual cost basis', 'Base recommandée selon le coût annuel'],
   ['Modeled airflow', 'Débit d’air modélisé'],
@@ -1246,7 +1246,7 @@ const REPORT_FR_REPLACEMENTS = [
   ['100% OA comparison', 'Comparaison 100 % air extérieur'],
   ['Lowest Annual Cost', 'Coût annuel le plus bas'],
   ['Lowest Annual Cost Option', 'Option au coût annuel le plus bas'],
-  ['The comparison is based only on values available in the HESES project dataset.', 'La comparaison utilise seulement les valeurs disponibles dans les données du projet HESES.'],
+  ['The comparison is based only on values available in the HESA project dataset.', 'La comparaison utilise seulement les valeurs disponibles dans les données du projet HESA.'],
   ['Missing project-specific values are intentionally shown as project inputs or engineering assumptions rather than inferred values.', 'Les valeurs propres au projet qui sont manquantes sont indiquées comme intrants ou hypothèses d’ingénierie plutôt que d’être inventées.'],
   ['Steam + economizer', 'Vapeur + économiseur'],
   ['Electric Steam', 'Vapeur électrique'],
@@ -1285,7 +1285,7 @@ const REPORT_FR_REPLACEMENTS = [
   ['Prepared by', 'Préparé par'],
   ['Reviewed by', 'Révisé par'],
   ['Engineer of record', 'Ingénieur responsable'],
-  ['HESES - HVAC Energy and Humidification Analysis Platform', 'HESES - Plateforme d’analyse énergétique HVAC et humidification'],
+  ['HESA - Humidification Energy System Analysis', 'HESA - Analyse énergétique des systèmes d’humidification'],
   ['Project report', 'Rapport de projet'],
   ['Auto', 'Auto'],
 ]
@@ -1514,7 +1514,7 @@ function stringToUtf16BeHex(text) {
   return hex
 }
 
-function createPdfBlobFromReportHtml(reportHtml, title = 'HESES Report') {
+function createPdfBlobFromReportHtml(reportHtml, title = 'HESA Report') {
   const encoder = new TextEncoder()
   const sourceLines = collectReportPdfLines(reportHtml)
   const pages = []
@@ -1555,7 +1555,7 @@ function createPdfBlobFromReportHtml(reportHtml, title = 'HESES Report') {
   pages.forEach((pageLines, pageIndex) => {
     const content = [
       '0.2 w',
-      'BT /F2 8 Tf 54 28 Td <' + stringToUtf16BeHex(`HESES - ${pageIndex + 1}/${pages.length}`) + '> Tj ET',
+      'BT /F2 8 Tf 54 28 Td <' + stringToUtf16BeHex(`HESA - ${pageIndex + 1}/${pages.length}`) + '> Tj ET',
       ...pageLines.map((line) => {
         const font = line.bold ? 'F2' : 'F1'
         return `BT /${font} ${line.size} Tf 54 ${line.y.toFixed(1)} Td <${stringToUtf16BeHex(line.text)}> Tj ET`
@@ -1941,11 +1941,11 @@ const translations = {
     weatherSource: 'Source météo',
     customUploadedWeatherFile: 'Fichier météo téléchargé personnalisé',
     builtInWeatherFile: 'Fichier météo intégré',
-    noBuiltInWeatherAvailable: 'Le fichier météo horaire intégré pour cette ville est introuvable. HESES continue avec la méthode des heures BIN.',
-    builtInWeatherLoadFailed: 'Le fichier météo horaire intégré pour cette ville est introuvable. HESES continue avec la méthode des heures BIN.',
+    noBuiltInWeatherAvailable: 'Le fichier météo horaire intégré pour cette ville est introuvable. HESA continue avec la méthode des heures BIN.',
+    builtInWeatherLoadFailed: 'Le fichier météo horaire intégré pour cette ville est introuvable. HESA continue avec la méthode des heures BIN.',
     hourlyWeatherFileLabel: 'Fichier météo horaire',
     loadedFile: 'Fichier chargé',
-    scheduleNote: 'HESES utilise les heures BIN annuelles. En mode BIN complet, les heures BIN originales sont utilisées. En mode horaire personnalisé, les heures BIN sont ajustées selon l horaire sélectionné. Le filtrage exact heure par heure nécessite un fichier météo horaire 8760.',
+    scheduleNote: 'HESA utilise les heures BIN annuelles. En mode BIN complet, les heures BIN originales sont utilisées. En mode horaire personnalisé, les heures BIN sont ajustées selon l horaire sélectionné. Le filtrage exact heure par heure nécessite un fichier météo horaire 8760.',
     mon: 'Lun',
     tue: 'Mar',
     wed: 'Mer',
@@ -1965,8 +1965,8 @@ const translations = {
     schFan: 'Fan',
   },
   en: {
-    title: 'HVAC Humidification Analyzer',
-    subtitle: 'Realistic ASHRAE calculations - atmospheric electric steam',
+    title: 'HESA',
+    subtitle: 'Humidification Energy System Analysis',
     generatePDF: 'Generate PDF Report',
     climateConditions: 'Regional Climate Conditions',
     climateDescription: 'ASHRAE climate conditions selection',
@@ -2098,7 +2098,7 @@ const translations = {
     annualOperatingHours: 'Annual operating hours',
     scheduleFactor: 'Operating factor',
     actualAnnualPercentage: 'Actual annual percentage',
-    scheduleNote: 'HESES uses annual BIN hours. In full BIN mode, original BIN hours are used. In custom schedule mode, BIN hours are adjusted to the selected schedule. Exact hour-by-hour filtering requires an 8760 hourly weather file.',
+    scheduleNote: 'HESA uses annual BIN hours. In full BIN mode, original BIN hours are used. In custom schedule mode, BIN hours are adjusted to the selected schedule. Exact hour-by-hour filtering requires an 8760 hourly weather file.',
     mon: 'Mon',
     tue: 'Tue',
     wed: 'Wed',
@@ -2117,8 +2117,8 @@ const translations = {
     weatherSource: 'Weather source',
     customUploadedWeatherFile: 'Custom uploaded weather file',
     builtInWeatherFile: 'Built-in weather file',
-    noBuiltInWeatherAvailable: 'Built-in hourly weather file for this city was not found. HESES is continuing with the BIN hours method.',
-    builtInWeatherLoadFailed: 'Built-in hourly weather file for this city was not found. HESES is continuing with the BIN hours method.',
+    noBuiltInWeatherAvailable: 'Built-in hourly weather file for this city was not found. HESA is continuing with the BIN hours method.',
+    builtInWeatherLoadFailed: 'Built-in hourly weather file for this city was not found. HESA is continuing with the BIN hours method.',
     hourlyWeatherFileLabel: 'Hourly weather file',
     loadedFile: 'Loaded file',
     schOA: 'Volet OA',
@@ -2363,6 +2363,216 @@ function solvePreHumifogHeatingState(inletState, targetAfterHumifogDb, effective
   return stateAt(highDb)
 }
 
+function HesesLandingPage({ language, setLanguage, onStartAnalysis }) {
+  const isFrench = language === 'fr'
+  const copy = isFrench ? {
+    heroKicker: 'Plateforme d\'analyse HVAC et humidification',
+    heroTitle: 'Analyse énergétique avancée de l\'humidification CVAC',
+    heroLead: 'Comparez différentes technologies d\'humidification et stratégies de traitement d\'air à partir des conditions réelles de votre projet.',
+    heroBody: 'HESA analyse les charges d\'humidification, la récupération de chaleur, le Free Cooling, les besoins de chauffage et de réchauffage, ainsi que la consommation énergétique annuelle afin de comparer objectivement différentes solutions.',
+    slogan: 'Analysez. Comparez. Optimisez.',
+    cta: 'DÉMARRER UNE ANALYSE',
+    capabilitiesTitle: 'Capacités principales',
+    engineeringTitle: 'Comparaison énergétique basée sur l\'ingénierie',
+    engineeringBody: 'HESA évalue les technologies d\'humidification selon la configuration réelle du système CVAC plutôt que de présumer qu\'une technologie est toujours plus efficace.',
+    engineeringDetail: 'L\'analyse tient compte du débit d\'air, du climat extérieur, des conditions intérieures, de la récupération de chaleur, des horaires d\'exploitation et de la technologie de réchauffage.',
+    disclaimer: 'Les résultats produits par HESA sont fournis à des fins d\'analyse préliminaire et de comparaison énergétique. Les résultats dépendent des données saisies, des hypothèses de calcul et des conditions d\'exploitation sélectionnées. Ils ne remplacent pas la conception détaillée, la sélection d\'équipement ni la validation d\'un ingénieur qualifié.',
+    languageLabel: 'Langue',
+    detailsLabel: 'HESA | Version 1.1 | Enersol inc. | Carel Group | hesahvac.com',
+    workflowTitle: 'Workflow d\'analyse',
+    workflowBody: 'Lancez le tableau de bord existant pour comparer les charges, les coûts, les gains énergétiques et le rapport PDF sans modifier les calculs de base.',
+    featureCards: [
+      ['100 % air extérieur', 'Comparaison des scénarios 100 % OA'],
+      ['Free Cooling', 'Analyse du mode Free Cooling'],
+      ['Humidification vapeur', 'Référence de consommation vapeur'],
+      ['Humidification adiabatique haute pression', 'Performance Humifog'],
+      ['Récupération de chaleur', 'Effet de la récupération thermique'],
+      ['Réchauffage thermopompe', 'Impact du réchauffage HP'],
+      ['Analyse météo BIN', 'Base horaire climatique BIN'],
+      ['Énergie et coût annuels', 'Résultats annuels consolidés'],
+      ['Réduction des GES', 'Comparaison des émissions'],
+      ['Rapport PDF d\'ingénierie', 'Sortie de rapport professionnelle'],
+    ],
+  } : {
+    heroKicker: 'HVAC humidification analysis platform',
+    heroTitle: 'Advanced HVAC Humidification Energy Analysis',
+    heroLead: 'Compare humidification technologies and air-handling strategies using the actual operating conditions of your project.',
+    heroBody: 'HESA evaluates humidification loads, heat recovery, free cooling, heating and reheat requirements, and annual energy consumption to provide an objective comparison of different HVAC solutions.',
+    slogan: 'Analyze. Compare. Optimize.',
+    cta: 'START ANALYSIS',
+    capabilitiesTitle: 'Main capabilities',
+    engineeringTitle: 'Engineering-Based Energy Comparison',
+    engineeringBody: 'HESA evaluates humidification technologies based on the actual HVAC system configuration rather than assuming that one technology is always more efficient.',
+    engineeringDetail: 'The analysis considers airflow, outdoor climate, indoor conditions, heat recovery, operating schedules and reheat technology.',
+    disclaimer: 'HESA results are provided for preliminary engineering analysis and energy comparison purposes. Results depend on user inputs, calculation assumptions and selected operating conditions. They do not replace detailed engineering design, equipment selection or validation by a qualified engineer.',
+    languageLabel: 'Language',
+    detailsLabel: 'HESA | Version 1.1 | Enersol inc. | Carel Group | hesahvac.com',
+    workflowTitle: 'Analysis workflow',
+    workflowBody: 'Open the existing dashboard to compare loads, costs, energy savings and the PDF report without changing the core calculations.',
+    featureCards: [
+      ['100% Outdoor Air', 'Baseline outdoor-air comparison'],
+      ['Free Cooling', 'Free Cooling analysis mode'],
+      ['Steam Humidification', 'Steam energy reference'],
+      ['High-Pressure Adiabatic Humidification', 'Humifog performance'],
+      ['Heat Recovery', 'Thermal recovery impact'],
+      ['Heat Pump Reheat', 'HP reheat impact'],
+      ['BIN Weather Analysis', 'Hourly climate BIN foundation'],
+      ['Annual Energy & Cost', 'Annual energy and cost results'],
+      ['GHG Reduction', 'Emissions comparison'],
+      ['Engineering PDF Report', 'Professional report output'],
+    ],
+  }
+
+  return (
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(20,184,166,0.22),_transparent_34%),radial-gradient(circle_at_top_right,_rgba(14,165,233,0.16),_transparent_28%),linear-gradient(180deg,#eef5fb_0%,#dbe5ef_100%)] text-slate-900">
+      <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-6 py-6 lg:px-10">
+        <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="logo-card" role="img" aria-label="HESA Humidification Energy System Analysis">
+              <div className="logo-title">HESA</div>
+              <div className="logo-accent" aria-hidden="true" />
+              <div className="logo-subtitle">{isFrench ? 'Analyse énergétique des systèmes d’humidification' : 'Humidification Energy System Analysis'}</div>
+            </div>
+            <div>
+              <div className="text-xs font-black uppercase tracking-[0.4em] text-cyan-700">HESA</div>
+              <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">
+                {isFrench ? 'Analyse énergétique des systèmes d’humidification' : 'Humidification Energy System Analysis'}
+              </h1>
+              <div className="mt-3 flex flex-wrap gap-3 text-sm font-semibold text-slate-600">
+                <span className="rounded-full border border-slate-300 bg-white px-3 py-1 shadow-sm">Version 1.1</span>
+                <span className="rounded-full border border-slate-300 bg-white px-3 py-1 shadow-sm">Enersol inc. | Carel Group</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-300 bg-white/90 p-2 shadow-sm backdrop-blur">
+            <span className="px-2 text-xs font-black uppercase tracking-[0.28em] text-slate-500">{copy.languageLabel}</span>
+            <button
+              type="button"
+              onClick={() => setLanguage('fr')}
+              className={`rounded-xl px-4 py-2 font-semibold transition ${isFrench ? 'bg-cyan-600 text-white shadow' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+            >
+              Français
+            </button>
+            <button
+              type="button"
+              onClick={() => setLanguage('en')}
+              className={`rounded-xl px-4 py-2 font-semibold transition ${!isFrench ? 'bg-cyan-600 text-white shadow' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+            >
+              English
+            </button>
+          </div>
+        </header>
+
+        <section className="grid flex-1 gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+          <div className="rounded-[30px] border border-slate-200 bg-white p-8 shadow-[0_28px_70px_rgba(15,23,42,0.14)] lg:p-10">
+            <div className="inline-flex rounded-full border border-cyan-200 bg-cyan-50 px-4 py-2 text-xs font-black uppercase tracking-[0.3em] text-cyan-700">
+              {copy.heroKicker}
+            </div>
+            <h2 className="mt-6 max-w-3xl text-4xl font-black tracking-tight text-slate-900 sm:text-5xl lg:text-6xl">
+              {copy.heroTitle}
+            </h2>
+            <p className="mt-6 max-w-3xl text-lg leading-8 text-slate-600 sm:text-xl">
+              {copy.heroLead}
+            </p>
+            <p className="mt-5 max-w-3xl text-base leading-8 text-slate-700 sm:text-lg">
+              {copy.heroBody}
+            </p>
+
+            <div className="mt-8 flex flex-wrap items-center gap-4">
+              <button
+                type="button"
+                onClick={() => {
+                  onStartAnalysis()
+                  if (typeof window !== 'undefined') {
+                    window.scrollTo({ top: 0, behavior: 'smooth' })
+                  }
+                }}
+                className="rounded-2xl bg-cyan-600 px-6 py-3 text-sm font-black uppercase tracking-[0.22em] text-white shadow-[0_18px_30px_rgba(6,182,212,0.22)] transition hover:bg-cyan-700"
+              >
+                {copy.cta}
+              </button>
+              <div className="text-sm font-semibold text-slate-500 sm:text-base">{copy.slogan}</div>
+            </div>
+
+            <div className="mt-8 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-black uppercase tracking-[0.24em] text-cyan-700">01</div>
+                <div className="mt-2 font-black text-slate-900">{copy.workflowTitle}</div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">{copy.workflowBody}</div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-black uppercase tracking-[0.24em] text-cyan-700">02</div>
+                <div className="mt-2 font-black text-slate-900">{isFrench ? 'Langue bilingue' : 'Bilingual interface'}</div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">{isFrench ? 'Passez instantanément entre le français et l\'anglais.' : 'Switch instantly between English and French.'}</div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-black uppercase tracking-[0.24em] text-cyan-700">03</div>
+                <div className="mt-2 font-black text-slate-900">{isFrench ? 'Rapport d\'ingénierie' : 'Engineering report'}</div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">{isFrench ? 'Les résultats alimentent le rapport PDF existant.' : 'Results feed the existing PDF report.'}</div>
+              </div>
+            </div>
+          </div>
+
+          <aside className="rounded-[30px] border border-slate-800 bg-slate-950 p-6 text-slate-100 shadow-[0_28px_70px_rgba(15,23,42,0.24)] lg:p-7">
+            <div className="text-xs font-black uppercase tracking-[0.35em] text-cyan-300">{copy.capabilitiesTitle}</div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+              {copy.featureCards.map(([title, description]) => (
+                <article key={title} className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/5 p-4 shadow-[0_10px_20px_rgba(15,23,42,0.15)]">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-400/15 text-sm font-black text-cyan-200">
+                    {title.split(' ').slice(0, 2).map((word) => word[0]).join('').toUpperCase()}
+                  </div>
+                  <div>
+                    <div className="font-bold text-white">{title}</div>
+                    <div className="mt-1 text-sm leading-6 text-slate-300">{description}</div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </aside>
+        </section>
+
+        <section className="mt-6 grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+          <div className="rounded-[28px] border border-slate-200 bg-slate-900 p-8 text-slate-100 shadow-[0_20px_50px_rgba(15,23,42,0.18)]">
+            <div className="text-xs font-black uppercase tracking-[0.35em] text-cyan-300">{isFrench ? 'Message d\'ingénierie' : 'Engineering message'}</div>
+            <h3 className="mt-4 text-3xl font-black tracking-tight text-white">{copy.engineeringTitle}</h3>
+            <p className="mt-4 text-base leading-8 text-slate-300">{copy.engineeringBody}</p>
+            <p className="mt-4 text-sm leading-7 font-semibold text-cyan-200">{copy.engineeringDetail}</p>
+          </div>
+
+          <div className="rounded-[28px] border border-slate-200 bg-white p-8 shadow-[0_20px_50px_rgba(15,23,42,0.10)]">
+            <div className="text-xs font-black uppercase tracking-[0.35em] text-slate-500">HESA</div>
+            <h3 className="mt-4 text-3xl font-black tracking-tight text-slate-900">{copy.detailsLabel}</h3>
+            <p className="mt-4 text-base leading-8 text-slate-600">{copy.heroBody}</p>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <div className="text-sm font-black text-slate-900">{isFrench ? 'Conditions réelles' : 'Actual operating conditions'}</div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">{isFrench ? 'Les analyses reposent sur le climat, les horaires et les paramètres fournis.' : 'Analyses follow project climate, schedules and user inputs.'}</div>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <div className="text-sm font-black text-slate-900">{isFrench ? 'Comparaison objective' : 'Objective comparison'}</div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">{isFrench ? 'Les technologies sont évaluées sur une base commune et traçable.' : 'Technologies are evaluated on a consistent, traceable basis.'}</div>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <div className="text-sm font-black text-slate-900">{isFrench ? 'Rapport PDF' : 'PDF report'}</div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">{isFrench ? 'Le rapport d\'ingénierie existant demeure disponible.' : 'The existing engineering report remains available.'}</div>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <div className="text-sm font-black text-slate-900">{isFrench ? 'Interface bilingue' : 'Bilingual interface'}</div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">{isFrench ? 'Les libellés et le contenu suivent le mode de langue actuel.' : 'Labels and content follow the current language mode.'}</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <footer className="mt-8 border-t border-slate-300/80 pt-5 text-xs leading-6 text-slate-500">
+          {copy.disclaimer}
+        </footer>
+      </div>
+    </main>
+  )
+}
+
 function HvacDashboardApp() {
   const reportRef = useRef(null)
   const hourlyWeatherFileInputRef = useRef(null)
@@ -2377,6 +2587,7 @@ function HvacDashboardApp() {
   const [reportStatus, setReportStatus] = useState('')
   const [projectProfile, setProjectProfile] = useState(getInitialProjectProfile)
   const [projectSaveStatus, setProjectSaveStatus] = useState('')
+  const [showLandingPage, setShowLandingPage] = useState(true)
   const [assistantHealth, setAssistantHealth] = useState({
     checked: false,
     online: false,
@@ -2730,7 +2941,7 @@ function HvacDashboardApp() {
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = language === 'fr' ? 'rapport-heses-imprimable.html' : 'heses-printable-report.html'
+      link.download = 'HESA_Energy_Analysis_Report.html'
       document.body.appendChild(link)
       link.click()
       link.remove()
@@ -4814,7 +5025,7 @@ function HvacDashboardApp() {
       }
 
       const fallbackPrefix = payload.fallbackReason
-        ? `${language === 'fr' ? 'Mode local HESES actif' : 'HESES local mode active'}\n\n`
+        ? `${language === 'fr' ? 'Mode local HESA actif' : 'HESA local mode active'}\n\n`
         : ''
       setAssistantAnswer(fallbackPrefix + (payload.answer || (language === 'fr'
         ? "L'assistant n'a retourne aucune reponse."
@@ -4824,8 +5035,8 @@ function HvacDashboardApp() {
       const networkFailure = rawMessage === 'Failed to fetch' || rawMessage.includes('NetworkError')
       setAssistantError(networkFailure
         ? (language === 'fr'
-          ? 'Le service Assistant HESES ne repond pas via Vite. Redemarrez HESES avec npm run dev ou npm run dev:all.'
-          : 'The HESES Assistant service is not responding through Vite. Restart HESES with npm run dev or npm run dev:all.')
+          ? 'Le service Assistant HESA ne repond pas via Vite. Redemarrez HESA avec npm run dev ou npm run dev:all.'
+          : 'The HESA Assistant service is not responding through Vite. Restart HESA with npm run dev or npm run dev:all.')
         : rawMessage)
     } finally {
       setAssistantLoading(false)
@@ -4840,15 +5051,15 @@ function HvacDashboardApp() {
         </div>
         <p className="mt-1">
           {language === 'fr'
-            ? 'La route serveur /api/heses-assistant ne repond pas. Redemarrez HESES avec npm run dev ou npm run dev:all.'
-            : 'The server route /api/heses-assistant is not responding. Restart HESES with npm run dev or npm run dev:all.'}
+            ? 'La route serveur /api/heses-assistant ne repond pas. Redemarrez HESA avec npm run dev ou npm run dev:all.'
+            : 'The server route /api/heses-assistant is not responding. Restart HESA with npm run dev or npm run dev:all.'}
         </p>
       </div>
     ) : assistantHealth.configured === false ? (
       <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="font-bold text-slate-900">
-            {language === 'fr' ? 'Mode local HESES actif' : 'HESES local mode active'}
+            {language === 'fr' ? 'Mode local HESA actif' : 'HESA local mode active'}
           </div>
           <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-bold text-slate-700">
             {language === 'fr' ? 'Assistant secondaire' : 'Secondary assistant'}
@@ -4856,18 +5067,28 @@ function HvacDashboardApp() {
         </div>
         <p className="mt-2">
           {language === 'fr'
-            ? "L'assistant explique uniquement les resultats affiches par HESES. Il ne modifie pas les calculs et ne bloque pas le logiciel."
-            : 'The assistant explains only the results displayed by HESES. It does not modify calculations or block the software.'}
+            ? "L'assistant explique uniquement les resultats affiches par HESA. Il ne modifie pas les calculs et ne bloque pas le logiciel."
+            : 'The assistant explains only the results displayed by HESA. It does not modify calculations or block the software.'}
         </p>
       </div>
     ) : (
       <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-900">
         {language === 'fr'
-          ? 'Assistant HESES actif.'
-          : 'HESES Assistant active.'}
+          ? 'Assistant HESA actif.'
+          : 'HESA Assistant active.'}
       </div>
     )
   )
+
+  if (showLandingPage) {
+    return (
+      <HesesLandingPage
+        language={language}
+        setLanguage={setLanguage}
+        onStartAnalysis={() => setShowLandingPage(false)}
+      />
+    )
+  }
 
   return (
     <div className="min-h-screen bg-slate-100 p-6">
@@ -4954,10 +5175,10 @@ function HvacDashboardApp() {
       `}</style>
       <div className="mx-auto mb-6 flex max-w-7xl flex-wrap items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-4">
-          <div className="logo-card" role="img" aria-label="HESES Humidification Energy Software">
-            <div className="logo-title">HESES</div>
+          <div className="logo-card" role="img" aria-label="HESA Humidification Energy System Analysis">
+            <div className="logo-title">HESA</div>
             <div className="logo-accent" aria-hidden="true" />
-            <div className="logo-subtitle">Humidification Energy Software</div>
+            <div className="logo-subtitle">Humidification Energy System Analysis</div>
           </div>
           <div className="flex flex-wrap gap-2">
           <button
@@ -5089,7 +5310,7 @@ function HvacDashboardApp() {
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-2xl font-bold text-slate-900">
-                {language === 'fr' ? 'Apercu du rapport HESES genere' : 'Generated HESES report preview'}
+                {language === 'fr' ? 'Apercu du rapport HESA genere' : 'Generated HESA report preview'}
               </h2>
               {reportStatus && (
                 <p className="mt-1 text-sm font-semibold text-slate-600">{reportStatus}</p>
@@ -5128,7 +5349,7 @@ function HvacDashboardApp() {
           </div>
           <div className="max-h-[75vh] overflow-auto rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <iframe
-              title={language === 'fr' ? 'Aperçu du rapport PDF HESES' : 'HESES PDF report preview'}
+              title={language === 'fr' ? 'Aperçu du rapport PDF HESA' : 'HESA PDF report preview'}
               srcDoc={buildPrintableReportHtml({ autoPrint: false })}
               className="h-[75vh] w-full rounded-xl border-0 bg-white shadow"
             />
@@ -6832,7 +7053,7 @@ function HvacDashboardApp() {
                 <div className="space-y-1">
                   <div>
                     <strong>{language === 'fr' ? 'Source des données' : 'Data source'}:</strong>{' '}
-                    {language === 'fr' ? 'Méthode heures BIN intégrée à HESES' : 'HESES integrated BIN-hours method'}
+                    {language === 'fr' ? 'Méthode heures BIN intégrée à HESA' : 'HESA integrated BIN-hours method'}
                   </div>
                   <div>
                     <strong>{language === 'fr' ? 'Ville climatique' : 'Climate city'}:</strong> {selectedCity.nom}
@@ -7585,7 +7806,7 @@ function HvacDashboardApp() {
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <h3 className="text-xl font-bold text-slate-900">
-                      {language === 'fr' ? 'Assistant HESES - Bêta' : 'HESES Assistant - Beta'}
+                      {language === 'fr' ? 'Assistant HESA - Bêta' : 'HESA Assistant - Beta'}
                     </h3>
                     <p className="mt-1 text-sm text-slate-700">
                       {language === 'fr'
@@ -7687,7 +7908,7 @@ function HvacDashboardApp() {
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-bold text-slate-900">
-                  {language === 'fr' ? 'Assistant HESES - Bêta' : 'HESES Assistant - Beta'}
+                  {language === 'fr' ? 'Assistant HESA - Bêta' : 'HESA Assistant - Beta'}
                 </h2>
                 <p className="text-slate-600 mt-1">
                   {language === 'fr'
