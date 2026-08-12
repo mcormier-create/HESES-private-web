@@ -20,6 +20,7 @@ export const systemImages = {
   glycolLoopHumifog: '/system-images/boucle-glycolee-humifog.png',
   freeCooling: '/system-images/free-cooling-humifog.png?v=20260618-free-cooling-mixing-schematic',
   freeCoolingHumifog: '/system-images/free-cooling-humifog.png?v=20260618-free-cooling-mixing-schematic',
+  freeCoolingHumifogEn: '/system-images/free-cooling-humifog-en.png?v=20260811-en-labels-source',
   freeCoolingHumifogHeating: '/system-images/free-cooling-humifog.png?v=20260618-free-cooling-mixing-schematic',
 }
 

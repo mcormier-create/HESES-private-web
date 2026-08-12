@@ -314,6 +314,9 @@ export default function HVACSystemImage({
             ? systemImages.heatingCoilHumifog
             : imageMap[normalizedRecoveryType] || fallbackImageSrc
   const imageSrc = schematic.imageSrc || legacyImageSrc
+  const localizedImageSrc = schematic.id === 'freeCoolingHumifog' && lang === 'en'
+    ? (systemImages.freeCoolingHumifogEn || imageSrc)
+    : imageSrc
   const isPlate = isCrossflow || ['crossflow', 'crossflowPlate', 'plate'].includes(normalizedRecoveryType)
   const recoveryBadgeLabel = recoveryLabel || (
     localizedSchematic.recoveryLabel ||
@@ -394,11 +397,11 @@ export default function HVACSystemImage({
     : undefined
   const labelPositions = isFreeCoolingSystem
     ? {
-        outdoorAir: 'left-[4%] top-[38%]',
-        returnAir: 'right-[4%] top-[21%]',
-        oaDamper: 'left-[14%] top-[46%]',
-        returnDamper: 'right-[13%] top-[30%]',
-        exhaustDamper: 'left-[3%] top-[21%]',
+        outdoorAir: 'left-[-2%] top-[32%]',
+        returnAir: 'right-[4%] top-[16%]',
+        oaDamper: 'left-[6%] top-[52%]',
+        returnDamper: 'right-[13%] top-[20%]',
+        exhaustDamper: 'left-[3%] top-[26%]',
         mixedAir: 'left-[39%] top-[62%]',
         supplyAirflow: 'right-[4%] top-[47%]',
         afterHumifog: '',
@@ -444,8 +447,8 @@ export default function HVACSystemImage({
       <div className="overflow-x-auto overflow-y-visible rounded-2xl border border-slate-200 bg-slate-50">
         <div className="relative min-w-[980px] lg:min-w-0">
         <img
-          key={imageSrc}
-          src={imageSrc}
+          key={localizedImageSrc}
+          src={localizedImageSrc}
           alt={text.imageAlt}
           className={isFreeCoolingSystem ? 'hvac-system-image hvac-system-image--free-cooling' : 'hvac-system-image'}
           loading="eager"
@@ -457,7 +460,7 @@ export default function HVACSystemImage({
           onError={(event) => {
             const image = event.currentTarget
             if (image.dataset.fallbackApplied === 'true') return
-            console.error(`HVAC image not found: ${imageSrc}`)
+            console.error(`HVAC image not found: ${localizedImageSrc}`)
             image.dataset.fallbackApplied = 'true'
             image.src = fallbackImageSrc
           }}
