@@ -211,16 +211,17 @@ function createHesesAssistantPlugin(env) {
 }
 
 function createHesesAccessGatePlugin(env) {
-  const accessCode = env.HESES_ACCESS_CODE || process.env.HESES_ACCESS_CODE;
+  const accessPassword = env.HESA_ACCESS_PASSWORD || process.env.HESA_ACCESS_PASSWORD;
   const cookieName = 'heses_private_access';
+  const sessions = new Map();
+  const sessionTtlMs = 7 * 24 * 60 * 60 * 1000;
 
-  if (!accessCode) {
-    return {
-      name: 'heses-access-gate-disabled',
-    };
+  function cleanupSessions() {
+    const now = Date.now();
+    for (const [token, createdAt] of sessions.entries()) {
+      if (now - createdAt > sessionTtlMs) sessions.delete(token);
+    }
   }
-
-  const expectedToken = crypto.createHash('sha256').update(accessCode).digest('hex');
 
   function readFormBody(request) {
     return new Promise((resolve, reject) => {
@@ -237,59 +238,118 @@ function createHesesAccessGatePlugin(env) {
     });
   }
 
-  function hasAccess(request) {
-    const cookieHeader = request.headers.cookie || '';
-    return cookieHeader
+  function parseCookies(request) {
+    return String(request.headers.cookie || '')
       .split(';')
-      .map((entry) => entry.trim())
-      .some((entry) => entry === `${cookieName}=${expectedToken}`);
+      .map((entry) => entry.trim().split('='))
+      .filter(([name, value]) => name && value)
+      .reduce((cookies, [name, ...parts]) => {
+        cookies[name] = parts.join('=');
+        return cookies;
+      }, {});
   }
 
-  function sendLogin(response, hasError = false) {
+  function hasAccess(request) {
+    cleanupSessions();
+    const token = parseCookies(request)[cookieName];
+    return Boolean(token && sessions.has(token));
+  }
+
+  function sendLogin(response, { hasError = false, language = 'fr', statusCode = 200 } = {}) {
+    const isEnglish = language === 'en';
+    const copy = isEnglish
+      ? {
+          title: 'Private Testing Access',
+          subtitle: 'Humidification Energy System Analysis',
+          prompt: 'This pre-release version of HESA is currently available by invitation only.',
+          label: 'Password',
+          submit: 'ACCESS HESA',
+          error: 'Incorrect password. Please try again.',
+          missing: 'Private access is not configured on this server.',
+          french: 'Français',
+          english: 'English',
+        }
+      : {
+          title: 'Accès privé - Version d’essai',
+          subtitle: 'Analyse énergétique des systèmes d’humidification',
+          prompt: 'Cette version préliminaire de HESA est actuellement accessible sur invitation seulement.',
+          label: 'Mot de passe',
+          submit: 'ACCÉDER À HESA',
+          error: 'Mot de passe incorrect. Veuillez réessayer.',
+          missing: 'L’accès privé n’est pas configuré sur ce serveur.',
+          french: 'Français',
+          english: 'English',
+        };
     response.statusCode = 200;
+    response.statusCode = statusCode;
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
     response.end(`<!doctype html>
-<html lang="fr">
+<html lang="${isEnglish ? 'en' : 'fr'}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Acces prive HESA</title>
+  <title>HESA - ${copy.title}</title>
   <style>
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: Arial, sans-serif; background: #f1f5f9; color: #0f172a; }
-    main { width: min(92vw, 420px); padding: 28px; border: 1px solid #cbd5e1; border-radius: 16px; background: #fff; box-shadow: 0 20px 45px rgba(15, 23, 42, 0.12); }
-    h1 { margin: 0 0 8px; color: #0f3a5b; font-size: 26px; }
-    p { margin: 0 0 20px; color: #475569; line-height: 1.45; }
+    :root { font-family: Arial, sans-serif; color: #0f172a; background: #eef3f7; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: radial-gradient(circle at top, #ffffff 0, #eef3f7 65%); }
+    main { width: min(90vw, 430px); padding: 36px; border: 1px solid #d8e1ea; border-radius: 24px; background: rgba(255,255,255,.96); box-shadow: 0 24px 60px rgba(15, 58, 91, .14); }
+    .brand { margin-bottom: 26px; color: #0f3a5b; font-size: 15px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { margin: 0 0 8px; color: #102f4e; font-size: 28px; line-height: 1.15; }
+    h2 { margin: 0 0 18px; color: #52677d; font-size: 17px; font-weight: 500; }
+    p { margin: 0 0 24px; color: #475569; line-height: 1.5; }
     label { display: block; margin-bottom: 8px; font-weight: 700; }
-    input { width: 100%; box-sizing: border-box; padding: 12px 14px; border: 1px solid #94a3b8; border-radius: 10px; font-size: 16px; }
-    button { width: 100%; margin-top: 14px; padding: 12px 14px; border: 0; border-radius: 10px; background: #0f3a5b; color: #fff; font-weight: 800; cursor: pointer; }
-    .error { margin-bottom: 14px; padding: 10px 12px; border-radius: 10px; background: #fee2e2; color: #991b1b; font-weight: 700; }
+    input { width: 100%; box-sizing: border-box; padding: 13px 14px; border: 1px solid #94a3b8; border-radius: 10px; font-size: 16px; }
+    button { width: 100%; margin-top: 14px; padding: 13px 14px; border: 0; border-radius: 10px; background: #0f3a5b; color: #fff; font-weight: 800; cursor: pointer; }
+    nav { display: flex; gap: 12px; margin-top: 20px; font-size: 14px; }
+    nav a { color: #0f3a5b; }
+    .error { margin-bottom: 14px; padding: 11px 12px; border-radius: 10px; background: #fee2e2; color: #991b1b; font-weight: 700; }
   </style>
 </head>
 <body>
   <main>
-    <h1>HESA prive</h1>
-    <p>Entrez le code d'acces pour valider la version web du logiciel.</p>
-    ${hasError ? '<div class="error">Code invalide. Reessayez.</div>' : ''}
+    <div class="brand">HESA</div>
+    <h1>${copy.title}</h1>
+    <h2>${copy.subtitle}</h2>
+    <p>${copy.prompt}</p>
+    ${!accessPassword ? `<div class="error">${copy.missing}</div>` : ''}
+    ${hasError ? `<div class="error">${copy.error}</div>` : ''}
     <form method="post" action="/heses-login">
-      <label for="accessCode">Code d'acces</label>
-      <input id="accessCode" name="accessCode" type="password" autocomplete="current-password" autofocus />
-      <button type="submit">Ouvrir HESA</button>
+      <input type="hidden" name="language" value="${isEnglish ? 'en' : 'fr'}" />
+      <label for="accessPassword">${copy.label}</label>
+      <input id="accessPassword" name="accessPassword" type="password" autocomplete="current-password" autofocus />
+      <button type="submit"${accessPassword ? '' : ' disabled'}>${copy.submit}</button>
     </form>
+    <nav><a href="/heses-login?lang=fr">${copy.french}</a><a href="/heses-login?lang=en">${copy.english}</a></nav>
   </main>
 </body>
 </html>`);
   }
 
   async function handleAccess(request, response, next) {
+    if (!accessPassword) {
+      sendLogin(response, {
+        language: new URL(request.url || '/', 'http://heses.local').searchParams.get('lang') || 'fr',
+        statusCode: 503,
+      });
+      return;
+    }
+
     const requestUrl = new URL(request.url || '/', 'http://heses.local');
 
     if (requestUrl.pathname === '/heses-login' && request.method === 'POST') {
       try {
         const form = await readFormBody(request);
-        const submittedCode = String(form.get('accessCode') || '');
-        if (submittedCode === accessCode) {
+        const language = form.get('language') === 'en' ? 'en' : 'fr';
+        const submittedPassword = String(form.get('accessPassword') || '');
+        const expected = Buffer.from(accessPassword);
+        const received = Buffer.from(submittedPassword);
+        const matches = expected.length === received.length && crypto.timingSafeEqual(expected, received);
+        if (matches) {
+          const token = crypto.randomBytes(32).toString('base64url');
+          sessions.set(token, Date.now());
           response.statusCode = 302;
-          response.setHeader('Set-Cookie', `${cookieName}=${expectedToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
+          const secure = (env.NODE_ENV || process.env.NODE_ENV) === 'production' ? '; Secure' : '';
+          response.setHeader('Set-Cookie', `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${secure}`);
           response.setHeader('Location', '/');
           response.end();
           return;
@@ -297,12 +357,25 @@ function createHesesAccessGatePlugin(env) {
       } catch {
         // Fall through to the login page with an error.
       }
-      sendLogin(response, true);
+      sendLogin(response, {
+        hasError: true,
+        language: requestUrl.searchParams.get('lang') || 'fr',
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === '/heses-logout') {
+      const token = parseCookies(request)[cookieName];
+      if (token) sessions.delete(token);
+      response.statusCode = 302;
+      response.setHeader('Set-Cookie', `${cookieName}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+      response.setHeader('Location', '/heses-login');
+      response.end();
       return;
     }
 
     if (requestUrl.pathname === '/heses-login') {
-      sendLogin(response);
+      sendLogin(response, { language: requestUrl.searchParams.get('lang') || 'fr' });
       return;
     }
 
