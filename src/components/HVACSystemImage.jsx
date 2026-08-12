@@ -32,7 +32,7 @@ const componentText = {
     humifogPump: 'Humifog HP',
     oaAirflow: 'Débit OA',
     outdoorAir: 'Air extérieur (OA)',
-    returnAir: 'Air repris (RA)',
+    returnAir: 'Air de retour (RA)',
     oaDamper: 'Volet OA',
     returnDamper: 'Volet retour',
     exhaustDamper: 'Volet rejet',
@@ -41,7 +41,7 @@ const componentText = {
     afterRecovery: 'Après récupération',
     afterHumifog: 'Après Humifog',
     afterHeating: 'Après préchauffage',
-    supplyAir: "Air d'alimentation (SA)",
+    supplyAir: 'Air soufflé (SA)',
   },
   en: {
     heading: 'Selected System Schematic',
@@ -314,9 +314,19 @@ export default function HVACSystemImage({
             ? systemImages.heatingCoilHumifog
             : imageMap[normalizedRecoveryType] || fallbackImageSrc
   const imageSrc = schematic.imageSrc || legacyImageSrc
-  const localizedImageSrc = schematic.id === 'freeCoolingHumifog' && lang === 'en'
-    ? (systemImages.freeCoolingHumifogEn || imageSrc)
-    : imageSrc
+  const localizedImageSrc = schematic.id === 'outsideAirBasic' && lang === 'en'
+    ? (systemImages.basicEn || imageSrc)
+    : schematic.id === 'thermalWheelHumifog' && lang === 'en'
+      ? (systemImages.thermalWheelHumifogEn || imageSrc)
+    : schematic.id === 'crossflowHumifog' && lang === 'en'
+      ? (systemImages.crossflowEn || imageSrc)
+    : schematic.id === 'cassetteHumifog' && lang === 'en'
+      ? (systemImages.cassetteEn || imageSrc)
+    : schematic.id === 'glycolLoopHumifog' && lang === 'en'
+      ? (systemImages.glycolEn || imageSrc)
+    : schematic.id === 'freeCoolingHumifog' && lang === 'en'
+      ? (systemImages.freeCoolingHumifogEn || imageSrc)
+      : imageSrc
   const isPlate = isCrossflow || ['crossflow', 'crossflowPlate', 'plate'].includes(normalizedRecoveryType)
   const recoveryBadgeLabel = recoveryLabel || (
     localizedSchematic.recoveryLabel ||

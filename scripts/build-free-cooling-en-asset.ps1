@@ -107,6 +107,22 @@ $blueText = [System.Drawing.Color]::FromArgb(18, 54, 156)
 $redText = [System.Drawing.Color]::FromArgb(245, 39, 28)
 $orangeText = [System.Drawing.Color]::FromArgb(255, 120, 26)
 $darkBlueBanner = [System.Drawing.Color]::FromArgb(14, 47, 117)
+$labelMask = [System.Drawing.Color]::White
+
+# Clear the French text baked into the source image before drawing the English labels.
+Fill-Rect -Graphics $g -X 8 -Y 165 -W 190 -H 70 -Color $labelMask
+Fill-Rect -Graphics $g -X 8 -Y 392 -W 200 -H 70 -Color $labelMask
+Fill-Rect -Graphics $g -X 1558 -Y 205 -W 210 -H 75 -Color $labelMask
+Fill-Rect -Graphics $g -X 1558 -Y 455 -W 210 -H 130 -Color $labelMask
+Fill-Rect -Graphics $g -X 465 -Y 345 -W 190 -H 105 -Color $labelMask
+Fill-Rect -Graphics $g -X 230 -Y 735 -W 180 -H 115 -Color $labelMask
+Fill-Rect -Graphics $g -X 370 -Y 735 -W 180 -H 115 -Color $labelMask
+Fill-Rect -Graphics $g -X 545 -Y 735 -W 165 -H 115 -Color $labelMask
+Fill-Rect -Graphics $g -X 725 -Y 735 -W 175 -H 115 -Color $labelMask
+Fill-Rect -Graphics $g -X 905 -Y 735 -W 170 -H 115 -Color $labelMask
+Fill-Rect -Graphics $g -X 1208 -Y 735 -W 180 -H 115 -Color $labelMask
+Fill-Rect -Graphics $g -X 1385 -Y 735 -W 245 -H 115 -Color $labelMask
+Fill-Rect -Graphics $g -X 55 -Y 834 -W 860 -H 53 -Color $labelMask
 
 # Top title banner replacement
 $bannerX = 498

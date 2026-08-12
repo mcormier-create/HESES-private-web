@@ -6271,7 +6271,7 @@ function HvacDashboardApp() {
 
             <div className="bg-cyan-50 border border-cyan-200 rounded-3xl p-6">
               <div className="text-sm text-cyan-700">{t.totalAdiabaticHP}</div>
-              <div className="text-5xl font-bold text-cyan-800 mt-3">{adiabaticEnergyKW}</div>
+              <div className="text-5xl font-bold text-cyan-800 mt-3">{formatNumber(adiabaticEnergyKW, 1)}</div>
               <div className="text-cyan-700 mt-2">kW</div>
             </div>
           </div>
