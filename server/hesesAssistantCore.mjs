@@ -8,6 +8,7 @@ export function createLocalHesesAnswer({ question = '', context = {} }) {
   const humifog = annual.humifog || {}
   const netSavings = freeCooling.netSavings || {}
   const comparisonBasis = freeCooling.comparisonBasis || {}
+  const customOperatingHours = Boolean(context.mode?.isCustomOperatingHours)
   const steamScenario = comparisonBasis.steamScenario || {}
   const humifogScenario = comparisonBasis.humifogScenario || {}
   const pdfReport = context.pdfReport || {}
@@ -62,7 +63,7 @@ export function createLocalHesesAnswer({ question = '', context = {} }) {
     addNumber(language === 'fr' ? 'Economies annuelles nettes' : 'Net annual savings', netSavings.netAnnualEnergySavingsKwh, ' kWh/year')
     addNumber(language === 'fr' ? 'Reduction energie' : 'Energy reduction', netSavings.energyReductionPercent, '%')
 
-    if (normalizedQuestion.includes('bin') || normalizedQuestion.includes('contrib')) {
+    if (!customOperatingHours && (normalizedQuestion.includes('bin') || normalizedQuestion.includes('contrib'))) {
       if (sortedSavingsBins.length) {
         lines.push(language === 'fr'
           ? 'BIN contribuant le plus aux economies affichees:'
@@ -89,8 +90,8 @@ export function createLocalHesesAnswer({ question = '', context = {} }) {
 
     if (normalizedQuestion.includes('client') || normalizedQuestion.includes('rapport') || normalizedQuestion.includes('texte')) {
       lines.push(language === 'fr'
-        ? 'Resume client: selon les resultats affiches par HESA, le scenario Humifog avec Free Cooling reduit la consommation annuelle par rapport au scenario vapeur. Les economies proviennent des valeurs BIN, OA/RA, refroidissement adiabatique et rechauffage deja calcules par HESA. Une validation finale d ingenierie demeure requise.'
-        : 'Client summary: according to the results displayed by HESA, the Humifog with Free Cooling scenario reduces annual consumption compared with the steam scenario. Savings come from the BIN, OA/RA, adiabatic cooling and reheat values already calculated by HESA. Final engineering validation remains required.')
+        ? `Resume client: selon les resultats affiches par HESA, le scenario Humifog avec Free Cooling reduit la consommation annuelle par rapport au scenario vapeur. Les economies proviennent de ${customOperatingHours ? 'l horaire personnalise, ' : 'la distribution BIN, '}OA/RA, du refroidissement adiabatique et du rechauffage deja calcules par HESA. Une validation finale d ingenierie demeure requise.`
+        : `Client summary: according to the results displayed by HESA, the Humifog with Free Cooling scenario reduces annual consumption compared with the steam scenario. Savings come from ${customOperatingHours ? 'the custom operating schedule, ' : 'BIN distribution, '}OA/RA, adiabatic cooling and reheat values already calculated by HESA. Final engineering validation remains required.`)
     }
   } else if (freeCooling.incompleteReason) {
     add(language === 'fr' ? 'Calcul Free Cooling incomplet' : 'Incomplete Free Cooling calculation', freeCooling.incompleteReason)

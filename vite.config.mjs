@@ -6,6 +6,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLocalHesesAnswer } from './server/hesesAssistantCore.mjs';
 import { createHesesReportPdfMiddleware } from './server/hesesReportPdf.mjs';
+import * as psychrometrics from './src/calculations/psychrometrics.js';
+import { calculateBinAnalysis } from './src/calculations/binAnalysis.js';
+import { calculateFreeCoolingHumifogComparison } from './src/services/freeCoolingHumifogService.js';
+import { calculateHvacDashboardMetrics } from './src/services/hvacEngineeringService.js';
 
 const workspaceRoot = fileURLToPath(new URL('.', import.meta.url));
 const publicWeatherDirectory = path.join(workspaceRoot, 'public', 'weather');
@@ -210,11 +214,98 @@ function createHesesAssistantPlugin(env) {
   };
 }
 
+function createHesesCalculationPlugin() {
+  async function handleCalculationRequest(request, response, next) {
+    const requestUrl = new URL(request.url || '/', 'http://heses.local');
+    if (request.method !== 'POST' || !requestUrl.pathname.startsWith('/api/calculate/')) {
+      next();
+      return;
+    }
+
+    try {
+      const payload = await readJson(request);
+      const operation = requestUrl.pathname.slice('/api/calculate/'.length);
+      let result;
+
+      if (operation === 'psychrometrics') {
+        const input = payload.input || payload;
+        result = psychrometrics.psychrometricState(input);
+      } else if (operation === '100oa') {
+        result = calculateHvacDashboardMetrics(payload.input || payload);
+      } else if (operation === 'free-cooling') {
+        result = calculateFreeCoolingHumifogComparison(payload.input || payload);
+      } else if (operation === 'annual') {
+        result = calculateBinAnalysis(payload.input || payload);
+      } else {
+        sendJson(response, 404, { error: 'Unknown HESA calculation operation.' });
+        return;
+      }
+
+      sendJson(response, 200, { ok: true, result });
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Invalid HESA calculation request.',
+      });
+    }
+  }
+
+  return {
+    name: 'heses-calculation-api',
+    configureServer(server) {
+      server.middlewares.use(handleCalculationRequest);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(handleCalculationRequest);
+    },
+  };
+}
+
 function createHesesAccessGatePlugin(env) {
   const accessPassword = env.HESA_ACCESS_PASSWORD || process.env.HESA_ACCESS_PASSWORD;
   const cookieName = 'heses_private_access';
   const sessions = new Map();
   const sessionTtlMs = 7 * 24 * 60 * 60 * 1000;
+  const failedLogins = new Map();
+  const apiRequests = new Map();
+  const reportRequests = new Map();
+  const loginWindowMs = 15 * 60 * 1000;
+  const apiWindowMs = 60 * 1000;
+  const maxFailedLogins = 10;
+  const maxApiRequests = 180;
+  const maxReportRequests = 20;
+
+  function clientIp(request) {
+    return String(request.headers['x-forwarded-for'] || request.socket?.remoteAddress || 'unknown')
+      .split(',')[0]
+      .trim();
+  }
+
+  function isRateLimited(store, key, windowMs, limit) {
+    const now = Date.now();
+    const current = store.get(key);
+    if (!current || now - current.startedAt >= windowMs) {
+      store.set(key, { startedAt: now, count: 1 });
+      return false;
+    }
+    current.count += 1;
+    return current.count > limit;
+  }
+
+  function cleanupRateLimits() {
+    const now = Date.now();
+    for (const store of [failedLogins, apiRequests, reportRequests]) {
+      for (const [key, value] of store.entries()) {
+        if (now - value.startedAt > loginWindowMs) store.delete(key);
+      }
+    }
+  }
+
+  function setSecurityHeaders(response) {
+    response.setHeader('Content-Security-Policy', "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self' data:; object-src 'none'");
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    response.setHeader('X-Frame-Options', 'DENY');
+  }
 
   function cleanupSessions() {
     const now = Date.now();
@@ -326,6 +417,8 @@ function createHesesAccessGatePlugin(env) {
   }
 
   async function handleAccess(request, response, next) {
+    cleanupRateLimits();
+    setSecurityHeaders(response);
     if (!accessPassword) {
       sendLogin(response, {
         language: new URL(request.url || '/', 'http://heses.local').searchParams.get('lang') || 'fr',
@@ -337,9 +430,18 @@ function createHesesAccessGatePlugin(env) {
     const requestUrl = new URL(request.url || '/', 'http://heses.local');
 
     if (requestUrl.pathname === '/heses-login' && request.method === 'POST') {
+      const ip = clientIp(request);
+      let submittedLanguage = requestUrl.searchParams.get('lang') || 'fr';
+      const failedLoginState = failedLogins.get(ip);
+      if (failedLoginState && Date.now() - failedLoginState.startedAt < loginWindowMs && failedLoginState.count >= maxFailedLogins) {
+        console.warn(`[HESA security] login rate limit exceeded for ${ip}`);
+        sendLogin(response, { hasError: true, language: requestUrl.searchParams.get('lang') || 'fr', statusCode: 429 });
+        return;
+      }
       try {
         const form = await readFormBody(request);
         const language = form.get('language') === 'en' ? 'en' : 'fr';
+        submittedLanguage = language;
         const submittedPassword = String(form.get('accessPassword') || '');
         const expected = Buffer.from(accessPassword);
         const received = Buffer.from(submittedPassword);
@@ -357,9 +459,11 @@ function createHesesAccessGatePlugin(env) {
       } catch {
         // Fall through to the login page with an error.
       }
+      isRateLimited(failedLogins, ip, loginWindowMs, maxFailedLogins);
+      console.warn(`[HESA security] failed login attempt for ${ip}`);
       sendLogin(response, {
         hasError: true,
-        language: requestUrl.searchParams.get('lang') || 'fr',
+        language: submittedLanguage,
       });
       return;
     }
@@ -380,6 +484,16 @@ function createHesesAccessGatePlugin(env) {
     }
 
     if (hasAccess(request)) {
+      if (requestUrl.pathname.startsWith('/api/')) {
+        const ip = clientIp(request);
+        const store = requestUrl.pathname.startsWith('/api/heses-report') ? reportRequests : apiRequests;
+        const limit = store === reportRequests ? maxReportRequests : maxApiRequests;
+        if (isRateLimited(store, ip, apiWindowMs, limit)) {
+          console.warn(`[HESA security] API rate limit exceeded for ${ip} on ${requestUrl.pathname}`);
+          sendJson(response, 429, { error: 'Too many requests. Please try again later.' });
+          return;
+        }
+      }
       next();
       return;
     }
@@ -434,7 +548,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
   return {
-    plugins: [createHesesAccessGatePlugin(env), react(), createOttawaWeatherFilePlugin(), createHesesAssistantPlugin(env), createHesesReportPdfPlugin()],
+    plugins: [createHesesAccessGatePlugin(env), react(), createOttawaWeatherFilePlugin(), createHesesAssistantPlugin(env), createHesesCalculationPlugin(), createHesesReportPdfPlugin()],
     server: {
       watch: {
         ignored: [
@@ -451,6 +565,10 @@ export default defineConfig(({ mode }) => {
         '@react-three/fiber',
         '@react-three/drei',
       ],
+    },
+    build: {
+      sourcemap: false,
+      minify: 'esbuild',
     },
   };
 });

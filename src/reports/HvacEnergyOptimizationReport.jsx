@@ -615,6 +615,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
   const tr = (fr, en) => (isFrench ? fr : en)
   const is100OA = Boolean(mode.is100OA)
   const includesFreeCoolingAnalysis = Boolean(mode.includesFreeCoolingAnalysis && !is100OA)
+  const showBinAnalysis = !Boolean(mode.isCustomOperatingHours)
   const selectedOaPercent = system.selectedOaPercent ?? system.oaMinimumPercent ?? system.oaPercent
   const selectedRaPercent = system.selectedRaPercent ?? Math.max(0, 100 - selectedOaPercent)
   const calculatedAverageOaPercent = system.calculatedAverageOaPercent ?? system.oaPercent
@@ -631,7 +632,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
       schematic: '2',
       psychrometric: '3',
       calculations: '4',
-      bins: '5',
+      ...(showBinAnalysis ? { bins: '5' } : {}),
       optimization: '6',
       freeCooling: '7',
       energy: '8',
@@ -645,7 +646,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
       schematic: '2',
       psychrometric: '3',
       calculations: '4',
-      bins: '5',
+      ...(showBinAnalysis ? { bins: '5' } : {}),
       recovery: '6',
       energy: '7',
       economics: '8',
@@ -658,7 +659,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
     [sectionNumbers.schematic, 'HVAC System Schematic'],
     [sectionNumbers.psychrometric, 'Psychrometric Analysis'],
     [sectionNumbers.calculations, 'Psychrometric Calculations'],
-    [sectionNumbers.bins, 'BIN Weather Analysis'],
+    ...(showBinAnalysis ? [[sectionNumbers.bins, 'BIN Weather Analysis']] : []),
     ...(includesFreeCoolingAnalysis
       ? [
         [sectionNumbers.optimization, 'OA / RA Optimization'],
@@ -672,7 +673,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
     ...(includesFreeCoolingAnalysis ? [[sectionNumbers.graphs, 'Graphs']] : []),
     [sectionNumbers.recommendation, 'Engineering Recommendation'],
     ['A', 'Psychrometric Equations'],
-    ['B', 'BIN Weather Data'],
+    ...(showBinAnalysis ? [['B', 'BIN Weather Data']] : []),
     ['C', 'Calculation Assumptions'],
     ['D', 'Engineering Notes'],
   ]
@@ -737,6 +738,9 @@ export default function HvacEnergyOptimizationReport({ data }) {
     [tr('Emplacement du projet', 'Project location'), project.location || '-'],
     [tr('Mode du rapport', 'Report mode'), includesFreeCoolingAnalysis ? tr('Free Cooling', 'Free Cooling') : tr('100% air extérieur', '100% Outdoor Air')],
     [tr('Mode de ventilation sélectionné', 'Ventilation mode selected'), mode.ventilationModeName || '-'],
+    [tr('Mode d’exploitation', 'Operating mode'), mode.isCustomOperatingHours
+      ? tr('Heures d’exploitation personnalisées', 'Custom operating hours')
+      : tr('Heures BIN', 'BIN hours')],
     [tr('Méthode de calcul', 'Calculation method selected'), mode.selectedCalculationMethod || '-'],
     [tr('Source météo', 'Weather data source'), mode.weatherDataSource || tr('Gouvernement du Canada — CWEC_FMCCE / fichier météo horaire EPW', 'Government of Canada — CWEC_FMCCE / EPW hourly weather file')],
     [tr('Organisation', 'Weather source organization'), mode.weatherSourceOrganization || tr('Environnement et Changement climatique Canada', 'Environment and Climate Change Canada')],
@@ -1162,17 +1166,19 @@ export default function HvacEnergyOptimizationReport({ data }) {
         ]} />
       </ReportSection>
 
-      <ReportSection title={reportSectionTitle('bins', 'BIN WEATHER ANALYSIS')} pageBreak className="bin-summary-section">
-        <h3>Weather BIN Summary</h3>
-        <WeatherBinTable bins={data.bins || []} units={data.units} />
-        {includesFreeCoolingAnalysis && (
-          <p className="report-text">
-            The complete BIN-by-BIN free cooling calculation table is provided in Appendix B to keep this section on one page.
-          </p>
-        )}
-      </ReportSection>
+      {showBinAnalysis && (
+        <ReportSection title={reportSectionTitle('bins', 'BIN WEATHER ANALYSIS')} pageBreak className="bin-summary-section">
+          <h3>Weather BIN Summary</h3>
+          <WeatherBinTable bins={data.bins || []} units={data.units} />
+          {includesFreeCoolingAnalysis && (
+            <p className="report-text">
+              The complete BIN-by-BIN free cooling calculation table is provided in Appendix B to keep this section on one page.
+            </p>
+          )}
+        </ReportSection>
+      )}
 
-      {includesFreeCoolingAnalysis && (
+      {includesFreeCoolingAnalysis && showBinAnalysis && (
         <ReportSection title={reportSectionTitle('optimization', 'OA / RA OPTIMIZATION')} pageBreak allowPageBreak>
           <h3>Optimization Matrix</h3>
           <OptimizationTable rows={optimizationRows} optimal={data.optimal} units={data.units} />
@@ -1231,8 +1237,10 @@ export default function HvacEnergyOptimizationReport({ data }) {
             ['Annual reheat thermal energy', reheatApplies ? formatEnergy(humifogReheatThermalKwh) : 'Not required'],
             ['Applied reheat energy by selected method', reheatApplies ? formatEnergy(humifogReheatAppliedKwh) : 'Not required'],
             ['Heat pump COP equivalent', selectedReheatSource === 'heatPump' && heatPumpCop ? `${formatEnergy(humifogReheatEquivalentHeatPumpKwh)} / COP ${formatNumber(heatPumpCop, 1)}` : '-'],
-            ['Maximum BIN reheat input', criticalReheatRow && (criticalReheatRow.reheatLoadKw || 0) > 0 ? formatPower(criticalReheatRow.reheatLoadKw) : 'Not required'],
-            ['Critical BIN', criticalReheatRow && (criticalReheatRow.reheatLoadKw || 0) > 0 ? `${formatTemp(criticalReheatRow.tempC, data.units, data.language)} / ${formatNumber(criticalReheatRow.hours, 0, data.language)} h` : '-'],
+            ...(showBinAnalysis ? [
+              ['Maximum BIN reheat input', criticalReheatRow && (criticalReheatRow.reheatLoadKw || 0) > 0 ? formatPower(criticalReheatRow.reheatLoadKw) : 'Not required'],
+              ['Critical BIN', criticalReheatRow && (criticalReheatRow.reheatLoadKw || 0) > 0 ? `${formatTemp(criticalReheatRow.tempC, data.units, data.language)} / ${formatNumber(criticalReheatRow.hours, 0, data.language)} h` : '-'],
+            ] : []),
           ]} />
         </ReportSection>
       )}
@@ -1422,7 +1430,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
               yLabel={data.units === 'imperial' ? (isFrench ? '°F' : 'deg F') : (isFrench ? '°C' : 'deg C')}
               yTransform={(value) => data.units === 'imperial' ? value * 9 / 5 + 32 : value}
             />
-            <BarGraph title="Graph 3 - Annual Savings by BIN" data={binSavingsRows} color="#22c55e" />
+            {showBinAnalysis && <BarGraph title="Graph 3 - Annual Savings by BIN" data={binSavingsRows} color="#22c55e" />}
             <HeatMap title="Graph 4 - OA / Temperature Heat Map" rows={optimizationRows} units={data.units} />
             <EnergyBreakdownGraph title="Graph 5 - Annual Energy Breakdown" data={annualBreakdown} />
           </div>
@@ -1458,13 +1466,13 @@ export default function HvacEnergyOptimizationReport({ data }) {
               ? [
                 'Final ventilation minimum must be confirmed against applicable code and occupancy',
                 'Installed cost is required for final simple payback',
-                'BIN data should be validated against project-specific weather files',
+                ...(showBinAnalysis ? ['BIN data should be validated against project-specific weather files'] : ['Custom operating hours are used for the annual energy calculation']),
                 'Field mixed air measurements should be used when available',
               ]
               : [
                 'Free Cooling savings are not calculated because the selected system is not a mixed air economizer',
                 'Installed cost is required for final simple payback',
-                'BIN data should be validated against project-specific weather files',
+                ...(showBinAnalysis ? ['BIN data should be validated against project-specific weather files'] : ['Custom operating hours are used for the annual energy calculation']),
                 'Final equipment selection must be coordinated with manufacturer data',
               ]} />
           </div>
@@ -1495,15 +1503,17 @@ export default function HvacEnergyOptimizationReport({ data }) {
         ]} />
       </ReportSection>
 
-      <ReportSection title="APPENDIX B - BIN WEATHER DATA" pageBreak allowPageBreak>
-        <WeatherBinTable bins={data.bins || []} units={data.units} />
-        {includesFreeCoolingAnalysis && (
-          <>
-            <h3>Complete BIN-by-BIN Free Cooling Calculation</h3>
-            <CompleteBinCalculationTable rows={binRows} conventionalRows={conventionalRows} units={data.units} />
-          </>
-        )}
-      </ReportSection>
+      {showBinAnalysis && (
+        <ReportSection title="APPENDIX B - BIN WEATHER DATA" pageBreak allowPageBreak>
+          <WeatherBinTable bins={data.bins || []} units={data.units} />
+          {includesFreeCoolingAnalysis && (
+            <>
+              <h3>Complete BIN-by-BIN Free Cooling Calculation</h3>
+              <CompleteBinCalculationTable rows={binRows} conventionalRows={conventionalRows} units={data.units} />
+            </>
+          )}
+        </ReportSection>
+      )}
 
       <ReportSection title="APPENDIX C - PDF DATA VALIDATION" pageBreak allowPageBreak>
         <p className="report-text">
@@ -1563,6 +1573,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
       </ReportSection>
       <footer className="report-footer">
         <span>HESA - Humidification Energy System Analysis | https://hesahvac.com</span>
+        <span>© 2026 Enersol inc. / Carel Group. All rights reserved. Unauthorized reproduction, distribution, reverse engineering or commercial use is prohibited.</span>
         <span>{project.name || 'Project report'}</span>
       </footer>
     </article>

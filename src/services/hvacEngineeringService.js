@@ -4,7 +4,7 @@ import {
   moistAirEnthalpyBtuLb,
   sensibleHeatingKw,
   wetBulbC,
-} from '../calculations/psychrometrics'
+} from '../calculations/psychrometrics.js'
 
 export function calculateHvacDashboardMetrics({
   outsideAirCFM,

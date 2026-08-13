@@ -6,7 +6,7 @@ import {
   psychrometricState,
   sensibleHeatingKw,
   stateFromDbW,
-} from '../calculations/psychrometrics'
+} from '../calculations/psychrometrics.js'
 
 export const FREE_COOLING_OA_TEST_POINTS = [20, 25, 30, 35, 40, 50, 60]
 

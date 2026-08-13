@@ -10,7 +10,7 @@
     "build": "vite build --config vite.config.mjs",
     "lint": "eslint .",
     "preview": "vite preview --config vite.config.mjs",
-    "start": "node scripts/start-preview.mjs",
+    "start": "node server.mjs",
     "test:free-cooling": "node scripts/free-cooling-regression.mjs",
     "test:100oa": "node scripts/100oa-regression.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.app.json"

@@ -2567,6 +2567,7 @@ function HesesLandingPage({ language, setLanguage, onStartAnalysis }) {
 
         <footer className="mt-8 border-t border-slate-300/80 pt-5 text-xs leading-6 text-slate-500">
           {copy.disclaimer}
+          <div className="mt-2">© 2026 Enersol inc. / Carel Group. HESA - Humidification Energy System Analysis. All rights reserved.</div>
         </footer>
       </div>
     </main>
@@ -3601,6 +3602,7 @@ function HvacDashboardApp() {
     : getScheduleDaysPerWeek(scheduleDaysOption, scheduleCustomDays)
   const dailyOperatingHours = computeScheduleDailyHours(scheduleStartTime, scheduleEndTime, scheduleMode)
   const weeklyOperatingHours = dailyOperatingHours * operatingDaysPerWeek
+  const isCustomOperatingHoursMode = scheduleMode === 'custom'
   const baseScheduleFactor = scheduleMode === '24-7'
     ? 1
     : Number((weeklyOperatingHours / 168).toFixed(4))
@@ -3728,6 +3730,12 @@ function HvacDashboardApp() {
           selectedReheatEnergySource.includes('passive')
         ? (language === 'fr' ? 'Boucle récupération chaleur' : 'Heat Recovery Loop')
         : (language === 'fr' ? 'Électrique' : 'Electric')
+  const electricityEquipmentLabels = [
+    Number(steamEnergyKW) > 0 ? (language === 'fr' ? 'Vapeur électrique' : 'Electric steam') : '',
+    humidifierType === 'HUMIFOG' ? 'Humifog' : '',
+    usesHeatPumpReheat ? (language === 'fr' ? 'thermopompe' : 'heat pump') : '',
+  ].filter(Boolean)
+  const electricityEquipmentLabel = joinLocalizedList(electricityEquipmentLabels, language)
   const freeCoolingRecoveryType = {
     WHEEL: 'enthalpyWheel',
     CROSSFLOW: 'crossflowPlate',
@@ -3838,7 +3846,7 @@ function HvacDashboardApp() {
   const weatherChartData = calculationMethod === 'hourly'
     ? hourlyWeatherHistogramData
     : displayedBinData
-  const showOriginalBinHoursInChart = calculationMethod === 'bin' && scheduleMode === 'custom'
+  const showOriginalBinHoursInChart = calculationMethod === 'bin' && !isCustomOperatingHoursMode
   const isWeatherChartEmpty = calculationMethod === 'hourly'
     ? (!hourlyWeatherRecords.length || !hasFilteredHourlyRecords || hourlyWeatherHistogramData.length === 0)
     : weatherChartData.length === 0
@@ -3932,7 +3940,7 @@ function HvacDashboardApp() {
   const binEnergyReductionPercent = binAnnualSteamEnergyKwh > 0
     ? Math.round((1 - binAnnualAdiabaticEnergyKwh / binAnnualSteamEnergyKwh) * 100)
     : 0
-  const usesBinAnnualTotals = calculationMethod === 'bin' && !isFreeCoolingMode
+  const usesBinAnnualTotals = calculationMethod === 'bin' && !isFreeCoolingMode && !isCustomOperatingHoursMode
   const selectedReheatEnergySourceNormalized = String(selectedReheatSystem?.energie || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -4059,6 +4067,7 @@ function HvacDashboardApp() {
   const freeCoolingChartReferenceRow = freeCoolingHumifogAnalysis.conventionalRows?.[freeCoolingChartRowIndex]
   const hasFreeCoolingChartComparison = Boolean(
     showFreeCoolingTables &&
+    !isCustomOperatingHoursMode &&
     freeCoolingCalculationComplete &&
     freeCoolingChartHumifogRow &&
     freeCoolingChartReferenceRow
@@ -4343,14 +4352,19 @@ function HvacDashboardApp() {
       showFreeCoolingTables,
       includesFreeCoolingAnalysis: showFreeCoolingTables && !is100OA,
       ventilationModeName: ventilationMode.nom,
-      selectedCalculationMethod: calculationMethod === 'hourly' ? t.hourlyWeatherMethod : t.binHoursMethod,
+      selectedCalculationMethod: isCustomOperatingHoursMode
+        ? (language === 'fr' ? 'Heures d’exploitation personnalisées' : 'Custom operating hours')
+        : calculationMethod === 'hourly' ? t.hourlyWeatherMethod : t.binHoursMethod,
+      isCustomOperatingHours: isCustomOperatingHoursMode,
       hourlyWeatherSourceType,
       hourlyWeatherFileName,
       hourlyWeatherFileLocation,
       hourlyWeatherRecordsLoaded,
       hourlyWeatherOperatingHoursUsed,
       hourlyWeatherParseError,
-      weatherDataSource: calculationMethod === 'hourly'
+      weatherDataSource: isCustomOperatingHoursMode
+        ? (language === 'fr' ? 'Horaire personnalisé' : 'Custom operating schedule')
+        : calculationMethod === 'hourly'
         ? (hourlyWeatherSourceType === 'custom'
           ? (language === 'fr' ? 'Fichier météo téléchargé personnalisé' : 'Custom uploaded weather file')
           : `${t.builtInWeatherFile} — ${selectedCity.nom}`)
@@ -4952,8 +4966,8 @@ function HvacDashboardApp() {
       message: reportData.message,
       annualBreakdownRows: reportData.annualBreakdownRows,
       alignedComparisonRows: freeCoolingAlignedComparisonRows,
-      binValidationRows: reportData.binValidationRows,
-      optimizationRows: reportData.optimizationRows,
+      binValidationRows: isCustomOperatingHoursMode ? [] : reportData.binValidationRows,
+      optimizationRows: isCustomOperatingHoursMode ? [] : reportData.optimizationRows,
     },
     displayedValues: {
       humidificationLoad: humidificationLoadDisplay,
@@ -6536,6 +6550,8 @@ function HvacDashboardApp() {
             </div>
           </div>
 
+          {!isCustomOperatingHoursMode && (
+          <>
           {/* BIN Hours */}
           <div className="w-full bg-white rounded-3xl shadow-xl p-6 border border-slate-200">
             <div className="flex justify-between items-center mb-6">
@@ -6952,7 +6968,11 @@ function HvacDashboardApp() {
               </div>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-              {t.scheduleNote}
+              {isCustomOperatingHoursMode
+                ? (language === 'fr'
+                  ? 'Les heures d’exploitation personnalisées sont la seule référence horaire utilisée pour les résultats annuels. La météo de la ville reste utilisée pour les conditions extérieures.'
+                  : 'Custom operating hours are the only schedule reference used for annual results. City weather remains available for outdoor conditions.')
+                : t.scheduleNote}
             </div>
 
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -7167,6 +7187,8 @@ function HvacDashboardApp() {
             </div>
 
           </div>
+          </>
+          )}
 
           {showFreeCoolingTables && (
             <section id="free-cooling" className="mt-8 w-full overflow-hidden rounded-3xl bg-white p-6 shadow-xl">
@@ -7422,7 +7444,7 @@ function HvacDashboardApp() {
                 </table>
               </div>
 
-              <div className="overflow-x-auto mb-8">
+              <div className={`overflow-x-auto mb-8 ${isCustomOperatingHoursMode ? 'hidden' : ''}`}>
                 <h3 className="text-xl font-bold text-slate-800 mb-3">
                   {language === 'fr' ? '1. Validation annuelle BIN par BIN' : '1. Annual BIN-by-BIN validation'}
                 </h3>
@@ -8004,6 +8026,7 @@ function HvacDashboardApp() {
                 <div className="text-4xl font-bold mt-2">{cappedRecoveryEfficiency}%</div>
               </div>
             </div>
+            <div className="mt-8 border-t border-white/20 pt-4 text-xs text-white/70">© 2026 Enersol inc. / Carel Group. HESA - Humidification Energy System Analysis. All rights reserved.</div>
           </div>
 
       </div>

@@ -5,7 +5,7 @@ import {
   applySteamHumidification,
   mixAirStates,
   psychrometricState,
-} from './psychrometrics'
+} from './psychrometrics.js'
 
 export const cityBinData = {
   montreal: {
