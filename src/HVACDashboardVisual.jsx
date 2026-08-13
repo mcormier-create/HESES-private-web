@@ -2182,6 +2182,14 @@ function clampValue(value, min, max) {
   return Math.min(Math.max(value, min), max)
 }
 
+function joinLocalizedList(items, language) {
+  const values = items.filter(Boolean)
+  if (values.length <= 1) return values[0] || ''
+  const conjunction = language === 'fr' ? ' et ' : ' and '
+  if (values.length === 2) return values.join(conjunction)
+  return `${values.slice(0, -1).join(', ')}${conjunction}${values.at(-1)}`
+}
+
 function normalizeLabel(value) {
   return String(value || '')
     .normalize('NFD')
@@ -6291,7 +6299,7 @@ function HvacDashboardApp() {
           </div>
 
           {/* Comparison Table */}
-          <div className="w-full bg-white rounded-3xl shadow-xl p-6 overflow-x-auto">
+          <div className="hidden w-full bg-white rounded-3xl shadow-xl p-6 overflow-x-auto">
             <h2 className="text-2xl font-bold text-slate-800 mb-6">{t.energyComparison}</h2>
             {showFreeCoolingTables ? (
               <>
@@ -6550,8 +6558,6 @@ function HvacDashboardApp() {
             </div>
           </div>
 
-          {!isCustomOperatingHoursMode && (
-          <>
           {/* BIN Hours */}
           <div className="w-full bg-white rounded-3xl shadow-xl p-6 border border-slate-200">
             <div className="flex justify-between items-center mb-6">
@@ -7187,8 +7193,6 @@ function HvacDashboardApp() {
             </div>
 
           </div>
-          </>
-          )}
 
           {showFreeCoolingTables && (
             <section id="free-cooling" className="mt-8 w-full overflow-hidden rounded-3xl bg-white p-6 shadow-xl">
@@ -7239,6 +7243,11 @@ function HvacDashboardApp() {
                 <h3 className="text-xl font-bold text-slate-800 mb-3">
                   {language === 'fr' ? 'Bilan energetique annuel' : 'Annual energy balance'}
                 </h3>
+                <p className="mb-3 text-sm font-semibold text-cyan-800">
+                  {isCustomOperatingHoursMode
+                    ? (language === 'fr' ? 'Base annuelle : Heures personnalisées' : 'Annual basis: Custom Operating Hours')
+                    : (language === 'fr' ? 'Base annuelle : Heures BIN' : 'Annual basis: BIN Hours')}
+                </p>
                 <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
                   <table className="w-full text-sm">
                     <thead>
