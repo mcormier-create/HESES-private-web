@@ -13,6 +13,7 @@ import { createHesesReportPdfMiddleware } from './server/hesesReportPdf.mjs'
 const root = path.dirname(fileURLToPath(import.meta.url))
 const distRoot = path.join(root, 'dist')
 const port = Number(process.env.PORT || 4173)
+const isProduction = process.env.NODE_ENV === 'production'
 const accessPassword = process.env.HESA_ACCESS_PASSWORD || ''
 const cookieName = 'heses_private_access'
 const sessions = new Map()
