@@ -13,6 +13,7 @@
     "start": "node server.mjs",
     "test:free-cooling": "node scripts/free-cooling-regression.mjs",
     "test:100oa": "node scripts/100oa-regression.mjs",
+    "test:multi-system-pdf": "node scripts/multi-system-pdf-regression.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.app.json"
   },
   "dependencies": {

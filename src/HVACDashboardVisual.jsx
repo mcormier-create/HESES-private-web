@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import HVACSystemImage from './components/HVACSystemImage'
 import PsychrometricChart from './components/PsychrometricChart'
 import HvacEnergyOptimizationReport from './reports/HvacEnergyOptimizationReport'
+import { BASELINE_TECHNOLOGIES, selectedHumifogTechnology } from './reports/projectEnergySummary'
 import { calculateFreeCoolingHumifogComparison } from './services/freeCoolingHumifogService'
 import { calculateHvacDashboardMetrics } from './services/hvacEngineeringService'
 import { dryBulbFromEnthalpyHumidityRatio, humidityRatioFromRH, mixAirStates, moistAirEnthalpyBtuLb, psychrometricState, sensibleHeatingKw, stateFromDbW } from './calculations/psychrometrics'
@@ -285,6 +286,7 @@ const HESES_ASSISTANT_HEALTH_ENDPOINT = '/api/heses-assistant/health'
 const FREE_COOLING_ROUTE = '/'
 const HESES_PROJECT_PROFILE_STORAGE_KEY = 'heses-project-profile'
 const HESES_PROJECT_SETTINGS_STORAGE_KEY = 'heses-project-settings'
+const HESES_MULTI_SYSTEM_STORAGE_KEY = 'heses-multi-system-project'
 const HESES_PRINT_REPORT_STORAGE_KEY = 'heses-print-report-html'
 
 function returnToHesesApp() {
@@ -847,7 +849,278 @@ export default function HVACDashboardVisual() {
     return <HesesPrintableReportPage />
   }
 
-  return <HvacDashboardApp />
+  return <HesaMultiSystemApp />
+}
+
+function HesaMultiSystemApp() {
+  const initialSettings = getInitialProjectSettings()
+  const initialLanguage = initialSettings.language || 'fr'
+  const [systemControlsLanguage, setSystemControlsLanguage] = useState(initialLanguage)
+  const [systems, setSystems] = useState(() => loadMultiSystemState(initialSettings, initialLanguage))
+  const [activeSystemId, setActiveSystemId] = useState(() => systems[0]?.id || 'system-1')
+  const [showBuildingSummary, setShowBuildingSummary] = useState(false)
+  const [analysisOpen, setAnalysisOpen] = useState(false)
+  const [isRenamingSystem, setIsRenamingSystem] = useState(false)
+  const [renameDraft, setRenameDraft] = useState('')
+
+  const activeSystem = systems.find((system) => system.id === activeSystemId) || systems[0]
+  const systemControlLabels = {
+    addSystem: systemControlsLanguage === 'en' ? '+ Add System' : '+ Ajouter un système',
+    rename: systemControlsLanguage === 'en' ? 'Rename' : 'Renommer',
+    duplicate: systemControlsLanguage === 'en' ? 'Duplicate' : 'Dupliquer',
+    delete: systemControlsLanguage === 'en' ? 'Delete' : 'Supprimer',
+    buildingSummary: systemControlsLanguage === 'en' ? 'Building Summary' : 'Bilan du bâtiment',
+    defaultSystemName: (index) => (systemControlsLanguage === 'en' ? `AHU-${index}` : `UTA-${index}`),
+    renamePrompt: systemControlsLanguage === 'en' ? 'AHU name' : 'Nom de l’UTA',
+  }
+
+  useEffect(() => {
+    if (!activeSystem) return
+    window.localStorage.setItem(HESES_MULTI_SYSTEM_STORAGE_KEY, JSON.stringify(systems))
+  }, [systems, activeSystem])
+
+  const updateActiveSystem = (settings) => {
+    setSystems((current) => {
+      let changed = false
+      const next = current.map((system) => {
+      if (system.id !== activeSystem.id) return system
+      if (JSON.stringify(system.settings) === JSON.stringify(settings)) return system
+      changed = true
+      return { ...system, settings }
+      })
+      return changed ? next : current
+    })
+  }
+
+  const addSystem = () => {
+    if (systems.length >= 6) return
+    const id = `system-${Date.now()}`
+    const next = {
+      id,
+      name: systemControlLabels.defaultSystemName(systems.length + 1),
+      settings: getInitialProjectSettings(),
+    }
+    setSystems((current) => [...current, next])
+    setActiveSystemId(id)
+    setShowBuildingSummary(false)
+  }
+
+  const duplicateSystem = () => {
+    if (systems.length >= 6 || !activeSystem) return
+    const id = `system-${Date.now()}`
+    const next = {
+      id,
+      name: systemControlsLanguage === 'en' ? `${activeSystem.name} copy` : `${activeSystem.name} copie`,
+      settings: activeSystem.settings,
+    }
+    setSystems((current) => [...current, next])
+    setActiveSystemId(id)
+    setShowBuildingSummary(false)
+  }
+
+  const deleteSystem = () => {
+    if (systems.length <= 1 || !activeSystem) return
+    const remaining = systems.filter((system) => system.id !== activeSystem.id)
+    setSystems(remaining)
+    setActiveSystemId(remaining[0].id)
+    setShowBuildingSummary(false)
+  }
+
+  const startRenameSystem = () => {
+    if (!activeSystem) return
+    setRenameDraft(activeSystem.name)
+    setIsRenamingSystem(true)
+  }
+
+  const commitRenameSystem = () => {
+    if (!activeSystem) return
+    const nextName = renameDraft.trim()
+    if (!nextName) {
+      setIsRenamingSystem(false)
+      return
+    }
+    setSystems((current) => current.map((system) => system.id === activeSystem.id ? { ...system, name: nextName } : system))
+    setIsRenamingSystem(false)
+  }
+
+  const cancelRenameSystem = () => {
+    setIsRenamingSystem(false)
+    setRenameDraft(activeSystem?.name || '')
+  }
+
+  if (showBuildingSummary) {
+    return (
+      <BuildingSummary
+        systems={systems}
+        language={systemControlsLanguage}
+        onSelectSystem={(id) => { setActiveSystemId(id); setShowBuildingSummary(false) }}
+      />
+    )
+  }
+
+  if (!activeSystem) return null
+
+  if (!analysisOpen) {
+    return (
+      <HvacDashboardApp
+        key={activeSystem.id}
+        showLandingPage
+        onStartAnalysis={() => setAnalysisOpen(true)}
+        onLanguageChange={setSystemControlsLanguage}
+        systemSettings={activeSystem.settings}
+        onSettingsChange={updateActiveSystem}
+        onAnnualResults={(results) => {
+          setSystems((current) => {
+            const next = current.map((system) => system.id === activeSystem.id && JSON.stringify(system.results) !== JSON.stringify(results) ? { ...system, results } : system)
+            return next.some((system, index) => system !== current[index]) ? next : current
+          })
+        }}
+        onReportSnapshot={(snapshot) => {
+          setSystems((current) => current.map((system) => (
+            system.id === activeSystem.id && JSON.stringify(system.reportSnapshot) !== JSON.stringify(snapshot)
+              ? { ...system, reportSnapshot: snapshot }
+              : system
+          )))
+        }}
+        projectSystems={systems}
+        activeSystemName={activeSystem.name}
+        activeSystemId={activeSystem.id}
+      />
+    )
+  }
+
+  return (
+    <>
+      <nav className="sticky top-0 z-50 flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white/95 px-6 py-3 shadow-sm backdrop-blur">
+        {systems.map((system) => (
+          <button
+            key={system.id}
+            type="button"
+            onClick={() => setActiveSystemId(system.id)}
+            className={`rounded-xl px-4 py-2 text-sm font-bold ${system.id === activeSystem.id ? 'bg-cyan-600 text-white' : 'bg-slate-100 text-slate-700'}`}
+          >
+            {system.name}
+          </button>
+        ))}
+        <button type="button" onClick={addSystem} disabled={systems.length >= 6} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">{systemControlLabels.addSystem}</button>
+        {isRenamingSystem ? (
+          <>
+            <input
+              value={renameDraft}
+              onChange={(event) => setRenameDraft(event.target.value)}
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm focus:border-cyan-500 focus:outline-none"
+              aria-label={systemControlLabels.renamePrompt}
+              autoFocus
+            />
+            <button type="button" onClick={commitRenameSystem} className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-bold text-white">OK</button>
+            <button type="button" onClick={cancelRenameSystem} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">{systemControlsLanguage === 'en' ? 'Cancel' : 'Annuler'}</button>
+          </>
+        ) : (
+          <button type="button" onClick={startRenameSystem} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">{systemControlLabels.rename}</button>
+        )}
+        <button type="button" onClick={duplicateSystem} disabled={systems.length >= 6} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">{systemControlLabels.duplicate}</button>
+        <button type="button" onClick={deleteSystem} disabled={systems.length <= 1} className="rounded-xl border border-red-200 px-4 py-2 text-sm font-bold text-red-700 disabled:opacity-40">{systemControlLabels.delete}</button>
+        <button type="button" onClick={() => setShowBuildingSummary(true)} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white">{systemControlLabels.buildingSummary}</button>
+      </nav>
+      <HvacDashboardApp
+        key={activeSystem.id}
+        showLandingPage={false}
+        onStartAnalysis={() => setAnalysisOpen(true)}
+        onLanguageChange={setSystemControlsLanguage}
+        systemSettings={activeSystem.settings}
+        onSettingsChange={updateActiveSystem}
+        onAnnualResults={(results) => {
+          setSystems((current) => {
+            const next = current.map((system) => system.id === activeSystem.id && JSON.stringify(system.results) !== JSON.stringify(results) ? { ...system, results } : system)
+            return next.some((system, index) => system !== current[index]) ? next : current
+          })
+        }}
+        onReportSnapshot={(snapshot) => {
+          setSystems((current) => current.map((system) => (
+            system.id === activeSystem.id && JSON.stringify(system.reportSnapshot) !== JSON.stringify(snapshot)
+              ? { ...system, reportSnapshot: snapshot }
+              : system
+          )))
+        }}
+        projectSystems={systems}
+        activeSystemName={activeSystem.name}
+        activeSystemId={activeSystem.id}
+      />
+    </>
+  )
+}
+
+function loadMultiSystemState(initialSettings, language = 'fr') {
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(HESES_MULTI_SYSTEM_STORAGE_KEY) || 'null')
+      if (Array.isArray(saved) && saved.length > 0) return saved.slice(0, 6)
+    } catch {
+      // Fall back to the legacy single-system settings.
+    }
+  }
+  return [{ id: 'system-1', name: language === 'en' ? 'AHU-1' : 'UTA-1', settings: initialSettings }]
+}
+
+function BuildingSummary({ systems, onSelectSystem, language = 'fr' }) {
+  const technologyKeys = [...BASELINE_TECHNOLOGIES, 'humifogSelected']
+  const technologyLabels = {
+    electricSteam: language === 'en' ? 'Electric steam' : 'Vapeur électrique',
+    naturalGasSteam: language === 'en' ? 'Natural gas steam' : 'Vapeur gaz naturel',
+    atmosphericGas: language === 'en' ? 'Atmospheric gas' : 'Gaz atmosphérique',
+    humifogSelected: language === 'en' ? 'Humifog - Selected Solution' : 'Humifog - solution sélectionnée',
+  }
+  const humifogLabels = {
+    humifogElectric: language === 'en' ? 'Humifog + Electric Reheat' : 'Humifog + réchauffage électrique',
+    humifogHeatPump: language === 'en' ? 'Humifog + Air/Water Heat Pump' : 'Humifog + thermopompe Air/Eau',
+    humifogFreeCooling: 'Humifog + Free Cooling',
+  }
+  const resultForTechnology = (system, key) => {
+    const results = system.results || {}
+    return key === 'humifogSelected'
+      ? results[selectedHumifogTechnology(system.reportSnapshot || system)]
+      : results[key]
+  }
+  const buildingTotals = technologyKeys.reduce((totals, key) => {
+    totals[key] = systems.reduce((sum, system) => sum + Number(resultForTechnology(system, key)?.annualEnergyKWh || 0), 0)
+    return totals
+  }, {})
+
+  return (
+    <main className="min-h-screen bg-slate-100 p-6 text-slate-900">
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-3xl font-black">{language === 'en' ? 'Building Summary' : 'Bilan du bâtiment'}</h1>
+          <button type="button" onClick={() => onSelectSystem(systems[0].id)} className="rounded-xl bg-slate-900 px-4 py-2 font-bold text-white">{language === 'en' ? 'Back to AHU' : 'Retour aux UTA'}</button>
+        </div>
+        <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="text-sm font-bold text-slate-500">{language === 'en' ? 'HVAC systems' : 'Systèmes HVAC'}</div>
+          <div className="mt-2 text-4xl font-black">{systems.length} / 6</div>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          {systems.map((system) => (
+            <button key={system.id} type="button" onClick={() => onSelectSystem(system.id)} className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm hover:border-cyan-400">
+              <div className="text-xl font-black">{system.name}</div>
+              <div className="mt-2 text-sm text-slate-600">{system.settings?.scheduleMode === '24-7' ? (language === 'en' ? 'BIN / 24-7 hours' : 'Heures BIN / 24-7') : (language === 'en' ? 'Custom hours' : 'Heures personnalisées')}</div>
+              <div className="text-sm text-slate-600">{system.settings?.outsideAirCFM || 0} CFM</div>
+            </button>
+          ))}
+        </div>
+        <section className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-xl font-black">{language === 'en' ? 'Building energy comparison' : 'Comparaison énergétique du bâtiment'}</h2>
+          <table className="w-full min-w-[720px] text-sm">
+            <thead><tr className="border-b border-slate-200 text-left"><th className="p-3">{language === 'en' ? 'System' : 'Système'}</th><th className="p-3">{language === 'en' ? 'Selected Humifog' : 'Humifog sélectionné'}</th>{technologyKeys.map((key) => <th key={key} className="p-3 text-right">{technologyLabels[key]}</th>)}</tr></thead>
+            <tbody>
+              {systems.map((system) => (
+                <tr key={system.id} className="border-b border-slate-100"><td className="p-3 font-bold">{system.name}</td><td className="p-3">{humifogLabels[selectedHumifogTechnology(system.reportSnapshot || system)]}</td>{technologyKeys.map((key) => { const result = resultForTechnology(system, key); return <td key={key} className="p-3 text-right">{result ? `${Math.round(result.annualEnergyKWh).toLocaleString()} kWh` : (language === 'en' ? 'Pending' : 'En attente')}</td> })}</tr>
+              ))}
+              <tr className="bg-slate-50 font-black"><td className="p-3">{language === 'en' ? 'TOTAL BUILDING' : 'TOTAL BÂTIMENT'}</td><td className="p-3">-</td>{technologyKeys.map((key) => <td key={key} className="p-3 text-right">{buildingTotals[key].toLocaleString()} kWh</td>)}</tr>
+            </tbody>
+          </table>
+        </section>
+      </div>
+    </main>
+  )
 }
 
 function getInitialProjectProfile() {
@@ -2582,10 +2855,10 @@ function HesesLandingPage({ language, setLanguage, onStartAnalysis }) {
   )
 }
 
-function HvacDashboardApp() {
+function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartAnalysis: controlledStartAnalysis, onLanguageChange, systemSettings, onSettingsChange, onAnnualResults, onReportSnapshot, projectSystems, activeSystemName, activeSystemId }) {
   const reportRef = useRef(null)
   const hourlyWeatherFileInputRef = useRef(null)
-  const initialProjectSettings = getInitialProjectSettings()
+  const initialProjectSettings = systemSettings || getInitialProjectSettings()
   const [language, setLanguage] = useState(initialProjectSettings.language || 'fr')
   const [units, setUnits] = useState(initialProjectSettings.units || 'metric')
   const [assistantQuestion, setAssistantQuestion] = useState('')
@@ -2596,7 +2869,14 @@ function HvacDashboardApp() {
   const [reportStatus, setReportStatus] = useState('')
   const [projectProfile, setProjectProfile] = useState(getInitialProjectProfile)
   const [projectSaveStatus, setProjectSaveStatus] = useState('')
-  const [showLandingPage, setShowLandingPage] = useState(true)
+  const [internalShowLandingPage, setInternalShowLandingPage] = useState(true)
+  const showLandingPage = controlledShowLandingPage ?? internalShowLandingPage
+  const setShowLandingPage = controlledStartAnalysis || setInternalShowLandingPage
+  useEffect(() => {
+    if (typeof onLanguageChange === 'function') {
+      onLanguageChange(language)
+    }
+  }, [language, onLanguageChange])
   const [assistantHealth, setAssistantHealth] = useState({
     checked: false,
     online: false,
@@ -3027,6 +3307,11 @@ function HvacDashboardApp() {
   }
   const [economizerTargetTemp, setEconomizerTargetTemp] = useState(() => finiteSetting(initialProjectSettings, 'economizerTargetTemp', 18))
   const [minimumOutsideAirPercent, setMinimumOutsideAirPercent] = useState(() => finiteSetting(initialProjectSettings, 'minimumOutsideAirPercent', 20))
+  const [annualComparisonReference, setAnnualComparisonReference] = useState(() => (
+    BASELINE_TECHNOLOGIES.includes(initialProjectSettings.annualComparisonReference)
+      ? initialProjectSettings.annualComparisonReference
+      : 'electricSteam'
+  ))
   const [scheduleMode, setScheduleMode] = useState(() => {
     const saved = initialProjectSettings.scheduleMode
     return saved === '24-7' ? '24-7' : 'custom'
@@ -3110,6 +3395,7 @@ function HvacDashboardApp() {
     ventilationModeType: ventilationMode.type,
     economizerTargetTemp,
     minimumOutsideAirPercent,
+    annualComparisonReference,
     scheduleMode,
     calculationMethod,
     hourlyWeatherFileName,
@@ -3119,7 +3405,7 @@ function HvacDashboardApp() {
     scheduleCustomDays,
     useMeasuredMixedAirTemperature,
     measuredMixedAirTemperature,
-    savedAt: new Date().toISOString(),
+    savedAt: initialProjectSettings.savedAt || '',
   })
 
   const persistProjectLocally = () => {
@@ -3127,7 +3413,12 @@ function HvacDashboardApp() {
 
     try {
       window.localStorage.setItem(HESES_PROJECT_PROFILE_STORAGE_KEY, JSON.stringify(projectProfile))
-      window.localStorage.setItem(HESES_PROJECT_SETTINGS_STORAGE_KEY, JSON.stringify(buildProjectSettingsSnapshot()))
+      const snapshot = buildProjectSettingsSnapshot()
+      if (onSettingsChange) {
+        onSettingsChange(snapshot)
+      } else {
+        window.localStorage.setItem(HESES_PROJECT_SETTINGS_STORAGE_KEY, JSON.stringify(snapshot))
+      }
     } catch {
       // Local storage can be unavailable in restricted browser modes.
     }
@@ -3136,6 +3427,7 @@ function HvacDashboardApp() {
   useEffect(() => {
     persistProjectLocally()
   }, [
+    onSettingsChange,
     language,
     units,
     projectProfile,
@@ -3162,6 +3454,7 @@ function HvacDashboardApp() {
     ventilationMode,
     economizerTargetTemp,
     minimumOutsideAirPercent,
+    annualComparisonReference,
     scheduleMode,
     calculationMethod,
     hourlyWeatherFileName,
@@ -4524,6 +4817,7 @@ function HvacDashboardApp() {
     economics: {
       electricityRate,
       naturalGasRate,
+      annualComparisonReference,
       steamBoilerEfficiency,
       atmosphericGasHumidifierEfficiency,
       installedCosts: installedCostInputs,
@@ -4653,84 +4947,260 @@ function HvacDashboardApp() {
   const freeCoolingAtmosphericGasAnnualCost =
     freeCoolingCommonElectricKwh * electricityRate +
     (freeCoolingAtmosphericGasHumidificationKwh / 10.35) * naturalGasRate
+  const annualHoursBasis = isCustomOperatingHoursMode
+    ? (language === 'fr' ? 'Heures personnalisées' : 'Custom Operating Hours')
+    : calculationMethod === 'bin'
+      ? (language === 'fr' ? 'Heures BIN' : 'BIN Hours')
+      : (language === 'fr' ? 'Météo horaire' : 'Hourly Weather')
+  const annualTechnologyResults = {
+    electricSteam: {
+      annualEnergyKWh: freeCoolingSteamAnnual.totalEnergyKwh || energySummary.steam.annualEnergyKwh || 0,
+      annualOperatingCost: freeCoolingSteamAnnual.annualCost || energySummary.steam.annualCost || 0,
+      heatingKWh: freeCoolingSteamAnnual.heatingEnergyKwh || 0,
+      humidificationKWh: freeCoolingSteamAnnual.humidificationEnergyKwh || energySummary.steam.annualEnergyKwh || 0,
+      reheatKWh: freeCoolingSteamAnnual.reheatEnergyKwh || 0,
+      pumpKWh: 0,
+      hoursBasis: annualHoursBasis,
+    },
+    naturalGasSteam: {
+      annualEnergyKWh: freeCoolingCommonElectricKwh + freeCoolingNaturalGasHumidificationKwh || energySummary.naturalGasSteam.annualEnergyKwh || 0,
+      annualOperatingCost: freeCoolingNaturalGasAnnualCost || energySummary.naturalGasSteam.annualCost || 0,
+      heatingKWh: freeCoolingSteamAnnual.heatingEnergyKwh || 0,
+      humidificationKWh: freeCoolingNaturalGasHumidificationKwh,
+      reheatKWh: freeCoolingSteamAnnual.reheatEnergyKwh || 0,
+      pumpKWh: 0,
+      hoursBasis: annualHoursBasis,
+    },
+    atmosphericGas: {
+      annualEnergyKWh: freeCoolingCommonElectricKwh + freeCoolingAtmosphericGasHumidificationKwh || energySummary.atmosphericGasHumidifier.annualEnergyKwh || 0,
+      annualOperatingCost: freeCoolingAtmosphericGasAnnualCost || energySummary.atmosphericGasHumidifier.annualCost || 0,
+      heatingKWh: freeCoolingSteamAnnual.heatingEnergyKwh || 0,
+      humidificationKWh: freeCoolingAtmosphericGasHumidificationKwh,
+      reheatKWh: freeCoolingSteamAnnual.reheatEnergyKwh || 0,
+      pumpKWh: 0,
+      hoursBasis: annualHoursBasis,
+    },
+    humifogElectric: {
+      annualEnergyKWh: freeCoolingHumifogAnnual.totalEnergyKwh || energySummary.humifog.annualEnergyKwh || 0,
+      annualOperatingCost: freeCoolingHumifogAnnual.annualCost || energySummary.humifog.annualCost || 0,
+      heatingKWh: freeCoolingHumifogAnnual.heatingEnergyKwh || 0,
+      humidificationKWh: freeCoolingHumifogAnnual.humidificationEnergyKwh || energySummary.humifog.annualPumpEnergyKwh || 0,
+      reheatKWh: freeCoolingHumifogAnnual.reheatEnergyKwh || energySummary.humifog.annualReheatEnergyKwh || 0,
+      pumpKWh: freeCoolingHumifogAnnual.humidificationEnergyKwh || energySummary.humifog.annualPumpEnergyKwh || 0,
+      hoursBasis: annualHoursBasis,
+    },
+    humifogHeatPump: {
+      annualEnergyKWh: annualHumifogHeatPumpTotalEnergyKwhResolved,
+      annualOperatingCost: annualHumifogHeatPumpCostResolved,
+      heatingKWh: baseHvacHeatingThermalKW * annualHumidificationHoursRaw,
+      humidificationKWh: annualHumifogPumpEnergyKwhResolved,
+      reheatKWh: annualHumifogHeatPumpPreheatEnergyKwhResolved,
+      pumpKWh: annualHumifogPumpEnergyKwhResolved,
+      hoursBasis: annualHoursBasis,
+    },
+    humifogFreeCooling: {
+      annualEnergyKWh: freeCoolingHumifogAnnual.totalEnergyKwh || 0,
+      annualOperatingCost: freeCoolingHumifogAnnual.annualCost || 0,
+      heatingKWh: freeCoolingHumifogAnnual.heatingEnergyKwh || 0,
+      humidificationKWh: freeCoolingHumifogAnnual.humidificationEnergyKwh || 0,
+      reheatKWh: freeCoolingHumifogAnnual.reheatEnergyKwh || 0,
+      pumpKWh: freeCoolingHumifogAnnual.humidificationEnergyKwh || 0,
+      freeCoolingObtainedKWh: freeCoolingHumifogAnnual.freeCoolingObtainedKwh,
+      hoursBasis: annualHoursBasis,
+    },
+  }
+  const annualTechnologyResultsSerialized = JSON.stringify(annualTechnologyResults)
+  useEffect(() => {
+    onAnnualResults?.(annualTechnologyResults)
+  }, [annualTechnologyResultsSerialized])
+  reportData.annualTechnologyResults = annualTechnologyResults
+  Object.assign(reportData.energySummary.steam, {
+    annualEnergyKwh: annualTechnologyResults.electricSteam.annualEnergyKWh,
+    annualCost: annualTechnologyResults.electricSteam.annualOperatingCost,
+  })
+  Object.assign(reportData.energySummary.naturalGasSteam, {
+    annualEnergyKwh: annualTechnologyResults.naturalGasSteam.annualEnergyKWh,
+    annualCost: annualTechnologyResults.naturalGasSteam.annualOperatingCost,
+  })
+  Object.assign(reportData.energySummary.atmosphericGasHumidifier, {
+    annualEnergyKwh: annualTechnologyResults.atmosphericGas.annualEnergyKWh,
+    annualCost: annualTechnologyResults.atmosphericGas.annualOperatingCost,
+  })
+  Object.assign(reportData.energySummary.humifog, {
+    annualEnergyKwh: annualTechnologyResults.humifogElectric.annualEnergyKWh,
+    annualCost: annualTechnologyResults.humifogElectric.annualOperatingCost,
+  })
+  const reportSnapshot = {
+    id: activeSystemId,
+    name: activeSystemName || reportData.system.type,
+    mode: reportData.mode,
+    system: reportData.system,
+    project: reportData.project,
+    metrics: reportData.metrics,
+    economics: reportData.economics,
+    annualComparison: reportData.annualComparison,
+    annualTechnologyResults: {
+      ...annualTechnologyResults,
+      ...(reportData.mode.includesFreeCoolingAnalysis ? {} : { humifogFreeCooling: undefined }),
+    },
+  }
+  const reportSnapshotSerialized = JSON.stringify(reportSnapshot)
+  useEffect(() => {
+    onReportSnapshot?.(reportSnapshot)
+  }, [reportSnapshotSerialized])
+  reportData.projectSystems = (projectSystems || []).map((system) => (
+    system.id === activeSystemId
+      ? reportSnapshot
+      : (system.reportSnapshot || {
+        name: system.name,
+        mode: {
+          selectedCalculationMethod: system.settings?.scheduleMode === '24-7'
+            ? (language === 'fr' ? 'Heures BIN' : 'BIN Hours')
+            : (language === 'fr' ? 'Heures personnalisées' : 'Custom Operating Hours'),
+        },
+        system: { supplyAirflowCfm: system.settings?.outsideAirCFM },
+        annualTechnologyResults: system.results || {},
+      })
+  ))
   const freeCoolingAnnualTechnologyOptions = [
     {
       key: 'electricSteam',
       label: language === 'fr' ? 'Vapeur electrique' : 'Electric steam',
       color: 'red',
-      heatingKwh: freeCoolingSteamAnnual.heatingEnergyKwh || 0,
-      reheatKwh: freeCoolingSteamAnnual.reheatEnergyKwh || 0,
-      humidificationKwh: freeCoolingSteamHumidificationKwh,
-      pumpKwh: null,
-      totalKwh: freeCoolingSteamAnnual.totalEnergyKwh || 0,
-      annualCost: freeCoolingSteamAnnual.annualCost || 0,
+      ...annualTechnologyResults.electricSteam,
+      totalKwh: annualTechnologyResults.electricSteam.annualEnergyKWh,
+      annualCost: annualTechnologyResults.electricSteam.annualOperatingCost,
     },
     {
       key: 'naturalGasSteam',
       label: language === 'fr' ? 'Vapeur gaz naturel' : 'Natural gas steam',
       color: 'yellow',
-      heatingKwh: freeCoolingSteamAnnual.heatingEnergyKwh || 0,
-      reheatKwh: freeCoolingSteamAnnual.reheatEnergyKwh || 0,
-      humidificationKwh: freeCoolingNaturalGasHumidificationKwh,
-      pumpKwh: null,
-      totalKwh: freeCoolingCommonElectricKwh + freeCoolingNaturalGasHumidificationKwh,
-      annualCost: freeCoolingNaturalGasAnnualCost,
+      ...annualTechnologyResults.naturalGasSteam,
+      totalKwh: annualTechnologyResults.naturalGasSteam.annualEnergyKWh,
+      annualCost: annualTechnologyResults.naturalGasSteam.annualOperatingCost,
     },
     {
-      key: 'atmosphericGasHumidifier',
+      key: 'atmosphericGas',
       label: language === 'fr' ? 'Humidificateur gaz atmosph.' : 'Atmospheric gas humidifier',
       color: 'amber',
-      heatingKwh: freeCoolingSteamAnnual.heatingEnergyKwh || 0,
-      reheatKwh: freeCoolingSteamAnnual.reheatEnergyKwh || 0,
-      humidificationKwh: freeCoolingAtmosphericGasHumidificationKwh,
-      pumpKwh: null,
-      totalKwh: freeCoolingCommonElectricKwh + freeCoolingAtmosphericGasHumidificationKwh,
-      annualCost: freeCoolingAtmosphericGasAnnualCost,
+      ...annualTechnologyResults.atmosphericGas,
+      totalKwh: annualTechnologyResults.atmosphericGas.annualEnergyKWh,
+      annualCost: annualTechnologyResults.atmosphericGas.annualOperatingCost,
     },
     {
-      key: 'humifog',
+      key: 'humifogFreeCooling',
       label: language === 'fr' ? 'Humifog + Free Cooling' : 'Humifog + Free Cooling',
       color: 'cyan',
-      heatingKwh: freeCoolingHumifogAnnual.heatingEnergyKwh || 0,
-      reheatKwh: freeCoolingHumifogAnnual.reheatEnergyKwh || 0,
-      humidificationKwh: null,
-      pumpKwh: freeCoolingHumifogAnnual.humidificationEnergyKwh || 0,
-      totalKwh: freeCoolingHumifogAnnual.totalEnergyKwh || 0,
-      annualCost: freeCoolingHumifogAnnual.annualCost || 0,
+      ...annualTechnologyResults.humifogFreeCooling,
+      totalKwh: annualTechnologyResults.humifogFreeCooling.annualEnergyKWh,
+      annualCost: annualTechnologyResults.humifogFreeCooling.annualOperatingCost,
+    },
+    {
+      key: 'humifogElectric',
+      label: language === 'fr' ? 'Humifog + réchauffage électrique' : 'Humifog + Electric Reheat',
+      color: 'sky',
+      ...annualTechnologyResults.humifogElectric,
+      pumpKwh: annualTechnologyResults.humifogElectric.pumpKWh,
+      totalKwh: annualTechnologyResults.humifogElectric.annualEnergyKWh,
+      annualCost: annualTechnologyResults.humifogElectric.annualOperatingCost,
+    },
+    {
+      key: 'humifogHeatPump',
+      label: language === 'fr' ? 'Humifog + thermopompe Air/Eau' : 'Humifog + Air/Water Heat Pump',
+      color: 'violet',
+      ...annualTechnologyResults.humifogHeatPump,
+      pumpKwh: annualTechnologyResults.humifogHeatPump.pumpKWh,
+      totalKwh: annualTechnologyResults.humifogHeatPump.annualEnergyKWh,
+      annualCost: annualTechnologyResults.humifogHeatPump.annualOperatingCost,
     },
   ]
   const freeCoolingAnnualTechnologyRows = [
     {
+      key: 'heating',
       label: language === 'fr' ? 'Energie annuelle chauffage' : 'Annual heating energy',
-      value: (option) => option.heatingKwh,
+      value: (option) => option.heatingKWh,
       format: formatAnnualEnergyIfComplete,
     },
     {
+      key: 'reheat',
       label: language === 'fr' ? 'Energie annuelle rechauffage' : 'Annual reheat energy',
-      value: (option) => option.reheatKwh,
+      value: (option) => option.reheatKWh,
       format: formatAnnualEnergyIfComplete,
     },
     {
+      key: 'humidification',
       label: language === 'fr' ? 'Energie annuelle humidification' : 'Annual humidification energy',
-      value: (option) => option.humidificationKwh,
-      format: (value) => value === null ? '-' : formatAnnualEnergyIfComplete(value),
+      value: (option) => option.humidificationKWh,
+      format: (value) => value === null ? (language === 'fr' ? 'Non applicable' : 'Not applicable') : formatAnnualEnergyIfComplete(value),
     },
     {
+      key: 'pump',
       label: language === 'fr' ? 'Energie pompe Humifog' : 'Humifog pump energy',
-      value: (option) => option.pumpKwh,
-      format: (value) => value === null ? '-' : formatAnnualEnergyIfComplete(value),
+      value: (option) => option.pumpKWh,
+      format: (value) => value === null ? (language === 'fr' ? 'Non applicable' : 'Not applicable') : formatAnnualEnergyIfComplete(value),
     },
     {
+      key: 'total',
       label: language === 'fr' ? 'Energie annuelle totale' : 'Total annual energy',
       value: (option) => option.totalKwh,
       format: formatAnnualEnergyIfComplete,
     },
     {
+      key: 'cost',
       label: language === 'fr' ? 'Cout annuel exploitation' : 'Annual operating cost',
       value: (option) => option.annualCost,
       format: formatAnnualCostIfComplete,
     },
   ]
+  const selectedHumifogKey = selectedHumifogTechnology({ mode: reportData.mode, system: reportData.system })
+  const annualTechnologyOptions = freeCoolingAnnualTechnologyOptions.filter((option) => (
+    BASELINE_TECHNOLOGIES.includes(option.key) || option.key === selectedHumifogKey
+  ))
+  const selectedHumifogOption = annualTechnologyOptions.find((option) => option.key === selectedHumifogKey)
+  const annualComparisonReferenceOption = annualTechnologyOptions.find((option) => option.key === annualComparisonReference) || annualTechnologyOptions[0]
+  const detailedAnnualComparisonRows = [
+    { key: 'heatingKWh', label: language === 'fr' ? 'Énergie annuelle chauffage' : 'Annual heating energy', kind: 'energy' },
+    { key: 'humidificationKWh', label: language === 'fr' ? 'Énergie annuelle humidification' : 'Annual humidification energy', kind: 'energy' },
+    { key: 'reheatKWh', label: language === 'fr' ? 'Énergie annuelle réchauffage' : 'Annual reheat energy', kind: 'energy' },
+    { key: 'pumpKWh', label: language === 'fr' ? 'Énergie pompe Humifog' : 'Humifog pump energy', kind: 'energy', humifogOnly: true },
+    ...(selectedHumifogKey === 'humifogFreeCooling'
+      ? [{ key: 'freeCoolingObtainedKWh', label: language === 'fr' ? 'Refroidissement gratuit grâce au Free Cooling' : 'Free cooling obtained from Free Cooling', kind: 'energy', humifogOnly: true }]
+      : []),
+    { key: 'annualEnergyKWh', label: language === 'fr' ? 'Énergie annuelle totale' : 'Total annual energy', kind: 'energy' },
+    { key: 'annualOperatingCost', label: language === 'fr' ? 'Coût annuel total' : 'Total annual cost', kind: 'cost' },
+    { key: 'annualSavings', label: language === 'fr' ? 'Économie annuelle nette' : 'Net annual savings', kind: 'cost', selectedHumifogOnly: true },
+  ]
+  const annualComparisonValue = (row, option) => {
+    if (row.selectedHumifogOnly && option.key !== selectedHumifogKey) return null
+    if (row.humifogOnly && !option.key.startsWith('humifog')) return null
+    if (row.key === 'annualSavings') {
+      return Number(annualComparisonReferenceOption?.annualOperatingCost) - Number(selectedHumifogOption?.annualOperatingCost)
+    }
+    const value = option[row.key]
+    return Number.isFinite(Number(value)) ? Number(value) : undefined
+  }
+  const formatAnnualComparisonValue = (row, value) => {
+    if (value === null) return language === 'fr' ? 'Non applicable' : 'Not applicable'
+    if (!Number.isFinite(value)) return language === 'fr' ? 'Non disponible' : 'Not available'
+    return row.kind === 'cost' ? formatAnnualCost(value) : formatAnnualEnergy(value)
+  }
+  const annualComparisonDifference = (row) => {
+    const referenceValue = annualComparisonValue(row, annualComparisonReferenceOption)
+    const humifogValue = annualComparisonValue(row, selectedHumifogOption)
+    return Number.isFinite(referenceValue) && Number.isFinite(humifogValue)
+      ? referenceValue - humifogValue
+      : null
+  }
+  const format100OaAnnualValue = (row, option) => {
+    if (row.key === 'pump' && !option.key.startsWith('humifog')) {
+      return language === 'fr' ? 'Non applicable' : 'Not applicable'
+    }
+    const value = row.value(option)
+    if (value === undefined || value === null || !Number.isFinite(Number(value))) {
+      return language === 'fr' ? 'Non disponible' : 'Not available'
+    }
+    return row.key === 'cost' ? formatAnnualCost(value) : formatAnnualEnergy(value)
+  }
   const formatOaReductionText = (steamOa, humifogOa) => {
     const difference = Number(steamOa || 0) - Number(humifogOa || 0)
     const points = formatNumber(Math.abs(difference), 0)
@@ -5530,6 +6000,62 @@ function HvacDashboardApp() {
                     ? 'Note : si les températures de mélange appliquées sont égales, le minimum OA sélectionné bloque les volets. La cible Humifog demeure plus chaude avant atomisation, mais elle ne peut pas être atteinte sans descendre sous le minimum OA.'
                     : 'Note: if the applied mixed-air temperatures are equal, the selected OA minimum is limiting the dampers. The Humifog target remains warmer before atomization, but it cannot be reached without going below the OA minimum.'}
                 </p>
+
+                <section className="mt-6 rounded-2xl border border-cyan-200 bg-cyan-50 p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-xl font-bold text-slate-900">
+                        {language === 'fr' ? 'Commande des volets OA / RA Free Cooling' : 'Free Cooling OA / RA Damper Control'}
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-700">
+                        {language === 'fr'
+                          ? 'La vapeur et Humifog utilisent leurs propres positions de volets calculées. Le minimum OA sélectionné reste une limite inférieure.'
+                          : 'Steam and Humifog use their own calculated damper positions. The selected minimum OA remains a lower limit.'}
+                      </p>
+                    </div>
+                    <div className="rounded-full border border-cyan-200 bg-white px-3 py-1 text-sm font-bold text-cyan-800">
+                      {language === 'fr' ? 'Volets modulants' : 'Modulating dampers'}
+                    </div>
+                  </div>
+
+                  <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <label className="rounded-xl border border-cyan-100 bg-white p-4">
+                      <span className="block text-xs font-bold uppercase text-slate-500">
+                        {language === 'fr' ? 'Consigne air mélangé' : 'Mixed-air setpoint'}
+                      </span>
+                      <input
+                        type="number"
+                        min={displayTemp(10)}
+                        max={displayTemp(30)}
+                        step="0.5"
+                        value={displayTemp(economizerTargetTemp)}
+                        onChange={(event) => setEconomizerTargetTemp(inputTempToC(Number(event.target.value)))}
+                        className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-right font-bold text-slate-800"
+                      />
+                      <span className="mt-1 block text-xs text-slate-500">{tempUnit}</span>
+                    </label>
+                    <div className="rounded-xl border border-cyan-100 bg-white p-4">
+                      <div className="text-xs font-bold uppercase text-slate-500">{language === 'fr' ? 'OA minimum imposé' : 'Enforced OA minimum'}</div>
+                      <div className="mt-2 text-2xl font-bold text-cyan-800">{formatNumber(minimumOutsideAirPercent, 1)}% OA</div>
+                      <div className="mt-1 text-sm font-semibold text-orange-700">{formatNumber(100 - minimumOutsideAirPercent, 1)}% RA</div>
+                    </div>
+                    <div className="rounded-xl border border-red-100 bg-white p-4">
+                      <div className="text-xs font-bold uppercase text-slate-500">{language === 'fr' ? 'Vapeur, moyenne appliquée' : 'Steam, average applied'}</div>
+                      <div className="mt-2 text-2xl font-bold text-red-700">{formatNumber(freeCoolingHumifogAnalysis.annualComparison.freeCooling.averageAppliedOa, 1)}% OA</div>
+                      <div className="mt-1 text-sm font-semibold text-orange-700">{formatNumber(100 - freeCoolingHumifogAnalysis.annualComparison.freeCooling.averageAppliedOa, 1)}% RA</div>
+                    </div>
+                    <div className="rounded-xl border border-cyan-100 bg-white p-4">
+                      <div className="text-xs font-bold uppercase text-slate-500">{language === 'fr' ? 'Humifog, moyenne appliquée' : 'Humifog, average applied'}</div>
+                      <div className="mt-2 text-2xl font-bold text-cyan-800">{formatNumber(freeCoolingHumifogAnalysis.annualComparison.humifog.averageAppliedOa, 1)}% OA</div>
+                      <div className="mt-1 text-sm font-semibold text-orange-700">{formatNumber(100 - freeCoolingHumifogAnalysis.annualComparison.humifog.averageAppliedOa, 1)}% RA</div>
+                    </div>
+                  </div>
+                  <p className="mt-4 text-sm font-semibold text-slate-700">
+                    {language === 'fr'
+                      ? 'Les positions théoriques et appliquées par BIN restent visibles dans la validation annuelle ci-dessous; la position appliquée ne descend jamais sous le minimum OA.'
+                      : 'The theoretical and applied positions by BIN remain visible in the annual validation below; the applied position never goes below the OA minimum.'}
+                  </p>
+                </section>
               </div>
             </div>
             )}
@@ -5710,7 +6236,7 @@ function HvacDashboardApp() {
             {/* Economizer card - only shown for Free Cooling modes */}
               </>
             )}
-            {showFreeCoolingTables && (
+            {(showFreeCoolingTables || is100OA) && (
               <div className="w-full bg-cyan-50 border border-cyan-200 rounded-3xl p-6 mb-8">
                 <div className="flex justify-between items-center mb-6">
                   <div>
@@ -7194,6 +7720,65 @@ function HvacDashboardApp() {
 
           </div>
 
+          {is100OA && (
+            <section className="mt-8 w-full overflow-hidden rounded-3xl bg-white p-6 shadow-xl">
+              <div className="mb-6">
+                <h2 className="text-2xl font-bold text-slate-800">
+                  {language === 'fr' ? 'Bilan énergétique annuel' : 'Annual Energy Balance'}
+                </h2>
+                <p className="mt-2 text-sm font-semibold text-cyan-800">
+                  {isCustomOperatingHoursMode
+                    ? (language === 'fr' ? 'Base annuelle : Heures personnalisées' : 'Annual basis: Custom Operating Hours')
+                    : (language === 'fr' ? 'Base annuelle : Heures BIN' : 'Annual basis: BIN Hours')}
+                </p>
+              </div>
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-800 text-white">
+                      <th className="p-3 text-left">{language === 'fr' ? 'Poste annuel' : 'Annual item'}</th>
+                      {annualTechnologyOptions.map((option) => (
+                        <th
+                          key={option.key}
+                          className={`p-3 text-center ${
+                            option.color === 'red' ? 'bg-red-700' :
+                            option.color === 'yellow' ? 'bg-yellow-700' :
+                            option.color === 'amber' ? 'bg-amber-700' :
+                            option.color === 'violet' ? 'bg-violet-700' :
+                            'bg-cyan-700'
+                          }`}
+                        >
+                          {option.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {freeCoolingAnnualTechnologyRows.map((row) => (
+                      <tr key={row.label} className="border-b border-slate-100 last:border-b-0">
+                        <td className="p-3 font-semibold text-slate-700">{row.label}</td>
+                        {annualTechnologyOptions.map((option) => (
+                          <td
+                            key={`${row.label}-${option.key}`}
+                            className={`p-3 text-center font-bold ${
+                              option.color === 'red' ? 'text-red-700' :
+                              option.color === 'yellow' ? 'text-yellow-700' :
+                              option.color === 'amber' ? 'text-amber-700' :
+                              option.color === 'violet' ? 'text-violet-700' :
+                              'text-cyan-700'
+                            }`}
+                          >
+                            {format100OaAnnualValue(row, option)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
           {showFreeCoolingTables && (
             <section id="free-cooling" className="mt-8 w-full overflow-hidden rounded-3xl bg-white p-6 shadow-xl">
               <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
@@ -7255,7 +7840,7 @@ function HvacDashboardApp() {
                         <th className="p-3 text-left">
                           {language === 'fr' ? 'Poste annuel' : 'Annual item'}
                         </th>
-                        {freeCoolingAnnualTechnologyOptions.map((option) => (
+                        {annualTechnologyOptions.map((option) => (
                           <th
                             key={option.key}
                             className={`p-3 text-center ${
@@ -7274,7 +7859,7 @@ function HvacDashboardApp() {
                       {freeCoolingAnnualTechnologyRows.map((row) => (
                         <tr key={row.label} className="border-b border-slate-100 last:border-b-0">
                           <td className="p-3 font-semibold text-slate-700">{row.label}</td>
-                          {freeCoolingAnnualTechnologyOptions.map((option) => (
+                          {annualTechnologyOptions.map((option) => (
                             <td
                               key={`${row.label}-${option.key}`}
                               className={`p-3 text-center font-bold ${
@@ -7304,7 +7889,7 @@ function HvacDashboardApp() {
                     </h4>
                     <div className="text-2xl font-black text-emerald-800">
                       {freeCoolingCalculationComplete
-                        ? freeCoolingAnnualTechnologyOptions.reduce((best, option) =>
+                        ? annualTechnologyOptions.reduce((best, option) =>
                             option.annualCost < best.annualCost ? option : best
                           ).label
                         : calculationIncompleteText}
@@ -7453,7 +8038,62 @@ function HvacDashboardApp() {
                 </table>
               </div>
 
-              <div className={`overflow-x-auto mb-8 ${isCustomOperatingHoursMode ? 'hidden' : ''}`}>
+              <div className="overflow-x-auto mb-8">
+                <h3 className="text-xl font-bold text-slate-800 mb-3">
+                  {language === 'fr' ? 'Analyse détaillée Free Cooling' : 'Detailed Free Cooling Analysis'}
+                </h3>
+                <p className="text-sm text-slate-600 mb-3">
+                  {language === 'fr'
+                    ? 'Chaque ligne correspond à un BIN actif. Les heures affichées reflètent le mode de calcul choisi, y compris les heures effectives du calendrier personnalisé.'
+                    : 'Each row corresponds to an active weather BIN. The displayed hours reflect the selected calculation mode, including effective custom operating hours.'}
+                </p>
+                <table className="w-full text-sm min-w-[1400px]">
+                  <thead>
+                    <tr className="bg-slate-100">
+                      {[
+                        language === 'fr' ? 'Température extérieure' : 'Outdoor temperature',
+                        language === 'fr' ? 'Heures effectives' : 'Effective hours',
+                        language === 'fr' ? 'OA vapeur %' : 'Steam OA %',
+                        language === 'fr' ? 'RA vapeur %' : 'Steam RA %',
+                        language === 'fr' ? 'Température mélange vapeur' : 'Steam mixed temp',
+                        language === 'fr' ? 'OA Humifog %' : 'Humifog OA %',
+                        language === 'fr' ? 'RA Humifog %' : 'Humifog RA %',
+                        language === 'fr' ? 'Température mélange Humifog' : 'Humifog mixed temp',
+                        language === 'fr' ? 'Température avant Humifog' : 'Temperature before Humifog',
+                        language === 'fr' ? 'Température après Humifog' : 'Temperature after Humifog',
+                      ].map((heading) => (
+                        <th key={heading} className="p-3 text-center font-semibold text-slate-700 first:text-left">{heading}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {freeCoolingHumifogAnalysis.binRows.map((humifogRow, index) => {
+                      const steamRow = freeCoolingHumifogAnalysis.conventionalRows[index] || {}
+                      const steamOaPercent = Number(steamRow.appliedOutdoorAirPercent ?? steamRow.outdoorAirPercent ?? 0)
+                      const steamRaPercent = 100 - steamOaPercent
+                      const humifogOaPercent = Number(humifogRow.appliedOutdoorAirPercent ?? humifogRow.outdoorAirPercent ?? 0)
+                      const humifogRaPercent = 100 - humifogOaPercent
+
+                      return (
+                        <tr key={`detail-${humifogRow.tempC}-${humifogRow.hours}-${index}`} className="border-b border-slate-100">
+                          <td className="p-3 font-bold text-slate-700">{displayTemp(humifogRow.tempC)}{tempUnit}</td>
+                          <td className="p-3 text-center font-semibold text-slate-800">{formatNumber(humifogRow.hours, 0)} h</td>
+                          <td className="p-3 text-center font-bold text-red-700">{formatNumber(steamOaPercent, 1)}%</td>
+                          <td className="p-3 text-center font-bold text-red-600">{formatNumber(steamRaPercent, 1)}%</td>
+                          <td className="p-3 text-center font-bold text-red-700">{displayTemp(steamRow.mixed?.db ?? steamRow.calculatedMixed?.db ?? 0)}{tempUnit}</td>
+                          <td className="p-3 text-center font-bold text-cyan-700">{formatNumber(humifogOaPercent, 1)}%</td>
+                          <td className="p-3 text-center font-bold text-cyan-600">{formatNumber(humifogRaPercent, 1)}%</td>
+                          <td className="p-3 text-center font-bold text-cyan-700">{displayTemp(humifogRow.mixed?.db ?? 0)}{tempUnit}</td>
+                          <td className="p-3 text-center font-bold text-cyan-700">{displayTemp(humifogRow.inletToHumifog?.db ?? 0)}{tempUnit}</td>
+                          <td className="p-3 text-center font-bold text-cyan-700">{displayTemp(humifogRow.afterHumifog?.db ?? 0)}{tempUnit}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="overflow-x-auto mb-8">
                 <h3 className="text-xl font-bold text-slate-800 mb-3">
                   {language === 'fr' ? '1. Validation annuelle BIN par BIN' : '1. Annual BIN-by-BIN validation'}
                 </h3>
@@ -7705,63 +8345,69 @@ function HvacDashboardApp() {
 
               <div className="overflow-x-auto mb-8">
                 <h3 className="text-xl font-bold text-slate-800 mb-3">
-                  {language === 'fr' ? '3. Ventilation detaillee des calculs annuels' : '3. Detailed annual calculation breakdown'}
+                  {language === 'fr' ? '3. Comparaison détaillée des calculs annuels' : '3. Detailed Annual Energy Comparison'}
                 </h3>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-sm">
+                  <label className="font-semibold text-slate-700">
+                    {language === 'fr' ? 'Technologie de référence' : 'Reference Technology'}
+                    <select
+                      value={annualComparisonReference}
+                      onChange={(event) => setAnnualComparisonReference(event.target.value)}
+                      className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2 font-bold text-slate-800"
+                    >
+                      {annualTechnologyOptions.filter((option) => BASELINE_TECHNOLOGIES.includes(option.key)).map((option) => (
+                        <option key={option.key} value={option.key}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <span className="font-semibold text-cyan-800">
+                    {selectedHumifogOption?.label || (language === 'fr' ? 'Humifog - solution sélectionnée' : 'Humifog - Selected Solution')}
+                  </span>
+                </div>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-slate-100">
-                      <th className="p-3 text-left">{language === 'fr' ? 'Parametre' : 'Parameter'}</th>
-                      <th className="p-3 text-center">{language === 'fr' ? 'Scenario vapeur' : 'Steam scenario'}</th>
-                      <th className="p-3 text-center">{language === 'fr' ? 'Scenario Humifog' : 'Humifog scenario'}</th>
-                      <th className="p-3 text-center">{language === 'fr' ? 'Difference' : 'Difference'}</th>
+                      <th className="p-3 text-left">{language === 'fr' ? 'Paramètre' : 'Parameter'}</th>
+                      {annualTechnologyOptions.map((option) => (
+                        <th key={option.key} className="p-3 text-center">{option.label}</th>
+                      ))}
+                      <th className="p-3 text-center">
+                        {language === 'fr' ? 'Écart vs technologie de référence' : 'Difference vs Reference Technology'}
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {freeCoolingHumifogAnalysis.annualBreakdownRows.map((row) => (
-                      <tr key={row.key} className="border-b border-slate-100">
-                        <td className="p-3 font-bold text-slate-700">
-                          {language === 'fr'
-                            ? {
-                              heatingEnergyKwh: 'Energie annuelle chauffage',
-                              humidificationEnergyKwh: 'Energie annuelle humidification',
-                              reheatEnergyKwh: 'Energie annuelle rechauffage',
-                              freeCoolingObtainedKwh: 'Refroidissement gratuit grâce au Free Cooling',
-                              totalEnergyKwh: 'Energie annuelle totale',
-                              annualCost: 'Cout annuel total',
-                            }[row.key] || row.parameter
-                            : row.parameter}
-                        </td>
-                        <td className="p-3 text-center">{formatBreakdownValue(row, row.steamReference)}</td>
-                        <td className="p-3 text-center">{formatBreakdownValue(row, row.humifogOptimized)}</td>
-                        <td className={`p-3 text-center font-bold ${row.difference >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                          {formatBreakdownValue(row, row.difference, true)}
-                        </td>
-                      </tr>
-                    ))}
-                    <tr className="bg-slate-50">
-                      <td className="p-3 font-bold text-slate-800">
-                        {language === 'fr' ? 'Economie annuelle nette' : 'Net annual savings'}
-                      </td>
-                      <td className="p-3 text-center">-</td>
-                      <td className="p-3 text-center font-bold text-slate-900">
-                        {freeCoolingCalculationComplete
-                          ? `${formatSavingsAnnualEnergy(freeCoolingHumifogAnalysis.annualComparison.savingsKwh)} / ${formatSavingsAnnualCost(freeCoolingHumifogAnalysis.annualComparison.annualSavings)}`
-                          : calculationIncompleteText}
-                      </td>
-                      <td className={`p-3 text-center font-bold ${freeCoolingHumifogAnalysis.annualComparison.savingsKwh >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                        {freeCoolingCalculationComplete
-                          ? formatSavingsPercent(freeCoolingHumifogAnalysis.annualComparison.savingsPercent)
-                          : calculationIncompleteText}
-                      </td>
-                    </tr>
+                    {detailedAnnualComparisonRows.map((row) => {
+                      const difference = annualComparisonDifference(row)
+                      return (
+                        <tr key={row.key} className="border-b border-slate-100">
+                          <td className="p-3 font-bold text-slate-700">{row.label}</td>
+                          {annualTechnologyOptions.map((option) => (
+                            <td key={`${row.key}-${option.key}`} className="p-3 text-center">
+                              {formatAnnualComparisonValue(row, annualComparisonValue(row, option))}
+                            </td>
+                          ))}
+                          <td className={`p-3 text-center font-bold ${difference === null ? 'text-slate-500' : difference >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                            {difference === null
+                              ? (language === 'fr' ? 'Non applicable' : 'Not applicable')
+                              : row.kind === 'cost' ? formatSavingsAnnualCost(difference) : formatSavingsAnnualEnergy(difference)}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
 
               <div className="overflow-x-auto">
                 <h3 className="text-xl font-bold text-slate-800 mb-3">
-                  {language === 'fr' ? '4. Comparaison annuelle' : '4. Annual comparison'}
+                  {language === 'fr' ? '4. Analyse détaillée Free Cooling' : '4. Detailed Free Cooling Analysis'}
                 </h3>
+                <p className="mb-3 text-sm text-slate-600">
+                  {language === 'fr'
+                    ? 'Cette section illustre le comportement physique Free Cooling : modulation OA/RA, mélange, refroidissement adiabatique et température après Humifog. Les totaux annuels restent dans la section 3.'
+                    : 'This section illustrates the physical Free Cooling behavior: OA/RA modulation, mixed-air temperature, adiabatic cooling and post-Humifog temperature. Annual totals remain in section 3.'}
+                </p>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-slate-800 text-white">
@@ -7777,14 +8423,13 @@ function HvacDashboardApp() {
                         `${formatNumber(freeCoolingHumifogAnalysis.annualComparison.freeCooling.averageTheoreticalOa, 0)}% -> ${formatNumber(freeCoolingHumifogAnalysis.annualComparison.freeCooling.averageAppliedOa, 0)}%`,
                         `${formatNumber(freeCoolingHumifogAnalysis.annualComparison.humifog.averageTheoreticalOa, 0)}% -> ${formatNumber(freeCoolingHumifogAnalysis.annualComparison.humifog.averageAppliedOa, 0)}%`,
                       ],
-                      [language === 'fr' ? 'Temperature melange moyenne' : 'Average mixed air temperature', `${displayTemp(freeCoolingHumifogAnalysis.annualComparison.freeCooling.averageMixedDb)}${tempUnit}`, `${displayTemp(freeCoolingHumifogAnalysis.annualComparison.humifog.averageMixedDb)}${tempUnit}`],
-                      [language === 'fr' ? 'Energie annuelle chauffage' : 'Annual heating energy', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.freeCooling.heatingEnergyKwh), formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifog.heatingEnergyKwh)],
-                      [language === 'fr' ? 'Energie annuelle humidification vapeur' : 'Annual steam humidification energy', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.freeCooling.humidificationEnergyKwh), '-'],
-                      [language === 'fr' ? 'Energie annuelle pompe Humifog' : 'Annual Humifog pump energy', '-', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifog.humidificationEnergyKwh)],
-                      [language === 'fr' ? 'Energie annuelle rechauffage Humifog' : 'Annual Humifog reheat energy', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.freeCooling.reheatEnergyKwh), formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifog.reheatEnergyKwh)],
-                      [language === 'fr' ? 'Energie annuelle totale' : 'Total annual energy', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.freeCooling.totalEnergyKwh), formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifog.totalEnergyKwh)],
-                      [language === 'fr' ? 'Cout annuel total' : 'Total annual cost', formatAnnualCostIfComplete(freeCoolingHumifogAnalysis.annualComparison.freeCooling.annualCost), formatAnnualCostIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifog.annualCost)],
-                      [language === 'fr' ? 'Economie annuelle nette' : 'Net annual savings', '-', freeCoolingCalculationComplete ? `${formatSavingsAnnualEnergy(freeCoolingHumifogAnalysis.annualComparison.savingsKwh)} / ${formatSavingsAnnualCost(freeCoolingHumifogAnalysis.annualComparison.annualSavings)} / ${formatSavingsPercent(freeCoolingHumifogAnalysis.annualComparison.savingsPercent)}` : calculationIncompleteText],
+                      [
+                        language === 'fr' ? 'OA moyen vapeur / Humifog' : 'Average steam / Humifog OA',
+                        `${formatNumber(freeCoolingHumifogAnalysis.annualComparison.freeCooling.averageAppliedOa, 0)}%`,
+                        `${formatNumber(freeCoolingHumifogAnalysis.annualComparison.humifog.averageAppliedOa, 0)}%`,
+                      ],
+                      [language === 'fr' ? 'Température mélange moyenne vapeur' : 'Average steam mixed air temperature', `${displayTemp(freeCoolingHumifogAnalysis.annualComparison.freeCooling.averageMixedDb)}${tempUnit}`, '-'],
+                      [language === 'fr' ? 'Température mélange moyenne Humifog' : 'Average Humifog mixed air temperature', '-', `${displayTemp(freeCoolingHumifogAnalysis.annualComparison.humifog.averageMixedDb)}${tempUnit}`],
                     ].map(([label, freeCoolingValue, humifogValue]) => (
                       <tr key={label} className="border-b border-slate-100">
                         <td className="p-3 font-bold text-slate-700">{label}</td>

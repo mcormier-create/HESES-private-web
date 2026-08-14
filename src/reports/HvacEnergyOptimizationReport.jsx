@@ -1,3 +1,5 @@
+import { BASELINE_TECHNOLOGIES, selectedHumifogTechnology, selectedTechnologiesForSystem, summarizeProjectEnergy } from './projectEnergySummary'
+
 const PROFESSIONAL_REPORT_CSS = `
   .engineering-report {
     --report-ink: #0f172a;
@@ -593,7 +595,32 @@ export default function HvacEnergyOptimizationReport({ data }) {
   const humifog = annual.humifog || {}
   const metrics = data.metrics || {}
   const mode = data.mode || {}
-  const energySummary = data.energySummary || {}
+  const annualTechnologyResults = data.annualTechnologyResults || {}
+  const energySummary = Object.keys(annualTechnologyResults).length
+    ? {
+      ...(data.energySummary || {}),
+      steam: {
+        ...(data.energySummary?.steam || {}),
+        annualEnergyKwh: annualTechnologyResults.electricSteam?.annualEnergyKWh,
+        annualCost: annualTechnologyResults.electricSteam?.annualOperatingCost,
+      },
+      naturalGasSteam: {
+        ...(data.energySummary?.naturalGasSteam || {}),
+        annualEnergyKwh: annualTechnologyResults.naturalGasSteam?.annualEnergyKWh,
+        annualCost: annualTechnologyResults.naturalGasSteam?.annualOperatingCost,
+      },
+      atmosphericGasHumidifier: {
+        ...(data.energySummary?.atmosphericGasHumidifier || {}),
+        annualEnergyKwh: annualTechnologyResults.atmosphericGas?.annualEnergyKWh,
+        annualCost: annualTechnologyResults.atmosphericGas?.annualOperatingCost,
+      },
+      humifog: {
+        ...(data.energySummary?.humifog || {}),
+        annualEnergyKwh: annualTechnologyResults[selectedHumifogTechnology({ mode: data.mode, system: data.system })]?.annualEnergyKWh,
+        annualCost: annualTechnologyResults[selectedHumifogTechnology({ mode: data.mode, system: data.system })]?.annualOperatingCost,
+      },
+    }
+    : (data.energySummary || {})
   const system = data.system || {}
   const project = data.project || {}
   const design = data.design || {}
@@ -708,6 +735,55 @@ export default function HvacEnergyOptimizationReport({ data }) {
     ? `${selectedReheatName} - COP ${formatNumber(heatPumpCop, 1)}`
     : selectedReheatName
   const reheatApplies = humifogReheatKwh > 0.5 || humifogReheatThermalKwh > 0.5 || humifogReheatAppliedKwh > 0.5
+  const projectSystems = Array.isArray(data.projectSystems) && data.projectSystems.length
+    ? data.projectSystems
+    : [{ name: system.type || 'AHU-1', mode, system, economics, annualTechnologyResults }]
+  const projectEnergy = summarizeProjectEnergy(projectSystems)
+  const technologyNames = {
+    electricSteam: tr('Vapeur électrique', 'Electric Steam'),
+    naturalGasSteam: tr('Vapeur gaz naturel', 'Natural Gas Steam'),
+    atmosphericGas: tr('Humidificateur gaz atmosphérique', 'Atmospheric Gas Humidifier'),
+    humifogSelected: tr('Humifog - solution sélectionnée', 'Humifog - Selected Solution'),
+    humifogElectric: tr('Humifog + réchauffage électrique', 'Humifog + Electric Reheat'),
+    humifogHeatPump: tr('Humifog + thermopompe Air/Eau', 'Humifog + Air/Water Heat Pump'),
+    humifogFreeCooling: tr('Humifog + Free Cooling', 'Humifog + Free Cooling'),
+  }
+  const selectedHumifogKey = selectedHumifogTechnology({ mode, system })
+  const pdfAnnualTechnologyKeys = [...BASELINE_TECHNOLOGIES, selectedHumifogKey]
+  const pdfAnnualReferenceKey = BASELINE_TECHNOLOGIES.includes(economics.annualComparisonReference)
+    ? economics.annualComparisonReference
+    : 'electricSteam'
+  const pdfAnnualReference = annualTechnologyResults[pdfAnnualReferenceKey] || {}
+  const pdfAnnualHumifog = annualTechnologyResults[selectedHumifogKey] || {}
+  const pdfDetailedAnnualRows = [
+    { key: 'heatingKWh', label: tr('Énergie annuelle chauffage', 'Annual heating energy'), cost: false },
+    { key: 'humidificationKWh', label: tr('Énergie annuelle humidification', 'Annual humidification energy'), cost: false },
+    { key: 'reheatKWh', label: tr('Énergie annuelle réchauffage', 'Annual reheat energy'), cost: false },
+    { key: 'pumpKWh', label: tr('Énergie pompe Humifog', 'Humifog pump energy'), cost: false, humifogOnly: true },
+    ...(selectedHumifogKey === 'humifogFreeCooling'
+      ? [{ key: 'freeCoolingObtainedKWh', label: tr('Refroidissement gratuit grâce au Free Cooling', 'Free cooling obtained from Free Cooling'), cost: false, humifogOnly: true }]
+      : []),
+    { key: 'annualEnergyKWh', label: tr('Énergie annuelle totale', 'Total annual energy'), cost: false },
+    { key: 'annualOperatingCost', label: tr('Coût annuel total', 'Total annual cost'), cost: true },
+    { key: 'annualSavings', label: tr('Économie annuelle nette', 'Net annual savings'), cost: true, humifogOnly: true },
+  ]
+  const pdfDetailedValue = (row, key) => {
+    if (row.humifogOnly && key !== selectedHumifogKey) return null
+    if (row.key === 'annualSavings') return Number(pdfAnnualReference.annualOperatingCost) - Number(pdfAnnualHumifog.annualOperatingCost)
+    const value = annualTechnologyResults[key]?.[row.key]
+    return Number.isFinite(Number(value)) ? Number(value) : undefined
+  }
+  const formatPdfDetailedValue = (row, value) => {
+    if (value === null) return tr('Non applicable', 'Not applicable')
+    if (!Number.isFinite(value)) return tr('Non disponible', 'Not available')
+    return row.cost ? formatMoney(value) : formatEnergy(value)
+  }
+  const buildingTechnologyRows = [...BASELINE_TECHNOLOGIES, 'humifogSelected']
+    .filter((key) => projectEnergy.totals[key].applicableSystems > 0)
+  const projectPayback = (value) => Number.isFinite(value)
+    ? `${formatNumber(value, 1)} ${tr('ans', 'years')}`
+    : '-'
+  const projectRoi = (value) => Number.isFinite(value) ? `${formatNumber(value, 1)}%` : '-'
   const hourlyWeatherDataSummary = mode.hourlyWeatherDataSummary || null
   const hourlyWeatherSummaryRows = hourlyWeatherDataSummary
     ? [
@@ -968,6 +1044,97 @@ export default function HvacEnergyOptimizationReport({ data }) {
         </div>
       </header>
 
+      <ReportSection title={tr('BILAN ÉNERGÉTIQUE GLOBAL DU BÂTIMENT', 'BUILDING ENERGY SUMMARY')} pageBreak allowPageBreak>
+        <KeyValueTable rows={[
+          [tr('Systèmes HVAC actifs', 'Active HVAC systems'), `${projectSystems.length}`],
+          [tr('Base horaire du bâtiment', 'Building operating-hour basis'), projectEnergy.operatingHourBasis === 'mixed' ? tr('Mixtes', 'Mixed') : (projectEnergy.operatingHourBasis || '-')],
+          [tr('Technologie de référence', 'Reference technology'), technologyNames[projectEnergy.referenceTechnology]],
+        ]} />
+        <h3>{tr('Bases horaires par système', 'Operating-hour basis by system')}</h3>
+        <KeyValueTable rows={projectEnergy.systemHourBases.map((entry) => [entry.name, entry.basis || '-'])} />
+        <h3>{tr('Configuration Humifog par système', 'Humifog configuration by system')}</h3>
+        <KeyValueTable rows={projectEnergy.systemHourBases.map((entry) => [entry.name, technologyNames[entry.humifogTechnology] || '-'])} />
+        <h3>{tr('Totaux annuels du bâtiment', 'Building annual totals')}</h3>
+        <table className="report-table compact">
+          <thead>
+            <tr>
+              <th>{tr('Technologie', 'Technology')}</th>
+              <th>{tr('Énergie annuelle', 'Annual Energy')}</th>
+              <th>{tr('Coût annuel', 'Annual Operating Cost')}</th>
+              <th>{tr('Investissement installé', 'Installed Investment')}</th>
+              <th>{tr('Économies vs référence', 'Savings vs Reference')}</th>
+              <th>{tr('Investissement incrémental', 'Incremental Investment')}</th>
+              <th>{tr('Retour simple', 'Simple Payback')}</th>
+              <th>{tr('ROI annuel simple', 'Simple Annual ROI')}</th>
+              <th>{tr('Réduction énergie', 'Energy Reduction')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {buildingTechnologyRows.map((key) => {
+              const total = projectEnergy.totals[key]
+              return (
+                <tr key={key}>
+                  <td>{technologyNames[key]}</td>
+                  <td>{formatEnergy(total.annualEnergyKWh)}</td>
+                  <td>{formatMoney(total.annualOperatingCost)}</td>
+                  <td>{total.installedInvestmentCost > 0 ? formatMoney(total.installedInvestmentCost) : '-'}</td>
+                  <td>{key === projectEnergy.referenceTechnology ? tr('Référence', 'Reference') : formatMoney(total.annualSavings)}</td>
+                  <td>{key === projectEnergy.referenceTechnology ? '-' : formatMoney(total.incrementalInvestment)}</td>
+                  <td>{key === projectEnergy.referenceTechnology ? '-' : projectPayback(total.simplePaybackYears)}</td>
+                  <td>{key === projectEnergy.referenceTechnology ? '-' : projectRoi(total.simpleAnnualRoiPercent)}</td>
+                  <td>{key === projectEnergy.referenceTechnology ? tr('Référence', 'Reference') : `${formatNumber(total.energyReductionPercent, 1)}%`}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </ReportSection>
+
+      {projectSystems.map((projectSystem, index) => {
+        const systemMode = projectSystem.mode || {}
+        const systemData = projectSystem.system || {}
+        const systemResults = projectSystem.annualTechnologyResults || projectSystem.results || {}
+        const systemIsFreeCooling = Boolean(systemMode.includesFreeCoolingAnalysis || systemMode.isFreeCoolingMode)
+        const systemTechnologies = selectedTechnologiesForSystem(projectSystem).filter((key) => systemResults[key])
+        const systemAnnualComparison = projectSystem.annualComparison || {}
+        return (
+          <ReportSection key={`${projectSystem.name || 'ahu'}-${index}`} title={`${tr('SYSTÈME', 'SYSTEM')} ${index + 1} - ${projectSystem.name || systemData.type || `AHU-${index + 1}`}`} pageBreak allowPageBreak>
+            <KeyValueTable rows={[
+              [tr('Nom du système', 'System name'), projectSystem.name || systemData.type || `AHU-${index + 1}`],
+              [tr('Débit d’air', 'Airflow'), formatFlow(systemData.supplyAirflowCfm, data.units)],
+              ['OA', `${formatNumber(systemData.selectedOaPercent ?? systemData.oaPercent, 0)}%`],
+              ['RA', `${formatNumber(systemData.selectedRaPercent ?? systemData.raPercent, 0)}%`],
+              [tr('Mode', 'Mode'), systemMode.is100OA ? '100% OA' : (systemIsFreeCooling ? 'Free Cooling' : systemMode.ventilationModeName || '-')],
+              [tr('Climat', 'Climate'), projectSystem.project?.location || '-'],
+              [tr('Base horaire', 'Operating-hour basis'), systemMode.selectedCalculationMethod || systemResults.electricSteam?.hoursBasis || '-'],
+              [tr('Horaire', 'Operating schedule'), projectSystem.metrics?.scheduleDescription || '-'],
+              [tr('Charge d’humidification', 'Humidification load'), formatPower(projectSystem.metrics?.correctedHumidificationLoad)],
+              [tr('Récupération de chaleur', 'Heat recovery'), systemData.recoveryType || '-'],
+            ]} />
+            <h3>{tr('Bilan énergétique annuel', 'Annual Energy Balance')}</h3>
+            <table className="report-table compact">
+              <thead><tr><th>{tr('Technologie', 'Technology')}</th><th>{tr('Énergie annuelle', 'Annual Energy')}</th><th>{tr('Coût annuel', 'Annual Operating Cost')}</th></tr></thead>
+              <tbody>{systemTechnologies.map((key) => (
+                <tr key={key}><td>{technologyNames[key]}</td><td>{formatEnergy(systemResults[key].annualEnergyKWh)}</td><td>{formatMoney(systemResults[key].annualOperatingCost)}</td></tr>
+              ))}</tbody>
+            </table>
+            {systemIsFreeCooling && (
+              <>
+                <h3>{tr('Analyse détaillée Free Cooling', 'Detailed Free Cooling Analysis')}</h3>
+                <KeyValueTable rows={[
+                  [tr('OA moyen vapeur', 'Average steam OA'), `${formatNumber(systemAnnualComparison.freeCooling?.averageAppliedOa ?? 0, 0)}%`],
+                  [tr('OA moyen Humifog', 'Average Humifog OA'), `${formatNumber(systemAnnualComparison.humifog?.averageAppliedOa ?? 0, 0)}%`],
+                  [tr('T mélange moyenne vapeur', 'Average steam mixed temperature'), `${formatNumber(systemAnnualComparison.freeCooling?.averageMixedDb ?? 0, 1)}°`],
+                  [tr('T mélange moyenne Humifog', 'Average Humifog mixed temperature'), `${formatNumber(systemAnnualComparison.humifog?.averageMixedDb ?? 0, 1)}°`],
+                  [tr('Température avant Humifog', 'Temperature before Humifog'), `${formatNumber(systemAnnualComparison.humifog?.averageInletToHumifogDb ?? 0, 1)}°`],
+                  [tr('Température après Humifog', 'Temperature after Humifog'), `${formatNumber(systemAnnualComparison.humifog?.averageAfterHumifogDb ?? 0, 1)}°`],
+                ]} />
+              </>
+            )}
+          </ReportSection>
+        )
+      })}
+
       <ReportSection title={tr('SOMMAIRE EXÉCUTIF', 'EXECUTIVE SUMMARY')} pageBreak>
         <div className="executive-callout">
           <div>
@@ -1200,34 +1367,30 @@ export default function HvacEnergyOptimizationReport({ data }) {
 
       {includesFreeCoolingAnalysis && (
         <ReportSection title={reportSectionTitle('freeCooling', 'FREE COOLING ANALYSIS')} pageBreak allowPageBreak>
+          <h3>{tr('Comparaison détaillée des calculs annuels', 'Detailed Annual Energy Comparison')}</h3>
           <table className="report-table">
             <thead>
               <tr>
-                <th>Strategy</th>
-                <th>Average OA %</th>
-                <th>Average Mixed Air Temperature</th>
-                <th>Annual Humifog Reheat</th>
-                <th>Annual Energy</th>
-                <th>Annual Cost</th>
+                <th>{tr('Paramètre', 'Parameter')}</th>
+                {pdfAnnualTechnologyKeys.map((key) => <th key={key}>{technologyNames[key]}</th>)}
+                <th>{tr('Écart vs technologie de référence', 'Difference vs Reference Technology')}</th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>Steam Scenario</td>
-                <td>{formatNumber(freeCooling.averageOa, 0)}%</td>
-                <td>{formatTemp(freeCooling.averageMixedDb, data.units, data.language)}</td>
-                <td>-</td>
-                <td>{formatEnergy(freeCooling.totalEnergyKwh)}</td>
-                <td>{formatMoney(freeCooling.annualCost)}</td>
-              </tr>
-              <tr>
-                <td>Humifog Scenario</td>
-                <td>{formatNumber(humifog.averageOa, 0)}%</td>
-                <td>{formatTemp(humifog.averageMixedDb, data.units, data.language)}</td>
-                <td>{reheatApplies ? `${formatEnergy(humifogReheatAppliedKwh)} - ${selectedReheatName}` : 'Not required'}</td>
-                <td>{formatEnergy(humifog.totalEnergyKwh)}</td>
-                <td>{formatMoney(humifog.annualCost)}</td>
-              </tr>
+              {pdfDetailedAnnualRows.map((row) => {
+                const referenceValue = pdfDetailedValue(row, pdfAnnualReferenceKey)
+                const humifogValue = pdfDetailedValue(row, selectedHumifogKey)
+                const difference = Number.isFinite(referenceValue) && Number.isFinite(humifogValue)
+                  ? referenceValue - humifogValue
+                  : null
+                return (
+                  <tr key={row.key}>
+                    <td>{row.label}</td>
+                    {pdfAnnualTechnologyKeys.map((key) => <td key={key}>{formatPdfDetailedValue(row, pdfDetailedValue(row, key))}</td>)}
+                    <td>{difference === null ? tr('Non applicable', 'Not applicable') : formatPdfDetailedValue(row, difference)}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
           <h3>Humifog Reheat Detail</h3>
@@ -1282,60 +1445,30 @@ export default function HvacEnergyOptimizationReport({ data }) {
       )}
 
       <ReportSection title={reportSectionTitle('energy', 'ENERGY ANALYSIS')} pageBreak allowPageBreak>
+        <h3>{tr('Comparaison détaillée des calculs annuels', 'Detailed Annual Energy Comparison')}</h3>
         <table className="report-table">
           <thead>
-            {includesFreeCoolingAnalysis ? (
-              <tr>
-                <th>Metric</th>
-                {freeCoolingTechnologyOptions.map((option) => (
-                  <th key={option.label}>{option.label}</th>
-                ))}
-              </tr>
-            ) : (
-              <tr>
-                <th>Metric</th>
-                <th>Instantaneous Power</th>
-                <th>Annual Estimate</th>
-                <th>Annual Operating Cost</th>
-              </tr>
-            )}
+            <tr>
+              <th>{tr('Paramètre', 'Parameter')}</th>
+              {pdfAnnualTechnologyKeys.map((key) => <th key={key}>{technologyNames[key]}</th>)}
+              <th>{tr('Écart vs technologie de référence', 'Difference vs Reference Technology')}</th>
+            </tr>
           </thead>
           <tbody>
-            {includesFreeCoolingAnalysis
-              ? [
-                ['Calculation Basis', ...freeCoolingTechnologyOptions.map((option) => option.basis)],
-                ['Annual Humifog Reheat', '-', '-', '-', reheatApplies ? `${formatEnergy(humifogReheatAppliedKwh)} - ${selectedReheatName}` : 'Not required'],
-                ['Annual Total Energy', ...freeCoolingTechnologyOptions.map((option) => formatEnergy(option.annualEnergyKwh))],
-                ['Annual Cost', ...freeCoolingTechnologyOptions.map((option) => formatMoney(option.annualCost))],
-                [
-                  'Relative to Electric Steam',
-                  'Reference',
-                  ...freeCoolingTechnologyOptions.slice(1).map((option) =>
-                    `${formatEnergy((freeCooling.totalEnergyKwh || 0) - option.annualEnergyKwh)} / ${formatMoney((freeCooling.annualCost || 0) - option.annualCost)}`
-                  ),
-                ],
-              ].map(([label, electricSteam, naturalGasSteam, atmosphericGas, humifogOptimized]) => (
-                <tr key={label}>
-                  <td>{label}</td>
-                  <td>{electricSteam}</td>
-                  <td>{naturalGasSteam}</td>
-                  <td>{atmosphericGas}</td>
-                  <td>{humifogOptimized}</td>
+            {pdfDetailedAnnualRows.map((row) => {
+              const referenceValue = pdfDetailedValue(row, pdfAnnualReferenceKey)
+              const humifogValue = pdfDetailedValue(row, selectedHumifogKey)
+              const difference = Number.isFinite(referenceValue) && Number.isFinite(humifogValue)
+                ? referenceValue - humifogValue
+                : null
+              return (
+                <tr key={row.key}>
+                  <td>{row.label}</td>
+                  {pdfAnnualTechnologyKeys.map((key) => <td key={key}>{formatPdfDetailedValue(row, pdfDetailedValue(row, key))}</td>)}
+                  <td>{difference === null ? tr('Non applicable', 'Not applicable') : formatPdfDetailedValue(row, difference)}</td>
                 </tr>
-              ))
-              : [
-                ['Electric Steam Humidifier', energySummary.steam],
-                ['Natural Gas Steam Boiler', energySummary.naturalGasSteam],
-                ['Atmospheric Gas Humidifier', energySummary.atmosphericGasHumidifier],
-                ['Humifog Adiabatic System', energySummary.humifog],
-              ].map(([label, item]) => (
-                <tr key={label}>
-                  <td>{label}</td>
-                  <td>{formatPower(item?.powerKw)}</td>
-                  <td>{formatEnergy(item?.annualEnergyKwh)}</td>
-                  <td>{formatMoney(item?.annualCost)}</td>
-                </tr>
-              ))}
+              )
+            })}
           </tbody>
         </table>
       </ReportSection>
