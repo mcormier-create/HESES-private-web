@@ -874,7 +874,12 @@ export default function HvacEnergyOptimizationReport({ data }) {
     (critical, row) => (row.reheatLoadKw || 0) > (critical?.reheatLoadKw || -1) ? row : critical,
     null
   )
-  const projectScope = includesFreeCoolingAnalysis
+  const projectScope = projectSystems.length > 1
+  ? tr(
+      `Rapport d’optimisation énergétique du bâtiment comprenant ${projectSystems.length} systèmes HVAC avec analyse Humifog.`,
+      `Building energy optimization report covering ${projectSystems.length} HVAC systems with Humifog analysis.`
+    )
+  : includesFreeCoolingAnalysis
     ? tr('Rapport dâ€™optimisation Free Cooling + Humifog pour une UTA Ã  air mÃ©langÃ©.', 'Free Cooling + Humifog optimization report for a mixed air AHU.')
     : tr('Rapport systÃ¨me 100 % air extÃ©rieur. Les sections Free Cooling / optimisation OA-RA ne sont pas incluses pour cette configuration.', '100% outdoor air system report. Free Cooling / OA / RA optimization sections are not included for this configuration.')
   const recommendationText = includesFreeCoolingAnalysis
@@ -978,10 +983,23 @@ export default function HvacEnergyOptimizationReport({ data }) {
           <h1>HVAC ENERGY OPTIMIZATION REPORT</h1>
           <p className="cover-subtitle">Prepared for technical review, energy comparison and preliminary decision support</p>
           <div className="cover-badges">
-            <span className="cover-badge">{system.type}</span>
-            <span className="cover-badge">{system.recoveryType}</span>
-            <span className="cover-badge">{mode.ventilationModeName || 'Selected System'}</span>
-          </div>
+  {projectSystems.length > 1 ? (
+    <>
+      <span className="cover-badge">
+        {tr('Rapport bâtiment multi-systèmes', 'Multi-System Building Report')}
+      </span>
+      <span className="cover-badge">
+        {`${projectSystems.length} ${tr('systèmes HVAC', 'HVAC systems')}`}
+      </span>
+    </>
+  ) : (
+    <>
+      <span className="cover-badge">{system.type}</span>
+      <span className="cover-badge">{system.recoveryType}</span>
+      <span className="cover-badge">{mode.ventilationModeName || 'Selected System'}</span>
+    </>
+  )}
+</div>
         </div>
         <div className="document-meta-row">
           <span>Document status: Preliminary engineering report</span>
