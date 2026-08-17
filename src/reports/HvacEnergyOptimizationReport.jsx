@@ -1014,33 +1014,77 @@ export default function HvacEnergyOptimizationReport({ data }) {
               </span>
             </div>
           </div>
-          {system.imageSrc && (
+          {projectSystems.length === 1 && system.imageSrc && (
             <figure className="cover-figure">
               <img src={system.imageSrc} alt={system.imageAlt || system.recoveryType} />
               <figcaption>Selected System - {system.imageAlt || system.recoveryType}</figcaption>
             </figure>
           )}
         </div>
-        <div className="cover-kpi-row">
+                <div className="cover-kpi-row">
           <div className="cover-kpi">
-            <span>Airflow</span>
-            <strong>{formatFlow(system.supplyAirflowCfm, data.units)}</strong>
-          </div>
-          <div className="cover-kpi">
-            <span>{includesFreeCoolingAnalysis ? 'Selected Minimum OA' : 'OA %'}</span>
-            <strong>{formatNumber(selectedOaPercent, 0)}%</strong>
-          </div>
-          <div className="cover-kpi">
-            <span>{hasLatentRecovery ? tr('RÃ©cupÃ©ration (S/L)', 'Recovery Efficiency (S/L)') : tr('EfficacitÃ© de rÃ©cupÃ©ration', 'Recovery Efficiency')}</span>
+            <span>
+              {projectSystems.length > 1
+                ? tr("Débit d'air total du bâtiment", 'Total Building Airflow')
+                : tr("Débit d'air", 'Airflow')}
+            </span>
             <strong>
-              {hasLatentRecovery
-                ? `${formatNumber(recoverySensibleEfficiency, 0)}% / ${formatNumber(recoveryLatentEfficiency, 0)}%`
-                : `${formatNumber(recoverySensibleEfficiency, 0)}%`}
+              {formatFlow(
+                projectSystems.length > 1
+                  ? projectSystems.reduce(
+                      (total, item) =>
+                        total + Number(item.system?.supplyAirflowCfm || 0),
+                      0
+                    )
+                  : system.supplyAirflowCfm,
+                data.units
+              )}
             </strong>
           </div>
+
           <div className="cover-kpi">
-            <span>Heating Type</span>
-            <strong>{selectedReheatName}</strong>
+            <span>
+              {projectSystems.length > 1
+                ? tr('Nombre de systèmes HVAC', 'Number of HVAC Systems')
+                : includesFreeCoolingAnalysis
+                  ? 'Selected Minimum OA'
+                  : 'OA %'}
+            </span>
+            <strong>
+              {projectSystems.length > 1
+                ? projectSystems.length
+                : `${formatNumber(selectedOaPercent, 0)}%`}
+            </strong>
+          </div>
+
+          <div className="cover-kpi">
+            <span>
+              {projectSystems.length > 1
+                ? tr("Économies d'énergie annuelles", 'Annual Energy Savings')
+                : hasLatentRecovery
+                  ? tr('Récupération (S/L)', 'Recovery Efficiency (S/L)')
+                  : tr('Efficacité de récupération', 'Recovery Efficiency')}
+            </span>
+            <strong>
+              {projectSystems.length > 1
+                ? formatEnergy(buildingSavings.totals.energySavings)
+                : hasLatentRecovery
+                  ? `${formatNumber(recoverySensibleEfficiency, 0)}% / ${formatNumber(recoveryLatentEfficiency, 0)}%`
+                  : `${formatNumber(recoverySensibleEfficiency, 0)}%`}
+            </strong>
+          </div>
+
+          <div className="cover-kpi">
+            <span>
+              {projectSystems.length > 1
+                ? tr('Économies annuelles de coût', 'Annual Cost Savings')
+                : tr('Type de chauffage', 'Heating Type')}
+            </span>
+            <strong>
+              {projectSystems.length > 1
+                ? formatMoney(buildingSavings.totals.costSavings)
+                : selectedReheatName}
+            </strong>
           </div>
         </div>
       </header>
