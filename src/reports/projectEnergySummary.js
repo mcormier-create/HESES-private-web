@@ -30,6 +30,76 @@ export function selectedTechnologiesForSystem(system = {}) {
   return [...BASELINE_TECHNOLOGIES, selectedHumifogTechnology(system)]
 }
 
+export function summarizeSystemSavings(system = {}, fallbackReferenceTechnology = 'electricSteam') {
+  const results = system.annualTechnologyResults || system.results || {}
+  const referenceTechnology = BASELINE_TECHNOLOGIES.includes(system.economics?.annualComparisonReference)
+    ? system.economics.annualComparisonReference
+    : fallbackReferenceTechnology
+  const selectedHumifogKey = selectedHumifogTechnology(system)
+  const referenceResult = results[referenceTechnology] || {}
+  const humifogResult = results[selectedHumifogKey] || {}
+  const installedCosts = system.economics?.installedCosts || system.installedCosts || {}
+  const referenceEnergy = number(referenceResult.annualEnergyKWh)
+  const humifogEnergy = number(humifogResult.annualEnergyKWh)
+  const referenceCost = number(referenceResult.annualOperatingCost)
+  const humifogCost = number(humifogResult.annualOperatingCost)
+  const referenceInvestment = number(referenceResult.installedInvestmentCost ?? installedCosts[referenceTechnology])
+  const humifogInvestment = number(humifogResult.installedInvestmentCost ?? installedCosts[selectedHumifogKey])
+  const energySavings = referenceEnergy - humifogEnergy
+  const costSavings = referenceCost - humifogCost
+  const incrementalInvestment = humifogInvestment - referenceInvestment
+
+  return {
+    referenceTechnology,
+    selectedHumifogKey,
+    referenceEnergy,
+    humifogEnergy,
+    energySavings,
+    energyReductionPercent: referenceEnergy > 0 ? energySavings / referenceEnergy * 100 : null,
+    referenceCost,
+    humifogCost,
+    costSavings,
+    incrementalInvestment,
+    simplePaybackYears: incrementalInvestment > 0 && costSavings > 0 ? incrementalInvestment / costSavings : null,
+    simpleAnnualRoiPercent: incrementalInvestment > 0 ? costSavings / incrementalInvestment * 100 : null,
+  }
+}
+
+export function summarizeBuildingSavings(systems, fallbackReferenceTechnology = 'electricSteam') {
+  const activeSystems = (systems || []).filter((system) => system?.active !== false)
+  const bySystem = activeSystems.map((system) => ({
+    system,
+    savings: summarizeSystemSavings(system, fallbackReferenceTechnology),
+  }))
+  const totals = bySystem.reduce((total, entry) => {
+    const savings = entry.savings
+    total.referenceEnergy += savings.referenceEnergy
+    total.humifogEnergy += savings.humifogEnergy
+    total.referenceCost += savings.referenceCost
+    total.humifogCost += savings.humifogCost
+    total.incrementalInvestment += savings.incrementalInvestment
+    return total
+  }, {
+    referenceEnergy: 0,
+    humifogEnergy: 0,
+    referenceCost: 0,
+    humifogCost: 0,
+    incrementalInvestment: 0,
+  })
+  totals.energySavings = totals.referenceEnergy - totals.humifogEnergy
+  totals.energyReductionPercent = totals.referenceEnergy > 0
+    ? totals.energySavings / totals.referenceEnergy * 100
+    : null
+  totals.costSavings = totals.referenceCost - totals.humifogCost
+  totals.simplePaybackYears = totals.incrementalInvestment > 0 && totals.costSavings > 0
+    ? totals.incrementalInvestment / totals.costSavings
+    : null
+  totals.simpleAnnualRoiPercent = totals.incrementalInvestment > 0
+    ? totals.costSavings / totals.incrementalInvestment * 100
+    : null
+  return { bySystem, totals }
+}
+
 export function summarizeProjectEnergy(systems, referenceTechnology = 'electricSteam') {
   const activeSystems = (systems || []).filter((system) => system?.active !== false)
   const totals = Object.fromEntries([...BASELINE_TECHNOLOGIES, 'humifogSelected'].map((key) => [key, {
