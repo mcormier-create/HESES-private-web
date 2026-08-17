@@ -121,6 +121,11 @@ function loginPage(language = 'fr', error = '') {
   return `<!doctype html><html lang="${en ? 'en' : 'fr'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HESA - ${copy.title}</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#eef3f7;font-family:Arial,sans-serif;color:#102f4e}main{width:min(90vw,430px);padding:36px;border:1px solid #d8e1ea;border-radius:24px;background:#fff;box-shadow:0 24px 60px #0f3a5b24}.brand{margin-bottom:26px;color:#0f3a5b;font-weight:800;letter-spacing:.12em}h1{margin:0 0 8px;font-size:28px}h2{margin:0 0 18px;color:#52677d;font-size:17px;font-weight:500}p{color:#475569;line-height:1.5}.security{font-size:13px;color:#52677d}label{display:block;margin:18px 0 8px;font-weight:700}input,button{box-sizing:border-box;width:100%;padding:13px 14px;border-radius:10px;font-size:16px}input{border:1px solid #94a3b8}button{margin-top:14px;border:0;background:#0f3a5b;color:#fff;font-weight:800}nav{display:flex;gap:12px;margin-top:20px}nav a{color:#0f3a5b}.error{padding:11px 12px;border-radius:10px;background:#fee2e2;color:#991b1b;font-weight:700}</style></head><body><main><div class="brand">HESA</div><h1>${copy.title}</h1><h2>${copy.subtitle}</h2><p>${copy.prompt}</p><p class="security">${copy.security}</p>${error ? `<div class="error">${error}</div>` : ''}<form method="post" action="/heses-login"><input type="hidden" name="language" value="${en ? 'en' : 'fr'}"><label for="password">${copy.label}</label><input id="password" name="accessPassword" type="password" autocomplete="current-password" autofocus><button type="submit">${copy.submit}</button></form><nav><a href="/heses-login?lang=fr">Français</a><a href="/heses-login?lang=en">English</a></nav></main></body></html>`
 }
 
+function sendLoginPage(response, language = 'fr', error = '') {
+  response.setHeader('Content-Type', 'text/html; charset=utf-8')
+  response.end(loginPage(language, error))
+}
+
 async function handleAuth(request, response) {
   const url = new URL(request.url || '/', 'http://heses.local')
   if (isStateChangingRequest(request, url.pathname) && (isCrossSiteRequest(request) || !isAllowedOrigin(request))) {
@@ -130,7 +135,7 @@ async function handleAuth(request, response) {
   }
   if (!accessPassword) {
     response.statusCode = 503
-    response.end(loginPage(url.searchParams.get('lang') || 'fr', 'Private access is not configured on this server.'))
+    sendLoginPage(response, url.searchParams.get('lang') || 'fr', 'Private access is not configured on this server.')
     return true
   }
   if (url.pathname === '/heses-login' && request.method === 'POST') {
@@ -138,7 +143,7 @@ async function handleAuth(request, response) {
     const state = failedLogins.get(ip)
     if (state && Date.now() - state.startedAt < loginWindowMs && state.count >= loginLimit) {
       response.statusCode = 429
-      response.end(loginPage('fr', 'Too many attempts. Please try again later.'))
+      sendLoginPage(response, 'fr', 'Too many attempts. Please try again later.')
       return true
     }
     const form = new URLSearchParams(await readBody(request, 50_000))
@@ -158,7 +163,7 @@ async function handleAuth(request, response) {
     rateLimited(failedLogins, ip, loginWindowMs, loginLimit)
     console.warn(`[HESA security] failed login attempt for ${ip}`)
     response.statusCode = 200
-    response.end(loginPage(language, language === 'en' ? 'Incorrect password. Please try again.' : 'Mot de passe incorrect. Veuillez réessayer.'))
+    sendLoginPage(response, language, language === 'en' ? 'Incorrect password. Please try again.' : 'Mot de passe incorrect. Veuillez réessayer.')
     return true
   }
   if (url.pathname === '/heses-logout') {
@@ -171,7 +176,7 @@ async function handleAuth(request, response) {
     return true
   }
   if (url.pathname === '/heses-login') {
-    response.end(loginPage(url.searchParams.get('lang') || 'fr'))
+    sendLoginPage(response, url.searchParams.get('lang') || 'fr')
     return true
   }
   if (authenticated(request)) return false
@@ -179,7 +184,7 @@ async function handleAuth(request, response) {
     sendJson(response, 401, { error: 'Acces prive HESA requis.' })
     return true
   }
-  response.end(loginPage('fr'))
+  sendLoginPage(response, 'fr')
   return true
 }
 
@@ -211,7 +216,10 @@ async function serveStatic(request, response) {
   let relative = decodeURIComponent(url.pathname)
   if (relative === '/') relative = '/index.html'
   const candidate = path.resolve(distRoot, `.${relative}`)
-  const safeCandidate = candidate.startsWith(`${distRoot}${path.sep}`) ? candidate : path.join(distRoot, 'index.html')
+  const isSpaRoute = !path.extname(relative)
+  const safeCandidate = candidate.startsWith(`${distRoot}${path.sep}`) && !isSpaRoute
+    ? candidate
+    : path.join(distRoot, 'index.html')
   try {
     const data = await fs.readFile(safeCandidate)
     const contentType = safeCandidate.endsWith('.html') ? 'text/html; charset=utf-8' : safeCandidate.endsWith('.js') ? 'text/javascript; charset=utf-8' : safeCandidate.endsWith('.css') ? 'text/css; charset=utf-8' : 'application/octet-stream'

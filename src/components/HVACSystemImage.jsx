@@ -408,7 +408,6 @@ export default function HVACSystemImage({
   const labelPositions = isFreeCoolingSystem
     ? {
         outdoorAir: 'left-[-2%] top-[32%]',
-        returnAir: 'right-[4%] top-[16%]',
         oaDamper: 'left-[6%] top-[52%]',
         returnDamper: 'right-[13%] top-[20%]',
         exhaustDamper: 'left-[3%] top-[26%]',
@@ -483,16 +482,6 @@ export default function HVACSystemImage({
           sub={isFreeCoolingSystem && data.oaPercent ? `${data.oaPercent} OA` : localizeHumidityText(data.oaRh, lang)}
           color="blue"
         />
-
-        {isFreeCoolingSystem && (
-          <OverlayLabel
-            className={labelPositions.returnAir}
-            title={text.returnAir}
-            value={data.raTemp ?? '-'}
-            sub={data.raPercent ? `${data.raPercent} RA` : localizeHumidityText(data.raRh, lang)}
-            color="orange"
-          />
-        )}
 
         {isFreeCoolingSystem && (
           <>

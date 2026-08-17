@@ -1255,6 +1255,15 @@ export default function HvacEnergyOptimizationReport({ data }) {
         </TwoColumn>
         <h3>Design Temperatures</h3>
         <KeyValueTable rows={(system.designTemperatures || []).map((item) => [item.label, formatTemp(item.value, data.units)])} />
+        <h3>{tr('États psychrométriques Humifog', 'Humifog Psychrometric States')}</h3>
+        <KeyValueTable rows={(system.psychrometricStates || []).map((item) => [
+          item.label,
+          `${Number.isFinite(Number(item.temperature))
+            ? formatTemp(item.temperature, data.units)
+            : tr('Non disponible', 'Not available')} / ${Number.isFinite(Number(item.relativeHumidity))
+            ? `${formatNumber(item.relativeHumidity, 1)}% RH`
+            : tr('Non disponible', 'Not available')}`,
+        ])} />
       </ReportSection>
 
       <ReportSection title={reportSectionTitle('psychrometric', 'PSYCHROMETRIC ANALYSIS')} pageBreak allowPageBreak>

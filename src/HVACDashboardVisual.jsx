@@ -5,7 +5,7 @@ import PsychrometricChart from './components/PsychrometricChart'
 import HvacEnergyOptimizationReport from './reports/HvacEnergyOptimizationReport'
 import { BASELINE_TECHNOLOGIES, selectedHumifogTechnology } from './reports/projectEnergySummary'
 import { calculateFreeCoolingHumifogComparison } from './services/freeCoolingHumifogService'
-import { calculateHvacDashboardMetrics } from './services/hvacEngineeringService'
+import { calculateAutomaticPreHumifogTemperature, calculateHvacDashboardMetrics } from './services/hvacEngineeringService'
 import { dryBulbFromEnthalpyHumidityRatio, humidityRatioFromRH, mixAirStates, moistAirEnthalpyBtuLb, psychrometricState, sensibleHeatingKw, stateFromDbW } from './calculations/psychrometrics'
 import { getSystemSchematic, resolveSystemSchematicId, systemImages } from './utils/systemImages'
 import {
@@ -436,10 +436,10 @@ function calculateHourlySimulation(records, options) {
     activeFraction,
     roomTemperature,
     roomRelativeHumidity,
+    supplyAirTemperature,
     selectedRecoveries,
     wheelEfficiency,
     latentRecoveryEfficiency,
-    supplyAirTemperature,
     selectedReheatSystem,
     heatPumpCOP,
     steamBoilerEfficiency,
@@ -448,7 +448,7 @@ function calculateHourlySimulation(records, options) {
     naturalGasRate,
   } = options
 
-  const indoorHumidityRatio = humidityRatioFromRH(roomTemperature, roomRelativeHumidity)
+  const indoorHumidityRatio = humidityRatioFromRH(supplyAirTemperature, roomRelativeHumidity)
   const selectedRecovery = selectedRecoveries[0]
   const isNoRecovery = Boolean(selectedRecovery?.noRecovery)
   const latentRecoverySupported = supportsLatentRecovery(selectedRecovery)
@@ -458,7 +458,7 @@ function calculateHourlySimulation(records, options) {
   const effectiveLatentRecoveryEfficiency = isNoRecovery || !latentRecoverySupported
     ? 0
     : clampValue(Number(latentRecoveryEfficiency), 0, 95)
-  const indoorEnthalpy = moistAirEnthalpyBtuLb(roomTemperature, indoorHumidityRatio)
+  const indoorEnthalpy = moistAirEnthalpyBtuLb(supplyAirTemperature, indoorHumidityRatio)
   const effectiveOutsideAirCFM = Math.round(outsideAirCFM * activeFraction)
   const reheatEnergySource = String(selectedReheatSystem?.energie || '')
     .normalize('NFD')
@@ -491,8 +491,9 @@ function calculateHourlySimulation(records, options) {
     const enteringHumifogEnthalpy = moistAirEnthalpyBtuLb(recoveredDryBulbC, recoveredHumidityRatio)
     const preheatBtuPerHr = Math.max(0, 4.5 * effectiveOutsideAirCFM * (indoorEnthalpy - enteringHumifogEnthalpy))
     const grossHumifogPreheatKW = Math.round(preheatBtuPerHr / 3412)
+    const preheatTargetTempC = calculateAutomaticPreHumifogTemperature(indoorEnthalpy, recoveredHumidityRatio)
     const baseHvacHeatingThermalKW = Math.round(
-      sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, supplyAirTemperature - recoveredDryBulbC))
+      sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, preheatTargetTempC - recoveredDryBulbC))
     )
     const grossReheatKW = Math.max(0, grossHumifogPreheatKW - baseHvacHeatingThermalKW)
     const recoveryEnergyReductionKW = isNoRecovery
@@ -2083,7 +2084,9 @@ const translations = {
     naturalGasBoiler: 'Bouilloire vapeur gaz naturel',
     roomTemperature: 'Température pièce',
     relativeHumidity: 'Humidité relative',
-    supplyAirTemperature: 'Température air d\'alimentation',
+    supplyAirTemperature: 'Température d\'air d\'alimentation',
+    beforeHumifogTemperature: 'Température avant Humifog',
+    afterHumifogTemperature: 'Température après Humifog',
     outsideAirFlow: 'Débit air extérieur',
     heatPumpCOP: 'COP thermopompe',
     thermalWheel: 'Roue thermique',
@@ -2255,6 +2258,8 @@ const translations = {
     roomTemperature: 'Room Temperature',
     relativeHumidity: 'Relative Humidity',
     supplyAirTemperature: 'Supply Air Temperature',
+    beforeHumifogTemperature: 'Temperature Before Humifog',
+    afterHumifogTemperature: 'Temperature After Humifog',
     outsideAirFlow: 'Outside Air Flow',
     heatPumpCOP: 'Heat Pump COP',
     thermalWheel: 'Thermal Wheel',
@@ -2902,14 +2907,50 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     setProjectSaveStatus('')
   }
 
-  const saveProjectProfile = () => {
+  const saveProjectProfile = async () => {
     try {
       window.localStorage.setItem(HESES_PROJECT_PROFILE_STORAGE_KEY, JSON.stringify(projectProfile))
-      setProjectSaveStatus(language === 'fr' ? 'Projet sauvegardé localement.' : 'Project saved locally.')
-    } catch {
+      const settings = buildProjectSettingsSnapshot()
+      if (!onSettingsChange) {
+        window.localStorage.setItem(HESES_PROJECT_SETTINGS_STORAGE_KEY, JSON.stringify(settings))
+      }
+
+      const savedSystems = (() => {
+        try {
+          return JSON.parse(window.localStorage.getItem(HESES_MULTI_SYSTEM_STORAGE_KEY) || '[]')
+        } catch {
+          return []
+        }
+      })()
+      const projectFile = {
+        format: 'HESA project',
+        version: 1,
+        savedAt: new Date().toISOString(),
+        profile: projectProfile,
+        settings,
+        systems: Array.isArray(savedSystems) ? savedSystems : [],
+      }
+      const projectBlob = new Blob([JSON.stringify(projectFile, null, 2)], { type: 'application/json' })
+      const suggestedName = `${(projectProfile.name || 'HESA-project').trim().replace(/[^a-z0-9_-]+/gi, '-') || 'HESA-project'}.heses.json`
+      const showSaveFilePicker = globalThis.showSaveFilePicker
+
+      if (typeof showSaveFilePicker === 'function') {
+        const fileHandle = await showSaveFilePicker({
+          suggestedName,
+          types: [{ description: 'HESA project', accept: { 'application/json': ['.heses.json', '.json'] } }],
+        })
+        const writable = await fileHandle.createWritable()
+        await writable.write(projectBlob)
+        await writable.close()
+      } else {
+        downloadBlob(projectBlob, suggestedName)
+      }
+      setProjectSaveStatus(language === 'fr' ? 'Projet sauvegardé dans le fichier choisi.' : 'Project saved to the selected file.')
+    } catch (error) {
+      if (error?.name === 'AbortError') return
       setProjectSaveStatus(language === 'fr'
-        ? 'Impossible de sauvegarder le projet localement.'
-        : 'Unable to save the project locally.')
+        ? 'Impossible de sauvegarder le fichier du projet.'
+        : 'Unable to save the project file.')
     }
   }
 
@@ -3244,7 +3285,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const [outsideAirCFM, setOutsideAirCFM] = useState(() => finiteSetting(initialProjectSettings, 'outsideAirCFM', 12500))
   const [roomTemperature, setRoomTemperature] = useState(() => finiteSetting(initialProjectSettings, 'roomTemperature', 22))
   const [roomRelativeHumidity, setRoomRelativeHumidity] = useState(() => finiteSetting(initialProjectSettings, 'roomRelativeHumidity', 35))
-  const [supplyAirTemperature, setSupplyAirTemperature] = useState(() => finiteSetting(initialProjectSettings, 'supplyAirTemperature', 30))
+  const [supplyAirTemperature, setSupplyAirTemperature] = useState(() => finiteSetting(initialProjectSettings, 'supplyAirTemperature', 22))
   const [heatPumpCOP, setHeatPumpCOP] = useState(() => finiteSetting(initialProjectSettings, 'heatPumpCOP', 3.8))
 
   const savedRecoveryName = normalizeLabel(initialProjectSettings.selectedRecoveryName)
@@ -3625,7 +3666,6 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       ? thermalKw / Math.max(heatPumpCOP, 0.1)
       : thermalKw * (selectedReheatSystem?.facteur ?? 1)
   )
-  const effectiveSupplyAirTemperature = is100OA ? roomTemperature : supplyAirTemperature
   const weatherSourceCalculationLabel = calculationMethod === 'hourly'
     ? (hourlyWeatherSourceType === 'custom'
       ? (language === 'fr' ? 'EPW horaire personnalisé' : 'Custom hourly EPW')
@@ -3767,10 +3807,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
           activeFraction,
           roomTemperature,
           roomRelativeHumidity,
+          supplyAirTemperature,
           selectedRecoveries: activeSelectedRecoveries,
           wheelEfficiency,
           latentRecoveryEfficiency,
-          supplyAirTemperature: effectiveSupplyAirTemperature,
           selectedReheatSystem,
           heatPumpCOP,
           steamBoilerEfficiency,
@@ -3853,10 +3893,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         activeFraction,
         roomTemperature,
         roomRelativeHumidity,
+        supplyAirTemperature,
         selectedRecoveries: activeSelectedRecoveries,
         wheelEfficiency,
         latentRecoveryEfficiency,
-        supplyAirTemperature: effectiveSupplyAirTemperature,
         selectedReheatSystem,
         heatPumpCOP,
         steamBoilerEfficiency,
@@ -3886,10 +3926,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     activeFraction,
     roomTemperature,
     roomRelativeHumidity,
+    supplyAirTemperature,
     activeSelectedRecoveries,
     wheelEfficiency,
     latentRecoveryEfficiency,
-    effectiveSupplyAirTemperature,
     selectedReheatSystem,
     heatPumpCOP,
     steamBoilerEfficiency,
@@ -3915,11 +3955,11 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     effectiveOutsideAirCFM,
     roomTemperature,
     roomRelativeHumidity,
+    supplyAirTemperature: is100OA ? supplyAirTemperature : roomTemperature,
     outsideWinterTemp,
     selectedRecoveries: activeSelectedRecoveries,
     wheelEfficiency,
     latentRecoveryEfficiency,
-    supplyAirTemperature: effectiveSupplyAirTemperature,
     selectedReheatSystem,
     heatPumpCOP,
     steamBoilerEfficiency,
@@ -3944,6 +3984,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     cappedRecoveryEfficiency,
     oaTempCalc,
     adiabaticTemperatureDrop,
+    preHumifogTemp,
+    preHumifogRh,
+    afterHumifogTemp,
+    afterHumifogRh,
     grossReheatKW,
     grossHumifogPreheatKW,
     baseHvacHeatingThermalKW,
@@ -4162,11 +4206,11 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       effectiveOutsideAirCFM,
       roomTemperature,
       roomRelativeHumidity,
+      supplyAirTemperature: is100OA ? supplyAirTemperature : roomTemperature,
       outsideWinterTemp: bin.tempC,
       selectedRecoveries: activeSelectedRecoveries,
       wheelEfficiency,
       latentRecoveryEfficiency,
-      supplyAirTemperature: effectiveSupplyAirTemperature,
       selectedReheatSystem,
       heatPumpCOP,
       steamBoilerEfficiency,
@@ -4439,6 +4483,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const fallbackPreHumifogHeatingState = chartHumifogProcess.preheatState
   const fallbackAfterHumifogState = chartHumifogProcess.afterHumifogState
   const fallbackAfterHeatingState = fallbackPreHumifogHeatingState
+  const displayedPreHumifogTemp = isFreeCoolingMode ? fallbackAfterHeatingState.db : preHumifogTemp
+  const displayedPreHumifogRh = isFreeCoolingMode ? fallbackAfterHeatingState.rh : preHumifogRh
+  const displayedAfterHumifogTemp = isFreeCoolingMode ? fallbackAfterHumifogState.db : afterHumifogTemp
+  const displayedAfterHumifogRh = isFreeCoolingMode ? fallbackAfterHumifogState.rh : afterHumifogRh
   const adiabaticDisplayDropC = Math.max(0, fallbackPreHumifogHeatingState.db - fallbackAfterHumifogState.db)
   const recoveryPointLabel = recoveryGroup === 'WHEEL' ? 'After thermal wheel' : 'After recovery'
   const chartHeatingInletState = fallbackConditionedInletState
@@ -4633,12 +4681,32 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const reportDesignTemperatures = [
     { label: language === 'fr' ? 'Température sèche extérieure de conception' : 'Outdoor design dry bulb', value: outdoorDesignState.db },
     { label: language === 'fr' ? 'Température sèche de la pièce' : 'Room dry bulb', value: roomTemperature },
+    ...(is100OA ? [{ label: language === 'fr' ? 'Température d\'air d\'alimentation' : 'Supply Air Temperature', value: supplyAirTemperature }] : []),
+    { label: language === 'fr' ? 'Température avant Humifog' : 'Temperature Before Humifog', value: displayedPreHumifogTemp },
+    { label: language === 'fr' ? 'Température après Humifog' : 'Temperature After Humifog', value: displayedAfterHumifogTemp },
     ...(!is100OA
       ? [
         { label: language === 'fr' ? 'Air mélangé calculé' : 'Calculated mixed air', value: freeCoolingHumifogAnalysis.validation.calculatedMixedDb },
         { label: language === 'fr' ? 'Air mélangé actif' : 'Active mixed air', value: freeCoolingHumifogAnalysis.validation.activeMixedDb },
       ]
       : []),
+  ]
+  const reportPsychrometricStates = [
+    ...(!is100OA ? [{
+      label: language === 'fr' ? 'Température de mélange' : 'Mixed Air Temperature',
+      temperature: freeCoolingHumifogAnalysis.validation.activeMixedDb,
+      relativeHumidity: fallbackMixedState.rh,
+    }] : []),
+    {
+      label: language === 'fr' ? 'Température avant Humifog' : 'Temperature Before Humifog',
+      temperature: displayedPreHumifogTemp,
+      relativeHumidity: displayedPreHumifogRh,
+    },
+    {
+      label: language === 'fr' ? 'Température après Humifog' : 'Temperature After Humifog',
+      temperature: displayedAfterHumifogTemp,
+      relativeHumidity: displayedAfterHumifogRh,
+    },
   ]
   const scheduleDescriptionText = scheduleMode === '24-7'
     ? t.operationMode24_7
@@ -4748,6 +4816,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       airflowPaths: reportAirflowPaths,
       componentSequence: reportComponentSequence,
       designTemperatures: reportDesignTemperatures,
+      psychrometricStates: reportPsychrometricStates,
     },
     design: {
       outdoorState: outdoorDesignState,
@@ -5059,6 +5128,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
             : (language === 'fr' ? 'Heures personnalisées' : 'Custom Operating Hours'),
         },
         system: { supplyAirflowCfm: system.settings?.outsideAirCFM },
+        project: {},
+        metrics: {},
+        economics: {},
+        annualComparison: { freeCooling: {}, humifog: {} },
         annualTechnologyResults: system.results || {},
       })
   ))
@@ -5376,8 +5449,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     afterHumifogRh: `HR ${formatNumber(fallbackAfterHumifogState.rh, 0)}%`,
     afterHeatingTemp: `${displayTemp(fallbackAfterHeatingState.db)}${tempUnit}`,
     afterHeatingRh: `HR ${formatNumber(fallbackAfterHeatingState.rh, 0)}%`,
-    saTemp: `${displayTemp(effectiveSupplyAirTemperature)}${tempUnit}`,
-    saRh: `HR ${formatNumber(roomRelativeHumidity, 0)}%`,
+    saTemp: `${displayTemp(displayedAfterHumifogTemp)}${tempUnit}`,
+    saRh: `HR ${formatNumber(displayedAfterHumifogRh, 1)}%`,
     recoveryKw: `${formatNumber(chartRecoveryThermalKw, 1)} kW`,
     heatingKw: `${formatNumber(chartHeatingHpKw, 1)} kW`,
     humifogKw: `${formatNumber(chartHumifogPumpKw, 1)} kW`,
@@ -6401,28 +6474,33 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                 </div>
               )}
 
-              <div>
+              {!isFreeCoolingMode && (
+                <div>
                 <div className="flex justify-between mb-2">
                   <span>{t.supplyAirTemperature}</span>
-                  <span>{displayTemp(effectiveSupplyAirTemperature)}{tempUnit}</span>
+                  <span>{displayTemp(supplyAirTemperature)}{tempUnit}</span>
                 </div>
-                {is100OA ? (
-                  <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-semibold text-sky-800">
-                    {language === 'fr'
-                      ? 'Automatique : identique à la température de pièce en mode 100 % air extérieur.'
-                      : 'Automatic: equal to room temperature in 100% outdoor air mode.'}
-                  </div>
-                ) : (
-                  <input
-                    type="number"
-                    min={displayTemp(15)}
-                    max={displayTemp(40)}
-                    step="0.1"
-                    value={displayTemp(supplyAirTemperature)}
-                    onChange={(e) => setSupplyAirTemperature(inputTempToC(Number(e.target.value)))}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
-                  />
-                )}
+                <input
+                  type="number"
+                  min={displayTemp(15)}
+                  max={displayTemp(40)}
+                  step="0.1"
+                  value={displayTemp(supplyAirTemperature)}
+                  onChange={(e) => setSupplyAirTemperature(inputTempToC(Number(e.target.value)))}
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
+                />
+                </div>
+              )}
+
+              <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3">
+                <div className="flex justify-between gap-4 mb-2">
+                  <span>{t.beforeHumifogTemperature}</span>
+                  <span className="font-semibold">{displayTemp(displayedPreHumifogTemp)}{tempUnit} / HR {formatNumber(displayedPreHumifogRh, 1)}%</span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span>{t.afterHumifogTemperature}</span>
+                  <span className="font-semibold">{displayTemp(displayedAfterHumifogTemp)}{tempUnit} / HR {formatNumber(displayedAfterHumifogRh, 1)}%</span>
+                </div>
               </div>
             </div>
 

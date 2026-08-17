@@ -2,6 +2,7 @@ import {
   grainsFromHumidityRatio,
   humidityRatioFromRH,
   moistAirEnthalpyBtuLb,
+  relativeHumidityFromHumidityRatio,
   sensibleHeatingKw,
   wetBulbC,
 } from '../calculations/psychrometrics.js'
@@ -11,10 +12,10 @@ export function calculateHvacDashboardMetrics({
   effectiveOutsideAirCFM,
   roomTemperature,
   roomRelativeHumidity,
+  supplyAirTemperature = roomTemperature,
   outsideWinterTemp,
   selectedRecoveries,
   wheelEfficiency,
-  supplyAirTemperature,
   selectedReheatSystem,
   heatPumpCOP,
   steamBoilerEfficiency,
@@ -37,7 +38,10 @@ export function calculateHvacDashboardMetrics({
   const effectiveLatentRecoveryEfficiency = isNoRecovery || !latentRecoverySupported
     ? 0
     : clampValue(Number(latentRecoveryEfficiency), 0, 95)
-  const indoorHumidityRatio = humidityRatioFromRH(roomTemperature, roomRelativeHumidity)
+  const finalSupplyTemperature = is100OA && Number.isFinite(Number(supplyAirTemperature))
+    ? Number(supplyAirTemperature)
+    : roomTemperature
+  const indoorHumidityRatio = humidityRatioFromRH(finalSupplyTemperature, roomRelativeHumidity)
   const outdoorHumidityRatio = humidityRatioFromRH(outsideWinterTemp, outsideRelativeHumidity)
   const recoveredHumidityRatioRaw = outdoorHumidityRatio +
     (effectiveLatentRecoveryEfficiency / 100) * (indoorHumidityRatio - outdoorHumidityRatio)
@@ -46,7 +50,7 @@ export function calculateHvacDashboardMetrics({
 
   const indoorGrainsRaw = grainsFromHumidityRatio(indoorHumidityRatio)
   const outdoorGrainsRaw = grainsFromHumidityRatio(enteringHumidityRatio)
-  const indoorEnthalpyRaw = moistAirEnthalpyBtuLb(roomTemperature, indoorHumidityRatio)
+  const indoorEnthalpyRaw = moistAirEnthalpyBtuLb(finalSupplyTemperature, indoorHumidityRatio)
   const outdoorEnthalpyRaw = moistAirEnthalpyBtuLb(outsideWinterTemp, enteringHumidityRatio)
 
   const steamHumidificationLoadRaw = Math.max(0, 4.5 * effectiveOutsideAirCFM * deltaW)
@@ -62,24 +66,26 @@ export function calculateHvacDashboardMetrics({
   const latentWheelReductionFactor = 1
   const effectiveDeltaW = deltaW * latentWheelReductionFactor
 
-  const adiabaticTemperatureDropRaw = hasActiveHumidification
-    ? Math.max(0.3, Math.min(12, effectiveDeltaW * 7000 * 0.22))
-    : 0
-
   const oaTempCalc = selectedCity?.hiver ?? outsideWinterTemp
   const mixTempCalc = is100OA ? oaTempCalc : economizerTargetTemp
   const temperatureRecoveryEfficiency = sensibleRecoveryEfficiency
   const afterWheelTempRaw = mixTempCalc + (temperatureRecoveryEfficiency / 100) * (roomTemperature - mixTempCalc)
-  const afterHumifogTempRaw = afterWheelTempRaw - adiabaticTemperatureDropRaw
-
-  const leavingAirTemperatureRaw = supplyAirTemperature - adiabaticTemperatureDropRaw
-  const reheatDeltaTRaw = Math.max(0, supplyAirTemperature - leavingAirTemperatureRaw)
   const enteringHumifogEnthalpyRaw = moistAirEnthalpyBtuLb(afterWheelTempRaw, enteringHumidityRatio)
   const preheatBtuPerHrRaw = hasActiveHumidification
     ? Math.max(0, 4.5 * effectiveOutsideAirCFM * (indoorEnthalpyRaw - enteringHumifogEnthalpyRaw))
     : 0
+  const preheatTargetTempRaw = hasActiveHumidification
+    ? calculateAutomaticPreHumifogTemperature(indoorEnthalpyRaw, enteringHumidityRatio)
+    : afterWheelTempRaw
+  const afterHumifogTempRaw = hasActiveHumidification ? finalSupplyTemperature : afterWheelTempRaw
+  const adiabaticTemperatureDropRaw = Math.max(0, preheatTargetTempRaw - afterHumifogTempRaw)
+  const preheatRelativeHumidityRaw = relativeHumidityFromHumidityRatio(preheatTargetTempRaw, enteringHumidityRatio)
+  const afterHumifogRelativeHumidityRaw = relativeHumidityFromHumidityRatio(afterHumifogTempRaw, indoorHumidityRatio)
+
+  const leavingAirTemperatureRaw = afterHumifogTempRaw
+  const reheatDeltaTRaw = Math.max(0, preheatTargetTempRaw - leavingAirTemperatureRaw)
   const grossHumifogPreheatKWRaw = hasActiveHumidification ? (preheatBtuPerHrRaw / 3412) : 0
-  const baseHvacHeatingThermalKWRaw = sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, supplyAirTemperature - afterWheelTempRaw))
+  const baseHvacHeatingThermalKWRaw = sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, preheatTargetTempRaw - afterWheelTempRaw))
   const grossReheatKWRaw = hasActiveHumidification
     ? Math.max(0, grossHumifogPreheatKWRaw - baseHvacHeatingThermalKWRaw)
     : 0
@@ -202,6 +208,10 @@ export function calculateHvacDashboardMetrics({
     adiabaticTemperatureDrop,
     afterWheelTemp,
     afterHumifogTemp,
+    preHumifogTempRaw: preheatTargetTempRaw,
+    preHumifogTemp: Number(preheatTargetTempRaw.toFixed(1)),
+    preHumifogRh: Number(preheatRelativeHumidityRaw.toFixed(1)),
+    afterHumifogRh: Number(afterHumifogRelativeHumidityRaw.toFixed(1)),
     leavingAirTemperature,
     reheatDeltaT,
     grossReheatKW,
@@ -289,6 +299,18 @@ export function estimateWetBulbC(dryBulbC, relativeHumidity) {
   return wetBulbC(dryBulbC, relativeHumidity)
 }
 
+function dryBulbFromEnthalpyHumidityRatioBtu(enthalpyBtuLb, humidityRatio) {
+  const safeHumidityRatio = Math.max(0, Number(humidityRatio) || 0)
+  const denominator = 0.24 + 0.444 * safeHumidityRatio
+  if (Math.abs(denominator) < 1e-9) return 0
+  return (Number(enthalpyBtuLb) - safeHumidityRatio * 1061) / denominator
+}
+
+export function calculateAutomaticPreHumifogTemperature(enthalpyBtuLb, humidityRatio) {
+  const dryBulbF = dryBulbFromEnthalpyHumidityRatioBtu(enthalpyBtuLb, humidityRatio)
+  return (dryBulbF - 32) * 5 / 9
+}
+
 export function calculateFreeCoolingPhase1({
   enabled,
   bins,
@@ -296,7 +318,6 @@ export function calculateFreeCoolingPhase1({
   outdoorDesignRh,
   economizerTargetTemp,
   roomTemperature,
-  supplyAirTemperature,
   outsideAirCFM,
   minimumOutsideAirPercent = 20,
   evaporativeEffectiveness = 0.72,
@@ -308,7 +329,7 @@ export function calculateFreeCoolingPhase1({
     (outdoorDesignTempC - evaporativeEffectiveness * Math.max(outdoorDesignTempC - wetBulbC, 0)).toFixed(1)
   )
   const dryEconomizerActive = outdoorDesignTempC <= economizerTargetTemp
-  const evaporativeActive = enabled && evaporativeLeavingTempC <= supplyAirTemperature
+  const evaporativeActive = enabled && evaporativeLeavingTempC <= roomTemperature
   const sensibleCoolingKw = Math.max(
     0,
     ((1.08 * outsideAirCFM * Math.max(outdoorDesignTempC - evaporativeLeavingTempC, 0)) / 3412) * 1.8
