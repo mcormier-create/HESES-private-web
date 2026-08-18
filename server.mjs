@@ -248,14 +248,33 @@ async function serveStatic(request, response) {
   let relative = decodeURIComponent(url.pathname)
   if (relative === '/') relative = '/index.html'
   const candidate = path.resolve(distRoot, `.${relative}`)
-  const isSpaRoute = !path.extname(relative)
+  const isAssetRequest = relative.startsWith('/assets/') || relative.startsWith('/images/') || relative.startsWith('/system-images/') || relative.startsWith('/weather/')
+  const isSpaRoute = !path.extname(relative) && !isAssetRequest
   const safeCandidate = candidate.startsWith(`${distRoot}${path.sep}`) && !isSpaRoute
     ? candidate
     : path.join(distRoot, 'index.html')
   try {
     const data = await fs.readFile(safeCandidate)
-    const contentType = safeCandidate.endsWith('.html') ? 'text/html; charset=utf-8' : safeCandidate.endsWith('.js') ? 'text/javascript; charset=utf-8' : safeCandidate.endsWith('.css') ? 'text/css; charset=utf-8' : 'application/octet-stream'
+    const extension = path.extname(safeCandidate).toLowerCase()
+    const contentType = extension === '.html'
+      ? 'text/html; charset=utf-8'
+      : extension === '.js'
+        ? 'text/javascript; charset=utf-8'
+        : extension === '.css'
+          ? 'text/css; charset=utf-8'
+          : extension === '.svg'
+            ? 'image/svg+xml'
+            : extension === '.png'
+              ? 'image/png'
+              : extension === '.jpg' || extension === '.jpeg'
+                ? 'image/jpeg'
+                : extension === '.webp'
+                  ? 'image/webp'
+                  : extension === '.json'
+                    ? 'application/json; charset=utf-8'
+                    : 'application/octet-stream'
     response.setHeader('Content-Type', contentType)
+    response.setHeader('Cache-Control', extension === '.html' ? 'no-cache, no-store, must-revalidate' : 'public, max-age=31536000, immutable')
     response.end(data)
   } catch {
     response.statusCode = 404
