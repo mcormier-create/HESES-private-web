@@ -4708,9 +4708,12 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       relativeHumidity: displayedAfterHumifogRh,
     },
   ]
+  const scheduleDaysLabel = scheduleDaysOption === 'mon-fri' ? t.mondayToFriday : scheduleDaysOption === 'mon-sat' ? t.mondayToSaturday : scheduleDaysOption === 'seven-days' ? t.sevenDaysWeek : Object.entries(scheduleCustomDays).filter(([, value]) => value).map(([day]) => t[day]).join(', ')
   const scheduleDescriptionText = scheduleMode === '24-7'
     ? t.operationMode24_7
-    : `${scheduleStartTime} to ${scheduleEndTime}, ${scheduleDaysOption === 'mon-fri' ? t.mondayToFriday : scheduleDaysOption === 'mon-sat' ? t.mondayToSaturday : scheduleDaysOption === 'seven-days' ? t.sevenDaysWeek : Object.entries(scheduleCustomDays).filter(([, value]) => value).map(([day]) => t[day]).join(', ')}`
+    : language === 'fr'
+      ? `${scheduleStartTime} à ${scheduleEndTime}, ${scheduleDaysLabel.charAt(0).toLowerCase()}${scheduleDaysLabel.slice(1)}`
+      : `${scheduleStartTime} to ${scheduleEndTime}, ${scheduleDaysLabel}`
 
   const reportData = {
     language,
