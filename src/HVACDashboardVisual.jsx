@@ -3950,7 +3950,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const baseScheduleFactor = scheduleMode === '24-7'
     ? 1
     : Number((weeklyOperatingHours / 168).toFixed(4))
-  const isHourlySimulationActive = calculationMethod === 'hourly' && hasLoadedHourlyEpw
+  const hasHourlySimulationSummary = Boolean(hourlyWeatherSummary) && Number.isFinite(Number(hourlyWeatherSummary?.recordsLoaded))
+  const isHourlySimulationActive = calculationMethod === 'hourly' && hasLoadedHourlyEpw && hasHourlySimulationSummary
   const scheduleFactor = isHourlySimulationActive ? 1 : baseScheduleFactor
 
   const metrics = calculateHvacDashboardMetrics({
@@ -4802,27 +4803,27 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
           climateFileType: localizeWeatherMetadataValue('climateFileType', hourlyWeatherMetadata?.climateFileType || '', language),
           loadedFile: hourlyWeatherFileName || builtInHourlyWeatherFileName,
           validation: formatWeatherValidationStatus(effectiveWeatherValidationStatus, language),
-          recordsLoaded: hourlyWeatherSummary.recordsLoaded,
-          operatingHoursUsed: hourlyWeatherSummary.operatingHoursUsed,
-          averageOutdoorTemp: hourlyWeatherSummary.averageOutdoorTemp,
-          minOutdoorTemp: hourlyWeatherSummary.minOutdoorTemp,
-          maxOutdoorTemp: hourlyWeatherSummary.maxOutdoorTemp,
-          averageOutdoorRh: hourlyWeatherSummary.averageOutdoorRh,
-          hoursBelowZero: hourlyWeatherSummary.hoursBelowZero,
-          hoursBelowMinusTen: hourlyWeatherSummary.hoursBelowMinusTen,
-          hoursBelowMinusTwenty: hourlyWeatherSummary.hoursBelowMinusTwenty,
-          hoursWithHumidificationRequired: hourlyWeatherSummary.hoursWithHumidificationRequired,
+          recordsLoaded: hourlyWeatherSummary?.recordsLoaded ?? 0,
+          operatingHoursUsed: hourlyWeatherSummary?.operatingHoursUsed ?? 0,
+          averageOutdoorTemp: hourlyWeatherSummary?.averageOutdoorTemp ?? 0,
+          minOutdoorTemp: hourlyWeatherSummary?.minOutdoorTemp ?? 0,
+          maxOutdoorTemp: hourlyWeatherSummary?.maxOutdoorTemp ?? 0,
+          averageOutdoorRh: hourlyWeatherSummary?.averageOutdoorRh ?? 0,
+          hoursBelowZero: hourlyWeatherSummary?.hoursBelowZero ?? 0,
+          hoursBelowMinusTen: hourlyWeatherSummary?.hoursBelowMinusTen ?? 0,
+          hoursBelowMinusTwenty: hourlyWeatherSummary?.hoursBelowMinusTwenty ?? 0,
+          hoursWithHumidificationRequired: hourlyWeatherSummary?.hoursWithHumidificationRequired ?? 0,
         }
         : null,
       hourlyAnnualResults: isHourlySimulationActive
         ? {
-          annualSteamKwh: hourlyWeatherSummary.annualSteamKwh,
-          annualGasKwh: hourlyWeatherSummary.annualGasKwh,
-          annualHumifogKwh: hourlyWeatherSummary.annualHumifogKwh,
-          annualCost: hourlyWeatherSummary.annualCost,
-          annualSavings: hourlyWeatherSummary.annualSavings,
-          annualGhgReduction: hourlyWeatherSummary.annualGhgReduction,
-          annualWaterConsumptionKg: hourlyWeatherSummary.annualWaterConsumptionKg,
+          annualSteamKwh: hourlyWeatherSummary?.annualSteamKwh ?? 0,
+          annualGasKwh: hourlyWeatherSummary?.annualGasKwh ?? 0,
+          annualHumifogKwh: hourlyWeatherSummary?.annualHumifogKwh ?? 0,
+          annualCost: hourlyWeatherSummary?.annualCost ?? 0,
+          annualSavings: hourlyWeatherSummary?.annualSavings ?? 0,
+          annualGhgReduction: hourlyWeatherSummary?.annualGhgReduction ?? 0,
+          annualWaterConsumptionKg: hourlyWeatherSummary?.annualWaterConsumptionKg ?? 0,
         }
         : null,
     },
