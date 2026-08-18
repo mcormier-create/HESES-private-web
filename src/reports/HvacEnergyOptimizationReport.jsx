@@ -1468,7 +1468,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
             ],
             [
               tr('Économies annuelles de coût', 'Annual Cost Savings'),
-              formatMoney(annual.annualSavings),
+              formatMoney(economicAnnualSavings),
             ],
             [
               tr('Réduction de GES', 'GHG Reduction'),
@@ -1476,7 +1476,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
             ],
             [
               tr('Retour estimé', 'Estimated Payback'),
-              economics.estimatedPayback,
+              economicPayback,
             ],
             [
               tr('Coût annuel le plus bas', 'Lowest Annual Cost'),
