@@ -155,7 +155,7 @@ async function handleAuth(request, response) {
       const token = crypto.randomBytes(32).toString('base64url')
       sessions.set(token, Date.now())
       response.statusCode = 302
-      response.setHeader('Set-Cookie', `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800; Secure`)
+      response.setHeader('Set-Cookie', `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${isProduction ? '; Secure' : ''}`)
       response.setHeader('Location', '/')
       response.end()
       return true
@@ -170,7 +170,7 @@ async function handleAuth(request, response) {
     const token = cookies(request)[cookieName]
     if (token) sessions.delete(token)
     response.statusCode = 302
-    response.setHeader('Set-Cookie', `${cookieName}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure`)
+    response.setHeader('Set-Cookie', `${cookieName}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isProduction ? '; Secure' : ''}`)
     response.setHeader('Location', '/heses-login')
     response.end()
     return true
