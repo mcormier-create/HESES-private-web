@@ -211,6 +211,38 @@ async function handleCalculation(request, response) {
   return true
 }
 
+async function handleAssistant(request, response) {
+  const url = new URL(request.url || '/', 'http://heses.local')
+  if (request.method === 'GET' && url.pathname === '/api/heses-assistant/health') {
+    sendJson(response, 200, {
+      ok: true,
+      configured: Boolean(process.env.OPENAI_API_KEY),
+      model: process.env.HESES_OPENAI_MODEL || 'gpt-4.1-mini',
+    })
+    return true
+  }
+
+  if (request.method !== 'POST' || url.pathname !== '/api/heses-assistant') return false
+
+  try {
+    const payload = JSON.parse(await readBody(request, 1_500_000))
+    const question = String(payload.question || '').trim()
+    if (!question) {
+      sendJson(response, 400, { error: 'Question manquante.' })
+      return true
+    }
+    sendJson(response, 200, {
+      answer: createLocalHesesAnswer({ question, context: payload.context || {} }),
+      configured: false,
+      provider: 'local-heses-context',
+    })
+    return true
+  } catch (error) {
+    sendJson(response, 400, { error: error instanceof Error ? error.message : 'Assistant request failed.' })
+    return true
+  }
+}
+
 async function serveStatic(request, response) {
   const url = new URL(request.url || '/', 'http://heses.local')
   let relative = decodeURIComponent(url.pathname)
@@ -245,6 +277,7 @@ const server = http.createServer(async (request, response) => {
       }
     }
     if (await handleCalculation(request, response)) return
+    if (await handleAssistant(request, response)) return
     if (url.pathname.startsWith('/api/')) {
       await new Promise((resolve) => reportMiddleware(request, response, resolve))
       if (!response.writableEnded) sendJson(response, 404, { error: 'Not found' })
