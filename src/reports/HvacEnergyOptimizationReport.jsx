@@ -789,6 +789,14 @@ export default function HvacEnergyOptimizationReport({ data }) {
     const value = annualTechnologyResults[key]?.[row.key]
     return Number.isFinite(Number(value)) ? Number(value) : undefined
   }
+  const buildingAnnualTechnologyKeys = [...BASELINE_TECHNOLOGIES, 'humifogSelected']
+  const buildingAnnualValue = (key, field) => projectEnergy.totals[key]?.[field]
+  const buildingAnnualRows = [
+    { key: 'annualEnergyKWh', label: tr('Énergie annuelle totale', 'Total annual energy'), cost: false },
+    { key: 'annualOperatingCost', label: tr('Coût annuel total', 'Total annual cost'), cost: true },
+    { key: 'annualSavings', label: tr('Économies annuelles vs référence sélectionnée', 'Annual savings vs selected reference'), cost: true },
+    { key: 'energyReductionPercent', label: tr('Réduction énergétique vs référence sélectionnée', 'Energy reduction vs selected reference'), cost: false, percent: true },
+  ]
   const formatPdfDetailedValue = (row, value) => {
     if (value === null) return tr('Non applicable', 'Not applicable')
     if (!Number.isFinite(value)) return tr('Non disponible', 'Not available')
@@ -1829,30 +1837,48 @@ export default function HvacEnergyOptimizationReport({ data }) {
       )}
 
       <ReportSection title={reportSectionTitle('energy', 'ENERGY ANALYSIS')} pageBreak allowPageBreak>
-        <h3>{tr('Comparaison détaillée des calculs annuels', 'Detailed Annual Energy Comparison')}</h3>
+        <h3>{tr(isMultiSystemReport ? 'Comparaison énergétique annuelle du bâtiment' : 'Comparaison détaillée des calculs annuels', isMultiSystemReport ? 'Building Annual Energy Comparison' : 'Detailed Annual Energy Comparison')}</h3>
         <table className="report-table">
           <thead>
             <tr>
               <th>{tr('Paramètre', 'Parameter')}</th>
-              {pdfAnnualTechnologyKeys.map((key) => <th key={key}>{technologyNames[key]}</th>)}
-              <th>{tr('Écart vs technologie de référence', 'Difference vs Reference Technology')}</th>
+              {(isMultiSystemReport ? buildingAnnualTechnologyKeys : pdfAnnualTechnologyKeys).map((key) => <th key={key}>{isMultiSystemReport ? (technologyNames[key] || technologyNames.humifogSelected) : technologyNames[key]}</th>)}
+              <th>{tr('Écart vs référence sélectionnée', 'Difference vs Selected Reference')}</th>
             </tr>
           </thead>
           <tbody>
-            {pdfDetailedAnnualRows.map((row) => {
-              const referenceValue = pdfDetailedValue(row, pdfAnnualReferenceKey)
-              const humifogValue = pdfDetailedValue(row, selectedHumifogKey)
-              const difference = Number.isFinite(referenceValue) && Number.isFinite(humifogValue)
-                ? referenceValue - humifogValue
-                : null
-              return (
-                <tr key={row.key}>
-                  <td>{row.label}</td>
-                  {pdfAnnualTechnologyKeys.map((key) => <td key={key}>{formatPdfDetailedValue(row, pdfDetailedValue(row, key))}</td>)}
-                  <td>{difference === null ? tr('Non applicable', 'Not applicable') : formatPdfDetailedValue(row, difference)}</td>
-                </tr>
-              )
-            })}
+            {isMultiSystemReport
+              ? buildingAnnualRows.map((row) => {
+                const referenceKey = projectEnergy.referenceTechnology
+                const referenceValue = referenceKey ? buildingAnnualValue(referenceKey, row.key) : null
+                return (
+                  <tr key={row.key}>
+                    <td>{row.label}</td>
+                    {buildingAnnualTechnologyKeys.map((key) => {
+                      const value = buildingAnnualValue(key, row.key)
+                      if (row.percent) return <td key={key}>{Number.isFinite(value) ? `${formatNumber(value, 1)}%` : tr('Non disponible', 'Not available')}</td>
+                      return <td key={key}>{formatPdfDetailedValue(row, value)}</td>
+                    })}
+                    <td>{projectEnergy.referenceTechnology
+                      ? technologyNames[projectEnergy.referenceTechnology]
+                      : tr('Référence sélectionnée par UTA', 'Selected per-system reference')}</td>
+                  </tr>
+                )
+              })
+              : pdfDetailedAnnualRows.map((row) => {
+                const referenceValue = pdfDetailedValue(row, pdfAnnualReferenceKey)
+                const humifogValue = pdfDetailedValue(row, selectedHumifogKey)
+                const difference = Number.isFinite(referenceValue) && Number.isFinite(humifogValue)
+                  ? referenceValue - humifogValue
+                  : null
+                return (
+                  <tr key={row.key}>
+                    <td>{row.label}</td>
+                    {pdfAnnualTechnologyKeys.map((key) => <td key={key}>{formatPdfDetailedValue(row, pdfDetailedValue(row, key))}</td>)}
+                    <td>{difference === null ? tr('Non applicable', 'Not applicable') : formatPdfDetailedValue(row, difference)}</td>
+                  </tr>
+                )
+              })}
           </tbody>
         </table>
       </ReportSection>
