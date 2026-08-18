@@ -4571,10 +4571,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     ? humifogInstalledCost + freeCoolingControlsInstalledCost
     : humifogInstalledCost + (hasChartRecovery ? heatRecoveryInstalledCost : 0)
   const installedCostInputs = {
-    electricSteam: electricSteamInstalledCost,
-    naturalGasSteam: naturalGasSteamInstalledCost,
-    atmosphericGasHumidifier: atmosphericGasHumidifierInstalledCost,
-    humifog: humifogInstalledCost,
+    electricSteam: baseSystemInstalledCost,
+    naturalGasSteam: isFreeCoolingMode ? naturalGasSteamInstalledCost + freeCoolingControlsInstalledCost : naturalGasSteamInstalledCost,
+    atmosphericGasHumidifier: isFreeCoolingMode ? atmosphericGasHumidifierInstalledCost + freeCoolingControlsInstalledCost : atmosphericGasHumidifierInstalledCost,
+    humifog: selectedHumifogInstalledCost,
     freeCoolingControls: freeCoolingControlsInstalledCost,
     heatRecovery: heatRecoveryInstalledCost,
     baseline: baseSystemInstalledCost,
@@ -5056,6 +5056,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       humidificationKWh: freeCoolingSteamAnnual.humidificationEnergyKwh || energySummary.steam.annualEnergyKwh || 0,
       reheatKWh: freeCoolingSteamAnnual.reheatEnergyKwh || 0,
       pumpKWh: 0,
+      installedInvestmentCost: installedCostInputs.electricSteam,
       hoursBasis: annualHoursBasis,
     },
     naturalGasSteam: {
@@ -5065,6 +5066,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       humidificationKWh: freeCoolingNaturalGasHumidificationKwh,
       reheatKWh: freeCoolingSteamAnnual.reheatEnergyKwh || 0,
       pumpKWh: 0,
+      installedInvestmentCost: installedCostInputs.naturalGasSteam,
       hoursBasis: annualHoursBasis,
     },
     atmosphericGas: {
@@ -5074,15 +5076,30 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       humidificationKWh: freeCoolingAtmosphericGasHumidificationKwh,
       reheatKWh: freeCoolingSteamAnnual.reheatEnergyKwh || 0,
       pumpKWh: 0,
+      installedInvestmentCost: installedCostInputs.atmosphericGasHumidifier,
       hoursBasis: annualHoursBasis,
     },
     humifogElectric: {
-      annualEnergyKWh: freeCoolingHumifogAnnual.totalEnergyKwh || energySummary.humifog.annualEnergyKwh || 0,
-      annualOperatingCost: freeCoolingHumifogAnnual.annualCost || energySummary.humifog.annualCost || 0,
-      heatingKWh: freeCoolingHumifogAnnual.heatingEnergyKwh || 0,
-      humidificationKWh: freeCoolingHumifogAnnual.humidificationEnergyKwh || energySummary.humifog.annualPumpEnergyKwh || 0,
-      reheatKWh: freeCoolingHumifogAnnual.reheatEnergyKwh || energySummary.humifog.annualReheatEnergyKwh || 0,
-      pumpKWh: freeCoolingHumifogAnnual.humidificationEnergyKwh || energySummary.humifog.annualPumpEnergyKwh || 0,
+      annualEnergyKWh: isFreeCoolingMode
+        ? freeCoolingHumifogAnnual.totalEnergyKwh || 0
+        : annualHumifogElectricTotalEnergyKwhResolved,
+      annualOperatingCost: isFreeCoolingMode
+        ? freeCoolingHumifogAnnual.annualCost || 0
+        : annualHumifogElectricCostResolved,
+      heatingKWh: isFreeCoolingMode ? freeCoolingHumifogAnnual.heatingEnergyKwh || 0 : 0,
+      humidificationKWh: isFreeCoolingMode
+        ? freeCoolingHumifogAnnual.humidificationEnergyKwh || 0
+        : annualHumifogPumpEnergyKwhResolved,
+      reheatKWh: isFreeCoolingMode
+        ? freeCoolingHumifogAnnual.reheatEnergyKwh || 0
+        : annualHumifogElectricPreheatEnergyKwhResolved,
+      pumpKWh: isFreeCoolingMode
+        ? freeCoolingHumifogAnnual.humidificationEnergyKwh || 0
+        : annualHumifogPumpEnergyKwhResolved,
+      thermalReheatKWh: isFreeCoolingMode
+        ? freeCoolingHumifogAnnual.thermalReheatEnergyKwh || 0
+        : grossReheatKWRaw * annualHumidificationHoursRaw,
+      installedInvestmentCost: selectedHumifogInstalledCost,
       hoursBasis: annualHoursBasis,
     },
     humifogHeatPump: {
@@ -5092,6 +5109,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       humidificationKWh: annualHumifogPumpEnergyKwhResolved,
       reheatKWh: annualHumifogHeatPumpPreheatEnergyKwhResolved,
       pumpKWh: annualHumifogPumpEnergyKwhResolved,
+      thermalReheatKWh: grossReheatKWRaw * annualHumidificationHoursRaw,
+      installedInvestmentCost: selectedHumifogInstalledCost,
       hoursBasis: annualHoursBasis,
     },
     humifogFreeCooling: {
@@ -5100,8 +5119,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       heatingKWh: freeCoolingHumifogAnnual.heatingEnergyKwh || 0,
       humidificationKWh: freeCoolingHumifogAnnual.humidificationEnergyKwh || 0,
       reheatKWh: freeCoolingHumifogAnnual.reheatEnergyKwh || 0,
+      thermalReheatKWh: freeCoolingHumifogAnnual.thermalReheatEnergyKwh || 0,
       pumpKWh: freeCoolingHumifogAnnual.humidificationEnergyKwh || 0,
       freeCoolingObtainedKWh: freeCoolingHumifogAnnual.freeCoolingObtainedKwh,
+      installedInvestmentCost: selectedHumifogInstalledCost,
       hoursBasis: annualHoursBasis,
     },
   }

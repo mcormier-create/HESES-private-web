@@ -1,5 +1,5 @@
 import { Fragment } from 'react'
-import { BASELINE_TECHNOLOGIES, selectedHumifogTechnology, selectedTechnologiesForSystem, summarizeBuildingSavings, summarizeProjectEnergy } from './projectEnergySummary'
+import { BASELINE_TECHNOLOGIES, selectedHumifogTechnology, selectedReferenceTechnology, selectedTechnologiesForSystem, summarizeBuildingSavings, summarizeProjectEnergy } from './projectEnergySummary'
 
 const PROFESSIONAL_REPORT_CSS = `
   .engineering-report {
@@ -723,10 +723,11 @@ export default function HvacEnergyOptimizationReport({ data }) {
     value: Math.max(0, (conventionalRows[index]?.totalEnergyKwh || 0) - row.totalEnergyKwh),
   }))
   const humifogReheatKwh = humifog.reheatEnergyKwh || 0
+  const selectedHumifogAnnualResult = annualTechnologyResults[selectedHumifogTechnology({ mode, system })] || {}
   const humifogReheatThermalKwh =
-    humifog.adiabaticReheatThermalKwh ?? annual.humifogDebug?.adiabaticReheatThermalKwh ?? 0
+    humifog.thermalReheatEnergyKwh ?? annual.humifogDebug?.thermalReheatEnergyKwh ?? selectedHumifogAnnualResult.thermalReheatKWh ?? 0
   const humifogReheatAppliedKwh =
-    annual.humifogDebug?.selectedReheatEnergyKwh ?? humifog.reheatEnergyKwh ?? 0
+    annual.humifogDebug?.selectedReheatEnergyKwh ?? humifog.reheatEnergyKwh ?? selectedHumifogAnnualResult.reheatKWh ?? energySummary.humifog?.annualReheatEnergyKwh ?? 0
   const humifogReheatEquivalentHeatPumpKwh =
     humifog.adiabaticReheatElectricKwh ?? annual.humifogDebug?.adiabaticReheatElectricKwh ?? 0
   const heatPumpCop = annual.humifogDebug?.heatPumpCOP ?? data.system?.heatPumpCOP ?? null
@@ -740,7 +741,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
     ? data.projectSystems
     : [{ name: system.type || 'AHU-1', mode, system, economics, annualTechnologyResults }]
   const projectEnergy = summarizeProjectEnergy(projectSystems)
-  const buildingSavings = summarizeBuildingSavings(projectSystems, projectEnergy.referenceTechnology)
+  const buildingSavings = summarizeBuildingSavings(projectSystems)
   const isMultiSystemReport = projectSystems.length > 1
   const economicAnnualSavings = isMultiSystemReport
     ? buildingSavings.totals.costSavings
@@ -767,9 +768,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
   }
   const selectedHumifogKey = selectedHumifogTechnology({ mode, system })
   const pdfAnnualTechnologyKeys = [...BASELINE_TECHNOLOGIES, selectedHumifogKey]
-  const pdfAnnualReferenceKey = BASELINE_TECHNOLOGIES.includes(economics.annualComparisonReference)
-    ? economics.annualComparisonReference
-    : 'electricSteam'
+  const pdfAnnualReferenceKey = selectedReferenceTechnology({ economics }, 'electricSteam')
   const pdfAnnualReference = annualTechnologyResults[pdfAnnualReferenceKey] || {}
   const pdfAnnualHumifog = annualTechnologyResults[selectedHumifogKey] || {}
   const pdfDetailedAnnualRows = [
@@ -778,7 +777,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
     { key: 'reheatKWh', label: tr('Énergie annuelle réchauffage', 'Annual reheat energy'), cost: false },
     { key: 'pumpKWh', label: tr('Énergie pompe Humifog', 'Humifog pump energy'), cost: false, humifogOnly: true },
     ...(selectedHumifogKey === 'humifogFreeCooling'
-      ? [{ key: 'freeCoolingObtainedKWh', label: tr('Refroidissement gratuit grâce au Free Cooling', 'Free cooling obtained from Free Cooling'), cost: false, humifogOnly: true }]
+      ? [{ key: 'freeCoolingObtainedKWh', label: tr('Énergie de chauffage évitée grâce au Free Cooling', 'Heating Energy Avoided by Free Cooling'), cost: false, humifogOnly: true }]
       : []),
     { key: 'annualEnergyKWh', label: tr('Énergie annuelle totale', 'Total annual energy'), cost: false },
     { key: 'annualOperatingCost', label: tr('Coût annuel total', 'Total annual cost'), cost: true },
@@ -797,9 +796,13 @@ export default function HvacEnergyOptimizationReport({ data }) {
   }
   const buildingTechnologyRows = [...BASELINE_TECHNOLOGIES, 'humifogSelected']
     .filter((key) => projectEnergy.totals[key].applicableSystems > 0)
-  const projectPayback = (value) => Number.isFinite(value)
+  const projectPayback = (value, status = 'notAvailable') => Number.isFinite(value)
     ? `${formatNumber(value, 1)} ${tr('ans', 'years')}`
-    : '-'
+    : status === 'immediate'
+      ? tr('Immédiat', 'Immediate')
+      : status === 'notEconomical'
+        ? tr('Non rentable', 'Not economical')
+        : tr('Non disponible', 'Not available')
   const projectRoi = (value) => Number.isFinite(value) ? `${formatNumber(value, 1)}%` : '-'
   const hourlyWeatherDataSummary = mode.hourlyWeatherDataSummary || null
   const hourlyWeatherSummaryRows = hourlyWeatherDataSummary
@@ -920,6 +923,23 @@ export default function HvacEnergyOptimizationReport({ data }) {
     { label: 'Heating', value: freeCooling.heatingEnergyKwh || 0, color: '#ef4444' },
     { label: 'Humidification', value: humifog.humidificationEnergyKwh || 0, color: '#0ea5e9' },
     { label: 'Reheat', value: humifogReheatAppliedKwh, color: '#f97316' },
+  ]
+  const freeCoolingOperatingHours = binRows.reduce((total, row) => {
+    const minimumOa = Number(row.minimumOutdoorAirPercent ?? system.oaMinimumPercent ?? 0)
+    return total + (Number(row.outdoorAirPercent) > minimumOa + 0.05 ? Number(row.hours || 0) : 0)
+  }, 0)
+  const freeCoolingOperatingRows = [
+    [tr('OA moyen', 'Average OA'), `${formatNumber(freeCooling.averageAppliedOa ?? freeCooling.averageOa, 1)}%`, `${formatNumber(humifog.averageAppliedOa ?? humifog.averageOa, 1)}%`, `${formatNumber((humifog.averageAppliedOa ?? 0) - (freeCooling.averageAppliedOa ?? 0), 1)} points`],
+    [tr('RA moyen', 'Average RA'), `${formatNumber(100 - (freeCooling.averageAppliedOa ?? freeCooling.averageOa ?? 0), 1)}%`, `${formatNumber(100 - (humifog.averageAppliedOa ?? humifog.averageOa ?? 0), 1)}%`, `${formatNumber((freeCooling.averageAppliedOa ?? 0) - (humifog.averageAppliedOa ?? 0), 1)} points`],
+    [tr('Température moyenne de mélange', 'Average mixed-air temperature'), formatTemp(freeCooling.averageMixedDb, data.units, data.language), formatTemp(humifog.averageMixedDb, data.units, data.language), formatTemp((freeCooling.averageMixedDb ?? 0) - (humifog.averageMixedDb ?? 0), data.units, data.language)],
+    [tr('Température avant Humifog', 'Temperature before Humifog'), '-', formatTemp(humifog.averageInletToHumifogDb, data.units, data.language), '-'],
+    [tr('Température après Humifog', 'Temperature after Humifog'), '-', formatTemp(humifog.averageAfterHumifogDb, data.units, data.language), '-'],
+    [tr('Heures de fonctionnement Free Cooling', 'Free Cooling operating hours'), `${formatNumber(freeCoolingOperatingHours, 0)} h`, `${formatNumber(freeCoolingOperatingHours, 0)} h`, '-'],
+    [tr('Énergie de chauffage évitée grâce au Free Cooling', 'Heating Energy Avoided by Free Cooling'), formatEnergy(freeCooling.freeCoolingObtainedKwh), formatEnergy(humifog.freeCoolingObtainedKwh), formatEnergy(humifog.freeCoolingObtainedKwh ?? 0)],
+    [tr('Besoin thermique annuel de réchauffage Humifog', 'Annual Humifog thermal reheat requirement'), '-', formatEnergy(humifogReheatThermalKwh), '-'],
+    [tr('Énergie d’entrée réellement consommée pour le réchauffage', 'Actual reheat input energy consumed'), '-', formatEnergy(humifogReheatAppliedKwh), '-'],
+    [tr('Énergie pompe Humifog', 'Humifog pump energy'), '-', formatEnergy(humifog.humidificationEnergyKwh), '-'],
+    [tr('Énergie électrique totale réelle Humifog applicable au Free Cooling', 'Actual Humifog total energy applicable to Free Cooling'), '-', formatEnergy(humifog.totalEnergyKwh), '-'],
   ]
   const criticalReheatRow = binValidationRows.reduce(
     (critical, row) => (row.reheatLoadKw || 0) > (critical?.reheatLoadKw || -1) ? row : critical,
@@ -1163,7 +1183,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
           [tr('Systèmes HVAC actifs', 'Active HVAC systems'), `${projectSystems.length}`],
           [tr('Débit total du bâtiment', 'Total building airflow'), formatFlow(projectSystems.reduce((total, item) => total + Number(item.system?.supplyAirflowCfm || 0), 0), data.units)],
           [tr('Base horaire du bâtiment', 'Building operating-hour basis'), projectEnergy.operatingHourBasis === 'mixed' ? tr('Mixtes', 'Mixed') : (projectEnergy.operatingHourBasis || '-')],
-          [tr('Scénario de référence du bâtiment', 'Building Reference Scenario'), tr('Référence sélectionnée par UTA', 'Reference selected per HVAC system')],
+          [tr('Scénario de référence du bâtiment', 'Building Reference Scenario'), projectEnergy.referenceTechnology ? technologyNames[projectEnergy.referenceTechnology] : tr('Référence bâtiment sélectionnée par UTA', 'Mixed selected building reference')],
           [tr('Solutions Humifog sélectionnées', 'Humifog - Selected Solutions'), tr('Solution sélectionnée par UTA', 'Selected solution per HVAC system')],
           [tr('Énergie de référence totale', 'Total reference energy'), formatEnergy(buildingSavings.totals.referenceEnergy)],
           [tr('Énergie Humifog totale', 'Total Humifog energy'), formatEnergy(buildingSavings.totals.humifogEnergy)],
@@ -1173,7 +1193,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
           [tr('Coût Humifog total', 'Total Humifog operating cost'), formatMoney(buildingSavings.totals.humifogCost)],
           [tr('Économies de coût annuelles totales', 'Total annual cost savings'), formatMoney(buildingSavings.totals.costSavings)],
           [tr('Investissement incrémental total', 'Total incremental investment'), formatMoney(buildingSavings.totals.incrementalInvestment)],
-          [tr('Retour simple total', 'Total simple payback'), projectPayback(buildingSavings.totals.simplePaybackYears)],
+          [tr('Retour simple total', 'Total simple payback'), projectPayback(buildingSavings.totals.simplePaybackYears, buildingSavings.totals.paybackStatus)],
           [tr('ROI annuel simple total', 'Total annual simple ROI'), Number.isFinite(buildingSavings.totals.simpleAnnualRoiPercent) ? `${formatNumber(buildingSavings.totals.simpleAnnualRoiPercent, 1)}%` : tr('Non disponible', 'Not available')],
         ]} />
         <h3>{tr('Bases horaires par système', 'Operating-hour basis by system')}</h3>
@@ -1203,12 +1223,12 @@ export default function HvacEnergyOptimizationReport({ data }) {
                   <td>{technologyNames[key]}</td>
                   <td>{formatEnergy(total.annualEnergyKWh)}</td>
                   <td>{formatMoney(total.annualOperatingCost)}</td>
-                  <td>{total.installedInvestmentCost > 0 ? formatMoney(total.installedInvestmentCost) : '-'}</td>
-                  <td>{key === projectEnergy.referenceTechnology ? tr('Référence', 'Reference') : formatMoney(total.annualSavings)}</td>
-                  <td>{key === projectEnergy.referenceTechnology ? '-' : formatMoney(total.incrementalInvestment)}</td>
-                  <td>{key === projectEnergy.referenceTechnology ? '-' : projectPayback(total.simplePaybackYears)}</td>
-                  <td>{key === projectEnergy.referenceTechnology ? '-' : projectRoi(total.simpleAnnualRoiPercent)}</td>
-                  <td>{key === projectEnergy.referenceTechnology ? tr('Référence', 'Reference') : `${formatNumber(total.energyReductionPercent, 1)}%`}</td>
+                  <td>{formatMoney(total.installedInvestmentCost)}</td>
+                  <td>{projectEnergy.referenceTechnology === key ? tr('Référence', 'Reference') : formatMoney(total.annualSavings)}</td>
+                  <td>{projectEnergy.referenceTechnology === key ? '-' : formatMoney(total.incrementalInvestment)}</td>
+                  <td>{projectEnergy.referenceTechnology === key ? '-' : projectPayback(total.simplePaybackYears, total.paybackStatus)}</td>
+                  <td>{projectEnergy.referenceTechnology === key ? '-' : projectRoi(total.simpleAnnualRoiPercent)}</td>
+                  <td>{projectEnergy.referenceTechnology === key ? tr('Référence', 'Reference') : Number.isFinite(total.energyReductionPercent) ? `${formatNumber(total.energyReductionPercent, 1)}%` : tr('Non disponible', 'Not available')}</td>
                 </tr>
               )
             })}
@@ -1234,14 +1254,14 @@ export default function HvacEnergyOptimizationReport({ data }) {
               <td>{formatEnergy(itemSavings.referenceEnergy)}</td><td>{formatEnergy(itemSavings.humifogEnergy)}</td>
               <td>{formatEnergy(itemSavings.energySavings)}</td><td>{Number.isFinite(itemSavings.energyReductionPercent) ? `${formatNumber(itemSavings.energyReductionPercent, 1)}%` : tr('Non disponible', 'Not available')}</td>
               <td>{formatMoney(itemSavings.referenceCost)}</td><td>{formatMoney(itemSavings.humifogCost)}</td><td>{formatMoney(itemSavings.costSavings)}</td>
-              <td>{projectPayback(itemSavings.simplePaybackYears)}</td>
+              <td>{projectPayback(itemSavings.simplePaybackYears, itemSavings.paybackStatus)}</td>
             </tr>
           })}</tbody>
           <tfoot><tr>
             <th>{tr('TOTAL BÂTIMENT', 'TOTAL BUILDING')}</th><th colSpan="3" />
-            <th>{formatEnergy(buildingSavings.totals.referenceEnergy)}</th><th>{formatEnergy(buildingSavings.totals.humifogEnergy)}</th><th>{formatEnergy(buildingSavings.totals.energySavings)}</th>
+              <th>{formatEnergy(buildingSavings.totals.referenceEnergy)}</th><th>{formatEnergy(buildingSavings.totals.humifogEnergy)}</th><th>{formatEnergy(buildingSavings.totals.energySavings)}</th>
             <th>{Number.isFinite(buildingSavings.totals.energyReductionPercent) ? `${formatNumber(buildingSavings.totals.energyReductionPercent, 1)}%` : tr('Non disponible', 'Not available')}</th>
-            <th>{formatMoney(buildingSavings.totals.referenceCost)}</th><th>{formatMoney(buildingSavings.totals.humifogCost)}</th><th>{formatMoney(buildingSavings.totals.costSavings)}</th><th>{projectPayback(buildingSavings.totals.simplePaybackYears)}</th>
+              <th>{formatMoney(buildingSavings.totals.referenceCost)}</th><th>{formatMoney(buildingSavings.totals.humifogCost)}</th><th>{formatMoney(buildingSavings.totals.costSavings)}</th><th>{projectPayback(buildingSavings.totals.simplePaybackYears, buildingSavings.totals.paybackStatus)}</th>
           </tr></tfoot>
         </table>
       </ReportSection>
@@ -1661,7 +1681,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
           [tr('Énergie de référence totale', 'Total Reference Energy'), formatEnergy(buildingSavings.totals.referenceEnergy)],
           [tr('Énergie Humifog totale', 'Total Humifog Energy'), formatEnergy(buildingSavings.totals.humifogEnergy)],
           [tr('Investissement incrémental total', 'Total Incremental Investment'), formatMoney(buildingSavings.totals.incrementalInvestment)],
-          [tr('Retour simple', 'Simple Payback'), projectPayback(buildingSavings.totals.simplePaybackYears)],
+          [tr('Retour simple', 'Simple Payback'), projectPayback(buildingSavings.totals.simplePaybackYears, buildingSavings.totals.paybackStatus)],
           [tr('ROI annuel simple', 'Annual Simple ROI'), Number.isFinite(buildingSavings.totals.simpleAnnualRoiPercent) ? `${formatNumber(buildingSavings.totals.simpleAnnualRoiPercent, 1)}%` : tr('Non disponible', 'Not available')],
         ]} />
       </ReportSection>
@@ -1741,30 +1761,20 @@ export default function HvacEnergyOptimizationReport({ data }) {
 
       {includesFreeCoolingAnalysis && (
         <ReportSection title={reportSectionTitle('freeCooling', 'FREE COOLING ANALYSIS')} pageBreak allowPageBreak>
-          <h3>{tr('Comparaison détaillée des calculs annuels', 'Detailed Annual Energy Comparison')}</h3>
+          <h3>{tr('Fonctionnement et bénéfices Free Cooling', 'Free Cooling Operation and Benefits')}</h3>
           <table className="report-table">
             <thead>
               <tr>
                 <th>{tr('Paramètre', 'Parameter')}</th>
-                {pdfAnnualTechnologyKeys.map((key) => <th key={key}>{technologyNames[key]}</th>)}
-                <th>{tr('Écart vs technologie de référence', 'Difference vs Reference Technology')}</th>
+                <th>{tr('Vapeur / Référence', 'Steam / Reference')}</th>
+                <th>{tr('Humifog optimisé', 'Optimized Humifog')}</th>
+                <th>{tr('Écart / bénéfice', 'Difference / Benefit')}</th>
               </tr>
             </thead>
             <tbody>
-              {pdfDetailedAnnualRows.map((row) => {
-                const referenceValue = pdfDetailedValue(row, pdfAnnualReferenceKey)
-                const humifogValue = pdfDetailedValue(row, selectedHumifogKey)
-                const difference = Number.isFinite(referenceValue) && Number.isFinite(humifogValue)
-                  ? referenceValue - humifogValue
-                  : null
-                return (
-                  <tr key={row.key}>
-                    <td>{row.label}</td>
-                    {pdfAnnualTechnologyKeys.map((key) => <td key={key}>{formatPdfDetailedValue(row, pdfDetailedValue(row, key))}</td>)}
-                    <td>{difference === null ? tr('Non applicable', 'Not applicable') : formatPdfDetailedValue(row, difference)}</td>
-                  </tr>
-                )
-              })}
+              {freeCoolingOperatingRows.map(([label, referenceValue, humifogValue, difference]) => (
+                <tr key={label}><td>{label}</td><td>{referenceValue}</td><td>{humifogValue}</td><td>{difference}</td></tr>
+              ))}
             </tbody>
           </table>
           <h3>Humifog Reheat Detail</h3>
@@ -2507,6 +2517,7 @@ function formatWater(lbHr, units) {
 }
 
 function formatEnergy(kwh) {
+  if (!Number.isFinite(Number(kwh))) return activeReportLanguage === 'fr' ? 'Non disponible' : 'Not available'
   return `${formatNumber(kwh, 0, activeReportLanguage)} kWh`
 }
 
@@ -2515,6 +2526,7 @@ function formatPower(kw) {
 }
 
 function formatMoney(value) {
+  if (!Number.isFinite(Number(value))) return activeReportLanguage === 'fr' ? 'Non disponible' : 'Not available'
   if (activeReportLanguage === 'fr') {
     return `${formatNumber(value, 0, activeReportLanguage)} $`
   }
