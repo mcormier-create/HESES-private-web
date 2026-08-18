@@ -6227,7 +6227,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
 
           </div>
             {/* Heat Recovery Systems */}
-            {!isFreeCoolingMode && (
+            {!isFreeCoolingMode && !is100OA && (
               <div className="w-full bg-orange-50 border border-orange-200 rounded-3xl p-6 mb-8">
                 <div className="flex justify-between items-center mb-6">
                   <div>
@@ -6317,6 +6317,36 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+            {is100OA && (
+              <div className="w-full rounded-3xl border border-slate-200 bg-slate-50 p-6 mb-8">
+                <h2 className="text-2xl font-bold text-slate-800">{t.heatRecovery}</h2>
+                <p className="mt-2 text-slate-600">
+                  {language === 'fr'
+                    ? 'Aucune récupération de chaleur applicable en mode 100 % air extérieur : aucun air de retour n’est disponible pour échanger de la chaleur.'
+                    : 'No heat recovery applies in 100% outdoor-air mode because no return air is available for heat exchange.'}
+                </p>
+                <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                    <span>{t.sensibleEfficiency}</span>
+                    <input
+                      type="number"
+                      value="0"
+                      disabled
+                      className="w-full rounded-xl border border-slate-300 bg-slate-100 px-3 py-2 text-right font-semibold text-slate-500"
+                    />
+                  </label>
+                  <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                    <span>{t.latentEfficiency}</span>
+                    <input
+                      type="number"
+                      value="0"
+                      disabled
+                      className="w-full rounded-xl border border-slate-300 bg-slate-100 px-3 py-2 text-right font-semibold text-slate-500"
+                    />
+                  </label>
+                </div>
               </div>
             )}
 
