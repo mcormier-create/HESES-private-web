@@ -6359,7 +6359,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
             {/* Economizer card - only shown for Free Cooling modes */}
               </>
             )}
-            {(showFreeCoolingTables || is100OA) && (
+            {showFreeCoolingTables && (
               <div className="w-full bg-cyan-50 border border-cyan-200 rounded-3xl p-6 mb-8">
                 <div className="flex justify-between items-center mb-6">
                   <div>
