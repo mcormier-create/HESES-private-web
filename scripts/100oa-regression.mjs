@@ -219,7 +219,7 @@ function computeCanonicalRun(fixture) {
 
     const steamKw = Number(electric.steamEnergyKWRaw || 0)
     const humidificationLoadLbH = Number(electric.steamHumidificationLoadRaw || 0)
-    const baseHvacHeatingKw = Number(electric.baseHvacHeatingThermalKWRaw || 0)
+    const baseHvacHeatingKw = Number(electric.commonHvacHeatingThermalKWRaw || 0)
     const totalHumifogPreheatKw = Number(electric.grossHumifogPreheatKWRaw || 0)
     const additionalHumifogPreheatKw = Number(electric.grossReheatKWRaw || 0)
     const humifogPumpKw = Number(electric.adiabaticPumpKWRaw || 0)
@@ -385,18 +385,27 @@ assert(Number.isFinite(design.steamHumidificationLoadRaw), 'Design point steam l
 assert(Number.isFinite(design.indoorEnthalpyRaw), 'Design point indoor enthalpy raw should be finite.')
 assert(Number.isFinite(design.grossHumifogPreheatKWRaw), 'Design point Humifog preheat raw should be finite.')
 assert(design.steamHumidificationLoadRaw > 0, 'Design point steam load should be positive.')
-assert(design.recoveryEnergyReductionKWRaw > 0, 'Sensible recovery should be active at design point.')
+assertApprox(design.recoveryEnergyReductionKWRaw, 0, 1e-9, '100% OA must not apply heat recovery')
+
+const designWithLatent = calculateHvacDashboardMetrics(canonicalBaseInput(
+  fixture,
+  fixture.selectedReheatSystemElectric,
+  {
+    is100OA: false,
+  }
+))
 
 const designNoLatent = calculateHvacDashboardMetrics(canonicalBaseInput(
   fixture,
   fixture.selectedReheatSystemElectric,
   {
     latentRecoveryEfficiency: 0,
+    is100OA: false,
   }
 ))
 
 assert(
-  design.enteringHumidityRatio > designNoLatent.enteringHumidityRatio,
+  designWithLatent.enteringHumidityRatio > designNoLatent.enteringHumidityRatio,
   'Latent recovery should increase entering humidity ratio when outdoor air is drier than room target.'
 )
 
@@ -549,21 +558,47 @@ assert(
   Math.abs(canonicalRunA.designPoint.preHumifogTempC - 30) > 0.1,
   'Automatic pre-Humifog calculation incorrectly assumes a fixed 30 C / 86 F temperature.'
 )
-assertApprox(canonicalRunA.designPoint.humidificationLoadLbHrRaw, 91.56737803233806, 0.05, 'Canonical humidification load')
-assertApprox(canonicalRunA.designPoint.electricSteamKwRaw, 31.590745421156626, 0.05, 'Canonical electric steam')
-assertApprox(canonicalRunA.designPoint.baseHvacHeatingKwRaw, 99.61298984319217, 0.05, 'Canonical base HVAC heating')
-assertApprox(canonicalRunA.designPoint.additionalHumifogPreheatKwRaw, 0.7567356984388454, 0.05, 'Canonical additional Humifog preheat')
-assertApprox(canonicalRunA.designPoint.humifogElectricTotalKwRaw, 1.7567356984388454, 0.05, 'Canonical Humifog electric total')
-assertApprox(canonicalRunA.designPoint.humifogCopTotalKwRaw, 1.1991409732733804, 0.05, 'Canonical Humifog COP total')
+assertApprox(canonicalRunA.designPoint.humidificationLoadLbHrRaw, 305.22459344112673, 0.05, 'Canonical humidification load')
+assertApprox(canonicalRunA.designPoint.electricSteamKwRaw, 105.3024847371887, 0.05, 'Canonical electric steam')
+assertApprox(canonicalRunA.designPoint.baseHvacHeatingKwRaw, 418.18773624297376, 0.05, 'Canonical base HVAC heating')
+assertApprox(canonicalRunA.designPoint.additionalHumifogPreheatKwRaw, 97.70121807181314, 0.05, 'Canonical additional Humifog preheat')
+assertApprox(canonicalRunA.designPoint.humifogElectricTotalKwRaw, 98.70121807181314, 0.05, 'Canonical Humifog electric total')
+assertApprox(canonicalRunA.designPoint.humifogCopTotalKwRaw, 26.710846860950825, 0.05, 'Canonical Humifog COP total')
+assertApprox(
+  canonicalRunA.designElectric.reheatEnergyKWRaw,
+  canonicalRunA.designElectric.grossReheatKWRaw,
+  1e-9,
+  'Electric reheat input equals thermal reheat'
+)
+assert(
+  canonicalRunA.designPoint.additionalHumifogPreheatKwRaw > 0,
+  'Humifog thermal reheat should be positive when adiabatic cooling is present.'
+)
+assertApprox(
+  canonicalRunA.designPoint.afterHumifogTempC,
+  fixture.supplyTemperatureC,
+  0.05,
+  'After-Humifog temperature equals selected supply temperature'
+)
+assertApprox(
+  canonicalRunA.designPoint.humifogElectricTotalKwRaw,
+  canonicalRunA.designPoint.humifogPumpKwRaw + canonicalRunA.designElectric.reheatEnergyKWRaw,
+  1e-9,
+  'Humifog total power equals pump plus electric reheat input'
+)
 assertApprox(
   canonicalRunA.designPoint.baseHvacHeatingKwRaw,
   (1.08 * fixture.totalAirflowCfm * (canonicalRunA.designElectric.preHumifogTempRaw - canonicalRunA.designElectric.afterWheelTemp) * 1.8) / 3412,
   0.05,
   'Calculated pre-Humifog temperature drives base heating'
 )
-assertApprox(canonicalRunA.annual.electricSteamKwh, 33536.22357209672, 0.2, 'Canonical annual electric steam')
-assertApprox(canonicalRunA.annual.humifogElectricTotalKwh, 2359.976288074787, 0.2, 'Canonical annual Humifog electric')
-assertApprox(canonicalRunA.annual.humifogCopTotalElectricKwh, 1760.908707388102, 0.2, 'Canonical annual Humifog COP')
+assertApprox(canonicalRunA.annual.electricSteamKwh, 111787.41190698906, 0.2, 'Canonical annual electric steam')
+assertApprox(canonicalRunA.annual.humifogElectricTotalKwh, 104993.98300831263, 0.2, 'Canonical annual Humifog electric')
+assertApprox(canonicalRunA.annual.humifogCopTotalElectricKwh, 28769.8578442928, 0.2, 'Canonical annual Humifog COP')
+assert(
+  canonicalRunA.annual.humifogAdditionalThermalPreheatKwh > canonicalRunA.annual.electricSteamKwh * 0.1,
+  'Annual Humifog thermal reheat is implausibly small compared with the evaporation energy scale.'
+)
 
 for (const target of [
   { supplyAirTemperature: 20, roomRelativeHumidity: 30 },

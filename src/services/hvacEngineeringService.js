@@ -30,7 +30,7 @@ export function calculateHvacDashboardMetrics({
   latentRecoveryEfficiency = 0,
 }) {
   const selectedRecovery = selectedRecoveries[0]
-  const isNoRecovery = Boolean(selectedRecovery?.noRecovery)
+  const isNoRecovery = Boolean(is100OA) || Boolean(selectedRecovery?.noRecovery)
   const latentRecoverySupported = supportsLatentRecovery(selectedRecovery)
   const sensibleRecoveryEfficiency = isNoRecovery
     ? 0
@@ -86,8 +86,11 @@ export function calculateHvacDashboardMetrics({
   const reheatDeltaTRaw = Math.max(0, preheatTargetTempRaw - leavingAirTemperatureRaw)
   const grossHumifogPreheatKWRaw = hasActiveHumidification ? (preheatBtuPerHrRaw / 3412) : 0
   const baseHvacHeatingThermalKWRaw = sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, preheatTargetTempRaw - afterWheelTempRaw))
+  const commonHvacHeatingThermalKWRaw = sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, finalSupplyTemperature - afterWheelTempRaw))
   const grossReheatKWRaw = hasActiveHumidification
-    ? Math.max(0, grossHumifogPreheatKWRaw - baseHvacHeatingThermalKWRaw)
+    ? is100OA
+      ? sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, preheatTargetTempRaw - finalSupplyTemperature))
+      : Math.max(0, grossHumifogPreheatKWRaw - baseHvacHeatingThermalKWRaw)
     : 0
 
   const cassetteBoostFactor = isEnthalpyCassette(selectedRecovery) ? 1.18 : 1
@@ -153,6 +156,7 @@ export function calculateHvacDashboardMetrics({
   const reheatDeltaT = reheatDeltaTRaw
   const grossHumifogPreheatKW = Math.round(grossHumifogPreheatKWRaw)
   const baseHvacHeatingThermalKW = Math.round(baseHvacHeatingThermalKWRaw)
+  const commonHvacHeatingThermalKW = Math.round(commonHvacHeatingThermalKWRaw)
   const grossReheatKW = Math.round(grossReheatKWRaw)
   const recoveryEnergyReductionKW = Math.round(recoveryEnergyReductionKWRaw)
   const steamEnergyKW = Math.round(steamEnergyKWRaw)
@@ -217,6 +221,8 @@ export function calculateHvacDashboardMetrics({
     grossReheatKW,
     grossHumifogPreheatKW,
     baseHvacHeatingThermalKW,
+    commonHvacHeatingThermalKW,
+    commonHvacHeatingThermalKWRaw,
     reheatEnergyKW,
     cassetteBoostFactor,
     recoveryEnergyReductionKW,
