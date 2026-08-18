@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import { BASELINE_TECHNOLOGIES, selectedHumifogTechnology, selectedTechnologiesForSystem, summarizeBuildingSavings, summarizeProjectEnergy } from './projectEnergySummary'
 
 const PROFESSIONAL_REPORT_CSS = `
@@ -740,6 +741,21 @@ export default function HvacEnergyOptimizationReport({ data }) {
     : [{ name: system.type || 'AHU-1', mode, system, economics, annualTechnologyResults }]
   const projectEnergy = summarizeProjectEnergy(projectSystems)
   const buildingSavings = summarizeBuildingSavings(projectSystems, projectEnergy.referenceTechnology)
+  const isMultiSystemReport = projectSystems.length > 1
+  const economicAnnualSavings = isMultiSystemReport
+    ? buildingSavings.totals.costSavings
+    : (includesFreeCoolingAnalysis ? annual.annualSavings : energySummary.annualSavingsVsSteam)
+  const economicPayback = isMultiSystemReport
+    ? Number.isFinite(buildingSavings.totals.simplePaybackYears)
+      ? `${formatNumber(buildingSavings.totals.simplePaybackYears, 1)} ${tr('ans', 'years')}`
+      : '-'
+    : economics.estimatedPayback
+  const economicTenYearSavings = isMultiSystemReport
+    ? buildingSavings.totals.costSavings * 10
+    : tenYearSavings
+  const economicTwentyYearSavings = isMultiSystemReport
+    ? buildingSavings.totals.costSavings * 20
+    : twentyYearSavings
   const technologyNames = {
     electricSteam: tr('Vapeur électrique', 'Electric Steam'),
     naturalGasSteam: tr('Vapeur gaz naturel', 'Natural Gas Steam'),
@@ -865,6 +881,41 @@ export default function HvacEnergyOptimizationReport({ data }) {
       ]
       : []),
   ]
+  const systemValidationRows = projectSystems.map((projectSystem, index) => {
+    const systemMode = projectSystem.mode || {}
+    const systemConfig = projectSystem.system || {}
+    const systemDesign = projectSystem.design || {}
+    const systemMetrics = projectSystem.metrics || {}
+    const systemEconomics = projectSystem.economics || {}
+    const systemOutdoor = systemDesign.outdoorState
+    const systemRoom = systemDesign.roomState
+    const systemOaPercent = systemConfig.selectedOaPercent ?? systemConfig.oaMinimumPercent ?? systemConfig.oaPercent
+    const systemRaPercent = systemConfig.selectedRaPercent ?? systemConfig.raPercent ?? Math.max(0, 100 - systemOaPercent)
+    return {
+      name: projectSystem.name || systemConfig.type || `AHU-${index + 1}`,
+      rows: [
+        [tr('Nom du système', 'System name'), projectSystem.name || systemConfig.type || `AHU-${index + 1}`],
+        [tr('Emplacement du projet', 'Project location'), projectSystem.project?.location || project.location || '-'],
+        [tr('Mode de ventilation', 'Ventilation mode'), systemMode.ventilationModeName || '-'],
+        [tr('Mode d’exploitation', 'Operating mode'), systemMode.isCustomOperatingHours ? tr('Heures personnalisées', 'Custom operating hours') : tr('Heures BIN', 'BIN hours')],
+        [tr('Méthode de calcul', 'Calculation method'), systemMode.selectedCalculationMethod || '-'],
+        ['Airflow entered in software', formatFlow(systemConfig.supplyAirflowCfm, data.units)],
+        [systemMode.includesFreeCoolingAnalysis ? 'Minimum OA entered in software' : 'OA entered in software', `${formatNumber(systemOaPercent, 0)}%`],
+        [systemMode.includesFreeCoolingAnalysis ? 'RA available from software input' : 'RA shown in report', `${formatNumber(systemRaPercent, 0)}%`],
+        ['Outdoor design dry bulb used by PDF', formatTemp(systemOutdoor?.db, data.units)],
+        ['Room dry bulb entered in software', formatTemp(systemRoom?.db, data.units)],
+        ['Room RH entered in software', `${formatNumber(systemRoom?.rh, 0)}%`],
+        ['Recovery type selected', systemConfig.recoveryType || '-'],
+        [tr('Efficacité sensible sélectionnée', 'Sensible recovery efficiency selected'), `${formatNumber(systemConfig.recoverySensibleEfficiency ?? systemConfig.recoveryEfficiency, 0)}%`],
+        ['Reheat / preheat method selected', systemConfig.reheatMethodLabel || systemConfig.heatingType || '-'],
+        ['Electricity rate entered', `${formatNumber(systemEconomics.electricityRate, 2)} $/kWh`],
+        ['Natural gas rate entered', `${formatNumber(systemEconomics.naturalGasRate, 2)} $/m3`],
+        ['Operating schedule', `${systemMetrics.scheduleDescription || ''}`],
+        ['Annual humidification hours used', `${formatNumber(systemMetrics.annualHumidificationHours, 0)} h`],
+        [tr('Statut météo', 'Weather validation status'), systemMode.weatherValidationStatus || '-'],
+      ],
+    }
+  })
   const annualBreakdown = [
     { label: 'Heating', value: freeCooling.heatingEnergyKwh || 0, color: '#ef4444' },
     { label: 'Humidification', value: humifog.humidificationEnergyKwh || 0, color: '#0ea5e9' },
@@ -1488,56 +1539,71 @@ export default function HvacEnergyOptimizationReport({ data }) {
         </ol>
       </ReportSection>
 
-      <ReportSection title={reportSectionTitle('design', 'DESIGN CONDITIONS')} pageBreak>
+      {projectSystems.map((projectSystem, index) => {
+        const systemName = projectSystem.name || projectSystem.system?.type || `AHU-${index + 1}`
+        const systemDesign = projectSystem.design || (index === 0 ? design : {})
+        const systemConfig = projectSystem.system || (index === 0 ? system : {})
+        const systemMode = projectSystem.mode || (index === 0 ? mode : {})
+        const systemSelectedOaPercent = systemConfig.selectedOaPercent ?? systemConfig.oaMinimumPercent ?? systemConfig.oaPercent
+        const systemSelectedRaPercent = systemConfig.selectedRaPercent ?? Math.max(0, 100 - systemSelectedOaPercent)
+        const systemIsFreeCooling = Boolean(systemMode.includesFreeCoolingAnalysis || systemMode.isFreeCoolingMode)
+        const systemRecoverySensibleEfficiency = Number.isFinite(Number(systemConfig.recoverySensibleEfficiency))
+          ? Number(systemConfig.recoverySensibleEfficiency)
+          : Number(systemConfig.recoveryEfficiency || 0)
+        const systemHasLatentRecovery = Boolean(systemConfig.hasLatentRecovery)
+        const systemSelectedReheatName = systemConfig.reheatMethodLabel || systemConfig.heatingType || '-'
+        return (
+          <Fragment key={`design-schematic-${systemName}-${index}`}>
+            <ReportSection title={`${reportSectionTitle('design', 'DESIGN CONDITIONS')} - ${systemName}`} pageBreak>
         <TwoColumn>
           <div>
             <h3>Outdoor Design Conditions</h3>
-            <AirStateTable state={design.outdoorState} units={data.units} includeVolume />
+            <AirStateTable state={systemDesign.outdoorState} units={data.units} includeVolume />
           </div>
           <div>
             <h3>Room Design Conditions</h3>
-            <AirStateTable state={design.roomState} units={data.units} />
+            <AirStateTable state={systemDesign.roomState} units={data.units} />
           </div>
         </TwoColumn>
         <h3>System Design Parameters</h3>
         <KeyValueTable rows={[
-          ['Airflow', formatFlow(system.supplyAirflowCfm, data.units)],
-          [includesFreeCoolingAnalysis ? 'Selected Minimum OA %' : 'OA %', `${formatNumber(selectedOaPercent, 0)}%`],
-          [includesFreeCoolingAnalysis ? 'Selected RA Available %' : 'RA %', `${formatNumber(selectedRaPercent, 0)}%`],
-          ...(includesFreeCoolingAnalysis
-            ? [['Calculated Average Humifog OA %', `${formatNumber(calculatedAverageOaPercent, 0)}%`]]
+          ['Airflow', formatFlow(systemConfig.supplyAirflowCfm, data.units)],
+          [systemIsFreeCooling ? 'Selected Minimum OA %' : 'OA %', `${formatNumber(systemSelectedOaPercent, 0)}%`],
+          [systemIsFreeCooling ? 'Selected RA Available %' : 'RA %', `${formatNumber(systemSelectedRaPercent, 0)}%`],
+          ...(systemIsFreeCooling
+            ? [['Calculated Average Humifog OA %', `${formatNumber(systemConfig.calculatedAverageOaPercent ?? systemConfig.oaPercent, 0)}%`]]
             : []),
-          ['Recovery Type', system.recoveryType],
-          [tr('Efficacité sensible', 'Sensible Efficiency'), `${formatNumber(recoverySensibleEfficiency, 0)}%`],
-          ...(hasLatentRecovery
-            ? [[tr('Efficacité latente', 'Latent Efficiency'), `${formatNumber(recoveryLatentEfficiency, 0)}%`]]
+          ['Recovery Type', systemConfig.recoveryType],
+          [tr('Efficacité sensible', 'Sensible Efficiency'), `${formatNumber(systemRecoverySensibleEfficiency, 0)}%`],
+          ...(systemHasLatentRecovery
+            ? [[tr('Efficacité latente', 'Latent Efficiency'), `${formatNumber(systemConfig.recoveryLatentEfficiency, 0)}%`]]
             : []),
-          ['Humidification Technology', system.humidificationTechnology],
-          ['Heating Technology', selectedReheatName],
+          ['Humidification Technology', systemConfig.humidificationTechnology],
+          ['Heating Technology', systemSelectedReheatName],
         ]} />
-      </ReportSection>
+            </ReportSection>
 
-      <ReportSection title={reportSectionTitle('schematic', 'HVAC SYSTEM SCHEMATIC')} pageBreak>
-        {system.imageSrc && (
+            <ReportSection title={`${reportSectionTitle('schematic', 'HVAC SYSTEM SCHEMATIC')} - ${systemName}`} pageBreak>
+        {systemConfig.imageSrc && (
           <figure className="schematic-figure">
-            <img src={system.imageSrc} alt={system.imageAlt || system.recoveryType} />
-            <figcaption>Selected system image: {system.imageAlt || system.recoveryType}</figcaption>
+            <img src={systemConfig.imageSrc} alt={systemConfig.imageAlt || systemConfig.recoveryType} />
+            <figcaption>Selected system image: {systemConfig.imageAlt || systemConfig.recoveryType}</figcaption>
           </figure>
         )}
         <TwoColumn>
           <div>
             <h3>Airflow Paths</h3>
-            <OrderedList items={system.airflowPaths || []} />
+            <OrderedList items={systemConfig.airflowPaths || []} />
           </div>
           <div>
             <h3>Component Sequence</h3>
-            <OrderedList items={system.componentSequence || []} />
+            <OrderedList items={systemConfig.componentSequence || []} />
           </div>
         </TwoColumn>
         <h3>Design Temperatures</h3>
-        <KeyValueTable rows={(system.designTemperatures || []).map((item) => [item.label, formatTemp(item.value, data.units)])} />
+        <KeyValueTable rows={(systemConfig.designTemperatures || []).map((item) => [item.label, formatTemp(item.value, data.units)])} />
         <h3>{tr('États psychrométriques Humifog', 'Humifog Psychrometric States')}</h3>
-        <KeyValueTable rows={(system.psychrometricStates || []).map((item) => [
+        <KeyValueTable rows={(systemConfig.psychrometricStates || []).map((item) => [
           item.label,
           `${Number.isFinite(Number(item.temperature))
             ? formatTemp(item.temperature, data.units)
@@ -1545,7 +1611,10 @@ export default function HvacEnergyOptimizationReport({ data }) {
             ? `${formatNumber(item.relativeHumidity, 1)}% RH`
             : tr('Non disponible', 'Not available')}`,
         ])} />
-      </ReportSection>
+            </ReportSection>
+          </Fragment>
+        )
+      })}
 
       <ReportSection title={reportSectionTitle('psychrometric', 'PSYCHROMETRIC ANALYSIS')} pageBreak allowPageBreak>
         <table className="report-table compact">
@@ -1779,7 +1848,20 @@ export default function HvacEnergyOptimizationReport({ data }) {
       </ReportSection>
 
       <ReportSection title={reportSectionTitle('economics', tr('ANALYSE ÉCONOMIQUE', 'ECONOMIC ANALYSIS'))} pageBreak allowPageBreak>
-        <KeyValueTable rows={includesFreeCoolingAnalysis
+        <KeyValueTable rows={isMultiSystemReport
+          ? [
+            [tr('Tarif d utilité - Électricité', 'Utility Rate - Electricity'), tr('Tarifs propres à chaque UTA', 'Rates defined per HVAC system')],
+            [tr('Tarif d utilité - Gaz naturel', 'Utility Rate - Natural Gas'), tr('Tarifs propres à chaque UTA', 'Rates defined per HVAC system')],
+            [tr('Coût annuel - Vapeur électrique', 'Annual Energy Cost - Electric Steam'), formatMoney(projectEnergy.totals.electricSteam.annualOperatingCost)],
+            [tr('Coût annuel - Vapeur gaz naturel', 'Annual Energy Cost - Natural Gas Steam'), formatMoney(projectEnergy.totals.naturalGasSteam.annualOperatingCost)],
+            [tr('Coût annuel - Humidificateur gaz atmosphérique', 'Annual Energy Cost - Atmospheric Gas Humidifier'), formatMoney(projectEnergy.totals.atmosphericGas.annualOperatingCost)],
+            [tr('Coût annuel - Humifog sélectionné', 'Annual Energy Cost - Selected Humifog'), formatMoney(projectEnergy.totals.humifogSelected.annualOperatingCost)],
+            [tr('Économies annuelles du bâtiment', 'Building Annual Savings'), formatMoney(economicAnnualSavings)],
+            [tr('Retour simple du bâtiment', 'Building Simple Payback'), economicPayback],
+            [tr('Économies sur 10 ans du bâtiment', 'Building 10-Year Savings'), formatMoney(economicTenYearSavings)],
+            [tr('Économies sur 20 ans du bâtiment', 'Building 20-Year Savings'), formatMoney(economicTwentyYearSavings)],
+          ]
+          : includesFreeCoolingAnalysis
           ? [
             [tr('Tarif d utilité - Électricité', 'Utility Rate - Electricity'), formatUtilityRateWithUnit(economics.electricityRate, 3, 'kWh')],
             [tr('Tarif d utilité - Gaz naturel', 'Utility Rate - Natural Gas'), formatUtilityRateWithUnit(economics.naturalGasRate, 3, isFrench ? 'm³' : 'm3')],
@@ -1790,10 +1872,10 @@ export default function HvacEnergyOptimizationReport({ data }) {
             [tr('Coût annuel - Humidificateur gaz atmosphérique', 'Annual Energy Cost - Atmospheric Gas'), formatMoney(freeCoolingTechnologyOptions[2].annualCost)],
             [tr('Coût annuel - Humifog', 'Annual Energy Cost - Humifog'), formatMoney(freeCoolingTechnologyOptions[3].annualCost)],
             [tr('Option au coût annuel le plus bas', 'Lowest Annual Cost Option'), lowestAnnualCostOption.label],
-            [tr('Économies annuelles', 'Annual Savings'), formatMoney(annual.annualSavings)],
-            [tr('Retour simple', 'Simple Payback'), economics.estimatedPayback],
-            [tr('Économies sur 10 ans', '10-Year Savings'), formatMoney(tenYearSavings)],
-            [tr('Économies sur 20 ans', '20-Year Savings'), formatMoney(twentyYearSavings)],
+            [tr('Économies annuelles', 'Annual Savings'), formatMoney(economicAnnualSavings)],
+            [tr('Retour simple', 'Simple Payback'), economicPayback],
+            [tr('Économies sur 10 ans', '10-Year Savings'), formatMoney(economicTenYearSavings)],
+            [tr('Économies sur 20 ans', '20-Year Savings'), formatMoney(economicTwentyYearSavings)],
           ]
           : [
             [tr('Tarif d utilité - Électricité', 'Utility Rate - Electricity'), formatUtilityRateWithUnit(economics.electricityRate, 3, 'kWh')],
@@ -1804,8 +1886,8 @@ export default function HvacEnergyOptimizationReport({ data }) {
             [tr('Coût annuel - Vapeur gaz naturel', 'Annual Energy Cost - Natural Gas Steam'), formatMoney(energySummary.naturalGasSteam?.annualCost)],
             [tr('Coût annuel - Humidificateur gaz atmosphérique', 'Annual Energy Cost - Atmospheric Gas Humidifier'), formatMoney(energySummary.atmosphericGasHumidifier?.annualCost)],
             [tr('Coût annuel - Humifog', 'Annual Energy Cost - Humifog'), formatMoney(energySummary.humifog?.annualCost)],
-            [tr('Économies annuelles vs vapeur électrique', 'Annual Savings vs Electric Steam'), formatMoney(energySummary.annualSavingsVsSteam)],
-            [tr('Retour simple', 'Simple Payback'), economics.estimatedPayback],
+            [tr('Économies annuelles vs vapeur électrique', 'Annual Savings vs Electric Steam'), formatMoney(economicAnnualSavings)],
+            [tr('Retour simple', 'Simple Payback'), economicPayback],
           ]} />
 
         {roiRows.length > 0 && (
@@ -1918,14 +2000,14 @@ export default function HvacEnergyOptimizationReport({ data }) {
         <KeyValueTable rows={includesFreeCoolingAnalysis
           ? [
             ['Recommended Configuration', `${system.recoveryType}, ${selectedReheatName}, Humifog adiabatic humidification`],
-            ['Expected Annual Savings', formatMoney(annual.annualSavings)],
-            ['Expected Payback', economics.estimatedPayback],
+            ['Expected Annual Savings', formatMoney(economicAnnualSavings)],
+            ['Expected Payback', economicPayback],
             ['Final Recommendation', `Proceed with Humifog optimized outdoor air control at ${formatNumber(data.optimal.oaPercent, 0)}% OA, subject to final design review.`],
           ]
           : [
             ['Recommended Configuration', `${system.recoveryType}, ${selectedReheatName}, Humifog adiabatic humidification, 100% OA`],
-            ['Expected Annual Savings', formatMoney(energySummary.annualSavingsVsSteam)],
-            ['Expected Payback', economics.estimatedPayback],
+            ['Expected Annual Savings', formatMoney(economicAnnualSavings)],
+            ['Expected Payback', economicPayback],
             ['Final Recommendation', 'Proceed with the selected 100% outdoor air AHU configuration and exclude Free Cooling OA/RA optimization from this project report.'],
           ]} />
       </ReportSection>
@@ -1971,7 +2053,19 @@ export default function HvacEnergyOptimizationReport({ data }) {
             <KeyValueTable rows={hourlyWeatherCompactRows} />
           </>
         )}
-        <KeyValueTable rows={reportInputValidationRows} />
+        {projectSystems.length > 1 ? (
+          <>
+            <h3>{tr('Validation des données par UTA', 'Data validation by HVAC system')}</h3>
+            {systemValidationRows.map((systemValidation) => (
+              <div key={systemValidation.name}>
+                <h3>{systemValidation.name}</h3>
+                <KeyValueTable rows={systemValidation.rows} />
+              </div>
+            ))}
+          </>
+        ) : (
+          <KeyValueTable rows={reportInputValidationRows} />
+        )}
       </ReportSection>
 
       <ReportSection title="APPENDIX D - CALCULATION ASSUMPTIONS" pageBreak>

@@ -1576,6 +1576,9 @@ function localizeReportHtml(html, language) {
   )
 
   const frenchFinalCleanup = [
+    ['Nonnm', 'Nom'],
+    ['Nonnn', 'Non'],
+    ['Nonntes', 'Notes'],
     ['Comparaison Free Cooling', 'Comparaison en mode refroidissement gratuit'],
     ['This report compares steam humidification with Humifog adiabatique humidification for an HVAC air handling unit using the room condition as the design target.', 'Ce rapport compare l’humidification à vapeur avec l’humidification adiabatique Humifog pour une unité de traitement d’air, en utilisant les conditions de la pièce comme cible de conception.'],
     ['This report compares steam humidification with Humifog adiabatic humidification for an HVAC air handling unit using the room condition as the design target.', 'Ce rapport compare l’humidification à vapeur avec l’humidification adiabatique Humifog pour une unité de traitement d’air, en utilisant les conditions de la pièce comme cible de conception.'],
@@ -5107,6 +5110,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     name: activeSystemName || reportData.system.type,
     mode: reportData.mode,
     system: reportData.system,
+    design: reportData.design,
     project: reportData.project,
     metrics: reportData.metrics,
     economics: reportData.economics,
