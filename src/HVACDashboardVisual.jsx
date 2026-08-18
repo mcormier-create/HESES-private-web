@@ -3602,6 +3602,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   // Free Cooling is only available with the evaporative/atomization mode.
   const isFreeCoolingMode = ventilationMode.type === 'free-cooling-evaporative'
   const showFreeCoolingTables = isFreeCoolingMode && ventilationMode.type !== 'outside-air'
+  const is100OA = ventilationMode.type === 'outside-air'
   const economizerActive = isFreeCoolingMode && outsideWinterTemp < economizerTargetTemp
   const activeFraction = isFreeCoolingMode ? minimumOutsideAirPercent / 100 : ventilationMode.fraction
   const effectiveOutsideAirCFM = Math.round(outsideAirCFM * activeFraction)
@@ -3610,10 +3611,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const displayedHeatRecoverySystems = isFreeCoolingMode
     ? [noRecoverySelection]
     : heatRecoverySystems[language]
-  const activeSelectedRecoveries = isFreeCoolingMode
+  const activeSelectedRecoveries = isFreeCoolingMode || is100OA
     ? [noRecoverySelection]
     : selectedRecoveries
-  const is100OA = ventilationMode.type === 'outside-air'
   const selectedReheatEnergySource = String(selectedReheatSystem?.energie || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -5051,31 +5051,31 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       : (language === 'fr' ? 'Météo horaire' : 'Hourly Weather')
   const annualTechnologyResults = {
     electricSteam: {
-      annualEnergyKWh: freeCoolingSteamAnnual.totalEnergyKwh || energySummary.steam.annualEnergyKwh || 0,
-      annualOperatingCost: freeCoolingSteamAnnual.annualCost || energySummary.steam.annualCost || 0,
-      heatingKWh: freeCoolingSteamAnnual.heatingEnergyKwh || 0,
-      humidificationKWh: freeCoolingSteamAnnual.humidificationEnergyKwh || energySummary.steam.annualEnergyKwh || 0,
-      reheatKWh: freeCoolingSteamAnnual.reheatEnergyKwh || 0,
+      annualEnergyKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.totalEnergyKwh || 0 : energySummary.steam.annualEnergyKwh || 0,
+      annualOperatingCost: isFreeCoolingMode ? freeCoolingSteamAnnual.annualCost || 0 : energySummary.steam.annualCost || 0,
+      heatingKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.heatingEnergyKwh || 0 : 0,
+      humidificationKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.humidificationEnergyKwh || 0 : energySummary.steam.annualEnergyKwh || 0,
+      reheatKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.reheatEnergyKwh || 0 : 0,
       pumpKWh: 0,
       installedInvestmentCost: installedCostInputs.electricSteam,
       hoursBasis: annualHoursBasis,
     },
     naturalGasSteam: {
-      annualEnergyKWh: freeCoolingCommonElectricKwh + freeCoolingNaturalGasHumidificationKwh || energySummary.naturalGasSteam.annualEnergyKwh || 0,
-      annualOperatingCost: freeCoolingNaturalGasAnnualCost || energySummary.naturalGasSteam.annualCost || 0,
-      heatingKWh: freeCoolingSteamAnnual.heatingEnergyKwh || 0,
-      humidificationKWh: freeCoolingNaturalGasHumidificationKwh,
-      reheatKWh: freeCoolingSteamAnnual.reheatEnergyKwh || 0,
+      annualEnergyKWh: isFreeCoolingMode ? freeCoolingCommonElectricKwh + freeCoolingNaturalGasHumidificationKwh : energySummary.naturalGasSteam.annualEnergyKwh || 0,
+      annualOperatingCost: isFreeCoolingMode ? freeCoolingNaturalGasAnnualCost : energySummary.naturalGasSteam.annualCost || 0,
+      heatingKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.heatingEnergyKwh || 0 : 0,
+      humidificationKWh: isFreeCoolingMode ? freeCoolingNaturalGasHumidificationKwh : energySummary.naturalGasSteam.annualEnergyKwh || 0,
+      reheatKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.reheatEnergyKwh || 0 : 0,
       pumpKWh: 0,
       installedInvestmentCost: installedCostInputs.naturalGasSteam,
       hoursBasis: annualHoursBasis,
     },
     atmosphericGas: {
-      annualEnergyKWh: freeCoolingCommonElectricKwh + freeCoolingAtmosphericGasHumidificationKwh || energySummary.atmosphericGasHumidifier.annualEnergyKwh || 0,
-      annualOperatingCost: freeCoolingAtmosphericGasAnnualCost || energySummary.atmosphericGasHumidifier.annualCost || 0,
-      heatingKWh: freeCoolingSteamAnnual.heatingEnergyKwh || 0,
-      humidificationKWh: freeCoolingAtmosphericGasHumidificationKwh,
-      reheatKWh: freeCoolingSteamAnnual.reheatEnergyKwh || 0,
+      annualEnergyKWh: isFreeCoolingMode ? freeCoolingCommonElectricKwh + freeCoolingAtmosphericGasHumidificationKwh : energySummary.atmosphericGasHumidifier.annualEnergyKwh || 0,
+      annualOperatingCost: isFreeCoolingMode ? freeCoolingAtmosphericGasAnnualCost : energySummary.atmosphericGasHumidifier.annualCost || 0,
+      heatingKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.heatingEnergyKwh || 0 : 0,
+      humidificationKWh: isFreeCoolingMode ? freeCoolingAtmosphericGasHumidificationKwh : energySummary.atmosphericGasHumidifier.annualEnergyKwh || 0,
+      reheatKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.reheatEnergyKwh || 0 : 0,
       pumpKWh: 0,
       installedInvestmentCost: installedCostInputs.atmosphericGasHumidifier,
       hoursBasis: annualHoursBasis,
