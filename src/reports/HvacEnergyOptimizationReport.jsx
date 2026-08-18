@@ -1255,44 +1255,219 @@ export default function HvacEnergyOptimizationReport({ data }) {
           </div>
           <div>
             <span className="eyebrow">{tr('DÃ©bit dâ€™air modÃ©lisÃ©', 'Modeled airflow')}</span>
-            <strong>{formatFlow(system.supplyAirflowCfm, data.units, isFrench ? 'fr' : 'en')}</strong>
+            <strong>
+  {formatFlow(
+    projectSystems.length > 1
+      ? projectSystems.reduce(
+          (total, item) => total + Number(item.system?.supplyAirflowCfm || 0),
+          0
+        )
+      : system.supplyAirflowCfm,
+    data.units,
+    isFrench ? 'fr' : 'en'
+  )}
+</strong>
           </div>
           <div>
-            <span className="eyebrow">{tr('PortÃ©e du rapport', 'Report scope')}</span>
-            <strong>{includesFreeCoolingAnalysis ? tr('Comparaison en mode refroidissement gratuit', 'Free Cooling comparison') : tr('Comparaison 100 % air extÃ©rieur', '100% outdoor air comparison')}</strong>
-          </div>
-        </div>
-        <h3>{tr('AperÃ§u du projet', 'Project Overview')}</h3>
-        <p className="report-text">
-          {includesFreeCoolingAnalysis
-            ? tr('Ce rapport compare lâ€™humidification Ã  vapeur avec lâ€™humidification adiabatique Humifog pour une unitÃ© de traitement dâ€™air, en utilisant les conditions de la piÃ¨ce comme cible de conception.', 'This report compares steam humidification with Humifog adiabatic humidification for an HVAC air handling unit using the room condition as the design target.')
-            : tr('Ce rapport documente la configuration UTA sÃ©lectionnÃ©e en 100 % air extÃ©rieur. Les rÃ©sultats Free Cooling et dâ€™optimisation OA / RA sont exclus intentionnellement parce que le systÃ¨me ne fonctionne pas comme un Ã©conomiseur Ã  air mÃ©langÃ©.', 'This report documents the selected 100% outdoor air AHU configuration. Free Cooling and OA / RA optimization results are intentionally excluded because the system does not operate as a mixed air economizer.')}
-        </p>
-        <h3>{tr('Description du systÃ¨me', 'System Description')}</h3>
-        <KeyValueTable rows={[
-          [tr('Configuration UTA sÃ©lectionnÃ©e', 'Selected AHU configuration'), system.type],
-          [tr('Humidification adiabatique Humifog', 'Humifog adiabatic humidification'), selectedTechnology],
-          [tr('Type de rÃ©cupÃ©ration dâ€™Ã©nergie', 'Energy Recovery Type'), system.recoveryType],
-          [tr('Type de chauffage', 'Heating Type'), selectedReheatName],
-        ]} />
-        <h3>{tr('RÃ©sumÃ© des rÃ©sultats', 'Summary of Results')}</h3>
-        <KpiGrid items={includesFreeCoolingAnalysis
-          ? [
-            [tr('Ã‰conomies annuelles dâ€™Ã©nergie', 'Annual Energy Savings'), formatEnergy(annual.savingsKwh)],
-            [tr('Ã‰conomies annuelles de coÃ»t', 'Annual Cost Savings'), formatMoney(annual.annualSavings)],
-            [tr('RÃ©duction de GES', 'GHG Reduction'), `${formatNumber(metrics.eliminatedGES, 1)} tCO2e/year`],
-            [tr('Retour estimÃ©', 'Estimated Payback'), economics.estimatedPayback],
-            [tr('CoÃ»t annuel le plus bas', 'Lowest Annual Cost'), lowestAnnualCostOption.label],
-            [tr('RÃ©chauffage Humifog', 'Humifog Reheat'), reheatApplies ? `${formatEnergy(humifogReheatAppliedKwh)} - ${selectedReheatName}` : tr('Non requis', 'Not required')],
+ <span className="eyebrow">
+  {tr('Portée du rapport', 'Report scope')}
+</span>
+
+<strong>
+  {projectSystems.length > 1
+    ? tr(
+        'Analyse énergétique globale du bâtiment',
+        'Building-wide energy analysis'
+      )
+    : includesFreeCoolingAnalysis
+      ? tr(
+          'Comparaison en mode refroidissement gratuit',
+          'Free Cooling comparison'
+        )
+      : tr(
+          'Comparaison 100 % air extérieur',
+          '100% outdoor air comparison'
+        )}
+</strong>
+</div>
+</div>
+
+<h3>{tr('Aperçu du projet', 'Project Overview')}</h3>
+
+<p className="report-text">
+  {projectSystems.length > 1
+    ? tr(
+        `Ce rapport consolide l’analyse énergétique de ${projectSystems.length} systèmes HVAC du bâtiment. Les résultats de chaque UTA sont analysés individuellement puis regroupés afin de présenter le bilan énergétique global du bâtiment.`,
+        `This report consolidates the energy analysis of ${projectSystems.length} HVAC systems in the building. Each HVAC system is analyzed individually and the results are then combined to present the overall building energy balance.`
+      )
+    : includesFreeCoolingAnalysis
+      ? tr(
+          'Ce rapport compare l’humidification à vapeur avec l’humidification adiabatique Humifog pour une unité de traitement d’air, en utilisant les conditions de la pièce comme cible de conception.',
+          'This report compares steam humidification with Humifog adiabatic humidification for an HVAC air handling unit using the room condition as the design target.'
+        )
+      : tr(
+          'Ce rapport documente la configuration UTA sélectionnée en 100 % air extérieur. Les résultats Free Cooling et d’optimisation OA / RA sont exclus intentionnellement parce que le système ne fonctionne pas comme un économiseur à air mélangé.',
+          'This report documents the selected 100% outdoor air AHU configuration. Free Cooling and OA / RA optimization results are intentionally excluded because the system does not operate as a mixed air economizer.'
+        )}
+</p>
+
+<h3>
+  {projectSystems.length > 1
+    ? tr('Description du bâtiment', 'Building Description')
+    : tr('Description du système', 'System Description')}
+</h3>
+
+<KeyValueTable
+  rows={
+    projectSystems.length > 1
+      ? [
+          [
+            tr('Systèmes HVAC actifs', 'Active HVAC systems'),
+            `${projectSystems.length}`,
+          ],
+          [
+            tr('Débit total du bâtiment', 'Total building airflow'),
+            formatFlow(
+              projectSystems.reduce(
+                (total, item) =>
+                  total + Number(item.system?.supplyAirflowCfm || 0),
+                0
+              ),
+              data.units,
+              isFrench ? 'fr' : 'en'
+            ),
+          ],
+          [
+            tr('Configurations HVAC', 'HVAC configurations'),
+            tr(
+              'Configuration propre à chaque UTA',
+              'Configuration defined per HVAC system'
+            ),
+          ],
+          [
+            tr('Solution Humifog', 'Humifog solution'),
+            tr(
+              'Solution sélectionnée par UTA',
+              'Selected per HVAC system'
+            ),
+          ],
+        ]
+      : [
+          [
+            tr('Configuration UTA sélectionnée', 'Selected AHU configuration'),
+            system.type,
+          ],
+          [
+            tr(
+              'Humidification adiabatique Humifog',
+              'Humifog adiabatic humidification'
+            ),
+            selectedTechnology,
+          ],
+          [
+            tr(
+              'Type de récupération d’énergie',
+              'Energy Recovery Type'
+            ),
+            system.recoveryType,
+          ],
+          [
+            tr('Type de chauffage', 'Heating Type'),
+            selectedReheatName,
+          ],
+        ]
+  }
+/>        <h3>{tr('RÃ©sumÃ© des rÃ©sultats', 'Summary of Results')}</h3>
+        <KpiGrid
+  items={
+    projectSystems.length > 1
+      ? [
+          [
+            tr("Économies d'énergie annuelles", 'Annual Energy Savings'),
+            formatEnergy(buildingSavings.totals.energySavings),
+          ],
+          [
+            tr('Économies annuelles de coût', 'Annual Cost Savings'),
+            formatMoney(buildingSavings.totals.costSavings),
+          ],
+          [
+            tr("Énergie de référence du bâtiment", 'Building Reference Energy'),
+            formatEnergy(buildingSavings.totals.referenceEnergy),
+          ],
+          [
+            tr('Énergie Humifog du bâtiment', 'Building Humifog Energy'),
+            formatEnergy(buildingSavings.totals.humifogEnergy),
+          ],
+          [
+            tr("Réduction d'énergie", 'Energy Reduction'),
+            Number.isFinite(buildingSavings.totals.energyReductionPercent)
+              ? `${formatNumber(buildingSavings.totals.energyReductionPercent, 1)}%`
+              : tr('Non disponible', 'Not available'),
+          ],
+          [
+            tr('Systèmes HVAC analysés', 'HVAC Systems Analyzed'),
+            `${projectSystems.length}`,
+          ],
+        ]
+      : includesFreeCoolingAnalysis
+        ? [
+            [
+              tr("Économies annuelles d'énergie", 'Annual Energy Savings'),
+              formatEnergy(annual.savingsKwh),
+            ],
+            [
+              tr('Économies annuelles de coût', 'Annual Cost Savings'),
+              formatMoney(annual.annualSavings),
+            ],
+            [
+              tr('Réduction de GES', 'GHG Reduction'),
+              `${formatNumber(metrics.eliminatedGES, 1)} tCO2e/year`,
+            ],
+            [
+              tr('Retour estimé', 'Estimated Payback'),
+              economics.estimatedPayback,
+            ],
+            [
+              tr('Coût annuel le plus bas', 'Lowest Annual Cost'),
+              lowestAnnualCostOption.label,
+            ],
+            [
+              tr('Réchauffage Humifog', 'Humifog Reheat'),
+              reheatApplies
+                ? `${formatEnergy(humifogReheatAppliedKwh)} - ${selectedReheatName}`
+                : tr('Non requis', 'Not required'),
+            ],
           ]
-          : [
-            [tr('Mode de dÃ©bit dâ€™air', 'Airflow Mode'), system.type],
-            [tr('Estimation annuelle', 'Annual Estimate'), formatEnergy(energySummary.humifog?.annualEnergyKwh)],
-            [tr('CoÃ»t annuel dâ€™exploitation', 'Annual Operating Cost'), formatMoney(energySummary.humifog?.annualCost)],
-            [tr('RÃ©duction de GES', 'GHG Reduction'), `${formatNumber(metrics.eliminatedGES, 1)} tCO2e/year`],
-            [tr('RÃ©chauffage Humifog', 'Humifog Reheat'), (energySummary.humifog?.annualReheatCost || 0) > 0 ? formatMoney(energySummary.humifog?.annualReheatCost) : tr('Non requis', 'Not required')],
-            [tr('Sections Free Cooling non applicables', 'Free Cooling sections not applicable'), tr('100 % OA', '100% OA')],
-          ]} />
+        : [
+            [
+              tr("Mode de débit d'air", 'Airflow Mode'),
+              system.type,
+            ],
+            [
+              tr('Estimation annuelle', 'Annual Estimate'),
+              formatEnergy(energySummary.humifog?.annualEnergyKWh),
+            ],
+            [
+              tr("Coût annuel d'exploitation", 'Annual Operating Cost'),
+              formatMoney(energySummary.humifog?.annualCost),
+            ],
+            [
+              tr('Réduction de GES', 'GHG Reduction'),
+              `${formatNumber(metrics.eliminatedGES, 1)} tCO2e/year`,
+            ],
+            [
+              tr('Réchauffage Humifog', 'Humifog Reheat'),
+              (energySummary.humifog?.annualReheatCost || 0) > 0
+                ? formatMoney(energySummary.humifog?.annualReheatCost)
+                : tr('Non requis', 'Not required'),
+            ],
+            [
+              tr('Sections Free Cooling non applicables', 'Free Cooling sections not applicable'),
+              tr('100 % OA', '100% OA'),
+            ],
+          ]
+  }
+/>
         <div className="professional-note">
           {tr(
             'La comparaison est basÃ©e uniquement sur les valeurs disponibles dans le jeu de donnÃ©es du projet HESA. Les valeurs spÃ©cifiques au projet manquantes sont prÃ©sentÃ©es intentionnellement comme intrants de projet ou hypothÃ¨ses dâ€™ingÃ©nierie plutÃ´t que comme valeurs infÃ©rÃ©es.',
