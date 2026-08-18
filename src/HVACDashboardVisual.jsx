@@ -3611,7 +3611,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const displayedHeatRecoverySystems = isFreeCoolingMode
     ? [noRecoverySelection]
     : heatRecoverySystems[language]
-  const activeSelectedRecoveries = isFreeCoolingMode || is100OA
+  const activeSelectedRecoveries = isFreeCoolingMode
     ? [noRecoverySelection]
     : selectedRecoveries
   const selectedReheatEnergySource = String(selectedReheatSystem?.energie || '')
@@ -6244,13 +6244,11 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     <div
                       key={index}
                       onClick={() => {
-                        if (is100OA) return
                         setSelectedRecoveries([item])
                         setWheelEfficiency(defaultSensibleRecoveryEfficiency(item))
                         setLatentRecoveryEfficiency(defaultLatentRecoveryEfficiency(item))
                       }}
-                      aria-disabled={is100OA}
-                      className={`rounded-2xl p-5 border-2 transition ${is100OA ? 'cursor-not-allowed opacity-70' : 'cursor-pointer hover:shadow-lg'} ${
+                      className={`rounded-2xl p-5 border-2 cursor-pointer transition hover:shadow-lg ${
                         activeSelectedRecoveries.some(r => r.nom === item.nom)
                           ? 'border-cyan-500 bg-cyan-50'
                           : 'border-slate-200 bg-white'
@@ -6279,7 +6277,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                   ))}
                 </div>
 
-                {!isNoRecovery && !is100OA && (
+                {!isNoRecovery && (
                   <div className="mt-6 rounded-2xl border border-orange-200 bg-white p-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
@@ -6357,14 +6355,6 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                 )}
               </div>
             )}
-            {is100OA && (
-              <div className="mb-8 rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                {language === 'fr'
-                  ? 'Les images ci-dessus sont présentées à titre de référence. En mode 100 % air extérieur, aucune récupération ni efficacité sensible/latente ne peut être appliquée.'
-                  : 'The images above are shown for reference. In 100% outdoor-air mode, no heat recovery or sensible/latent efficiency can be applied.'}
-              </div>
-            )}
-
             {false && (
               <>
             <h2 className="text-2xl font-bold text-slate-800 mb-6">{t.hvacParameters}</h2>

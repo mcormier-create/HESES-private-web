@@ -30,7 +30,7 @@ export function calculateHvacDashboardMetrics({
   latentRecoveryEfficiency = 0,
 }) {
   const selectedRecovery = selectedRecoveries[0]
-  const isNoRecovery = Boolean(is100OA) || Boolean(selectedRecovery?.noRecovery)
+  const isNoRecovery = Boolean(selectedRecovery?.noRecovery)
   const latentRecoverySupported = supportsLatentRecovery(selectedRecovery)
   const sensibleRecoveryEfficiency = isNoRecovery
     ? 0
