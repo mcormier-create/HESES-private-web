@@ -4580,6 +4580,23 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     baseline: baseSystemInstalledCost,
     selectedHumifog: selectedHumifogInstalledCost,
   }
+  const freeCoolingSteamAnnual = freeCoolingHumifogAnalysis.annualComparison.freeCooling || {}
+  const freeCoolingHumifogAnnual = freeCoolingHumifogAnalysis.annualComparison.humifog || {}
+  const freeCoolingSteamHumidificationKwh = freeCoolingSteamAnnual.humidificationEnergyKwh || 0
+  const freeCoolingCommonElectricKwh = Math.max(
+    0,
+    (freeCoolingSteamAnnual.totalEnergyKwh || 0) - freeCoolingSteamHumidificationKwh
+  )
+  const freeCoolingNaturalGasHumidificationKwh =
+    freeCoolingSteamHumidificationKwh / Math.max(steamBoilerEfficiency / 100, 0.01)
+  const freeCoolingAtmosphericGasHumidificationKwh =
+    freeCoolingSteamHumidificationKwh / Math.max(atmosphericGasHumidifierEfficiency / 100, 0.01)
+  const freeCoolingNaturalGasAnnualCost =
+    freeCoolingCommonElectricKwh * electricityRate +
+    (freeCoolingNaturalGasHumidificationKwh / 10.35) * naturalGasRate
+  const freeCoolingAtmosphericGasAnnualCost =
+    freeCoolingCommonElectricKwh * electricityRate +
+    (freeCoolingAtmosphericGasHumidificationKwh / 10.35) * naturalGasRate
   const referenceRoiKey = annualComparisonReference === 'atmosphericGas'
     ? 'atmosphericGasHumidifier'
     : annualComparisonReference
@@ -5026,23 +5043,6 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const annualHumifogHeatKwh =
     (freeCoolingHumifogAnalysis.annualComparison.humifog?.heatingEnergyKwh || 0) +
     (freeCoolingHumifogAnalysis.annualComparison.humifog?.reheatEnergyKwh || 0)
-  const freeCoolingSteamAnnual = freeCoolingHumifogAnalysis.annualComparison.freeCooling || {}
-  const freeCoolingHumifogAnnual = freeCoolingHumifogAnalysis.annualComparison.humifog || {}
-  const freeCoolingSteamHumidificationKwh = freeCoolingSteamAnnual.humidificationEnergyKwh || 0
-  const freeCoolingCommonElectricKwh = Math.max(
-    0,
-    (freeCoolingSteamAnnual.totalEnergyKwh || 0) - freeCoolingSteamHumidificationKwh
-  )
-  const freeCoolingNaturalGasHumidificationKwh =
-    freeCoolingSteamHumidificationKwh / Math.max(steamBoilerEfficiency / 100, 0.01)
-  const freeCoolingAtmosphericGasHumidificationKwh =
-    freeCoolingSteamHumidificationKwh / Math.max(atmosphericGasHumidifierEfficiency / 100, 0.01)
-  const freeCoolingNaturalGasAnnualCost =
-    freeCoolingCommonElectricKwh * electricityRate +
-    (freeCoolingNaturalGasHumidificationKwh / 10.35) * naturalGasRate
-  const freeCoolingAtmosphericGasAnnualCost =
-    freeCoolingCommonElectricKwh * electricityRate +
-    (freeCoolingAtmosphericGasHumidificationKwh / 10.35) * naturalGasRate
   const annualHoursBasis = isCustomOperatingHoursMode
     ? (language === 'fr' ? 'Heures personnalisées' : 'Custom Operating Hours')
     : calculationMethod === 'bin'
