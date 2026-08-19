@@ -283,7 +283,7 @@ export function summarizeProjectEnergy(systems, referenceTechnology = null) {
       : null
   }
 
-  const hourBases = [...new Set(activeSystems.map((system) => system.hoursBasis || system.mode?.selectedCalculationMethod || system.results?.electricSteam?.hoursBasis).filter(Boolean))]
+  const hourBases = [...new Set(activeSystems.map((system) => operatingHourBasisForSystem(system)).filter(Boolean))]
   return {
     referenceTechnology: uniformReferenceTechnology,
     referenceTechnologies: selectedReferences,
@@ -295,10 +295,24 @@ export function summarizeProjectEnergy(systems, referenceTechnology = null) {
     operatingHourBasis: hourBases.length > 1 ? 'mixed' : (hourBases[0] || ''),
     systemHourBases: activeSystems.map((system) => ({
       name: system.name || system.system?.name || 'AHU',
-      basis: system.hoursBasis || system.mode?.selectedCalculationMethod || system.results?.electricSteam?.hoursBasis || '',
+      basis: operatingHourBasisForSystem(system),
       humifogTechnology: selectedHumifogTechnology(system),
     })),
   }
+}
+
+function operatingHourBasisForSystem(system = {}) {
+  const settings = system.settings || {}
+  const calculationMethod = settings.calculationMethod || system.mode?.calculationMethod
+  const scheduleMode = settings.scheduleMode || system.mode?.scheduleMode
+
+  if (calculationMethod === 'hourly') {
+    return scheduleMode === 'custom' ? 'Custom operating hours - EPW hourly simulation' : 'EPW hourly simulation 8760'
+  }
+  if (calculationMethod === 'bin') {
+    return scheduleMode === 'custom' ? 'BIN hours adjusted to custom schedule' : 'BIN hours'
+  }
+  return system.hoursBasis || system.mode?.selectedCalculationMethod || system.results?.electricSteam?.hoursBasis || ''
 }
 
 function number(value) {

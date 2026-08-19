@@ -4804,6 +4804,15 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         : isCustomOperatingHoursMode
           ? (language === 'fr' ? 'Heures d’exploitation personnalisées' : 'Custom operating hours')
           : t.binHoursMethod,
+      calculationMethod,
+      scheduleMode,
+      operatingHourBasis: calculationMethod === 'hourly'
+        ? (scheduleMode === 'custom'
+          ? (language === 'fr' ? 'Horaire personnalisé - simulation EPW horaire' : 'Custom operating hours - EPW hourly simulation')
+          : (language === 'fr' ? 'Simulation EPW horaire 8760' : 'EPW hourly simulation 8760'))
+        : (scheduleMode === 'custom'
+          ? (language === 'fr' ? 'Heures BIN ajustées selon l’horaire personnalisé' : 'BIN hours adjusted to custom schedule')
+          : (language === 'fr' ? 'Heures BIN' : 'BIN hours')),
       isCustomOperatingHours: isCustomOperatingHoursMode,
       hourlyWeatherSourceType,
       hourlyWeatherFileName,
@@ -5208,6 +5217,20 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       minimumOutsideAirPercent,
       roomTemperature,
       roomRelativeHumidity,
+      calculationMethod,
+      scheduleMode,
+      scheduleStartTime,
+      scheduleEndTime,
+      scheduleDaysOption,
+      scheduleCustomDays,
+      hourlyWeatherFileName,
+      hourlyWeatherFileLocation,
+      hourlyWeatherSourceType,
+      hourlyWeatherRecordsLoaded,
+      hourlyWeatherOperatingHoursUsed,
+      hourlyWeatherSummary,
+      hourlyWeatherMetadata,
+      heatPumpCOP,
     },
     mode: reportData.mode,
     system: reportData.system,

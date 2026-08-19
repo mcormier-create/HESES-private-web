@@ -1051,11 +1051,11 @@ export default function HvacEnergyOptimizationReport({ data }) {
     [tr('Emplacement du projet', 'Project location'), project.location || '-'],
     [tr('Mode du rapport', 'Report mode'), includesFreeCoolingAnalysis ? tr('Free Cooling', 'Free Cooling') : tr('100% air extérieur', '100% Outdoor Air')],
     [tr('Mode de ventilation sélectionné', 'Ventilation mode selected'), mode.ventilationModeName || '-'],
-    [tr('Mode d’exploitation', 'Operating mode'), mode.selectedCalculationMethod?.toLowerCase().includes('hourly')
+    [tr('Base horaire utilisée', 'Operating-hour basis used'), mode.operatingHourBasis || (mode.selectedCalculationMethod?.toLowerCase().includes('hourly')
       ? tr('Simulation météo horaire 8760', 'Hourly weather simulation 8760')
       : mode.isCustomOperatingHours
         ? tr('Heures d’exploitation personnalisées', 'Custom operating hours')
-        : tr('Heures BIN', 'BIN hours')],
+        : tr('Heures BIN', 'BIN hours'))],
     [tr('Méthode de calcul', 'Calculation method selected'), mode.selectedCalculationMethod || '-'],
     [tr('Source météo', 'Weather data source'), mode.weatherDataSource || tr('Gouvernement du Canada — CWEC_FMCCE / fichier météo horaire EPW', 'Government of Canada — CWEC_FMCCE / EPW hourly weather file')],
     [tr('Organisation', 'Weather source organization'), mode.weatherSourceOrganization || tr('Environnement et Changement climatique Canada', 'Environment and Climate Change Canada')],
