@@ -1675,6 +1675,14 @@ export default function HvacEnergyOptimizationReport({ data }) {
       })}
 
       <ReportSection title={reportSectionTitle('psychrometric', 'PSYCHROMETRIC ANALYSIS')} pageBreak allowPageBreak>
+        <h3>{tr('Charges d’humidification', 'Humidification Loads')}</h3>
+        <KeyValueTable rows={[
+          [tr('Charge d’humidification corrigée', 'Corrected humidification load'), `${formatNumber(metrics.correctedHumidificationLoadRaw ?? metrics.correctedHumidificationLoad ?? 0, 2)} lb/h`],
+          [tr('Énergie vapeur équivalente', 'Equivalent steam energy'), `${formatNumber(metrics.steamEnergyKWRaw ?? metrics.steamEnergyKW ?? 0, 2)} kW`],
+          [tr('Puissance pompe Humifog', 'Humifog pump power'), `${formatNumber(metrics.humifogPumpKWRaw ?? metrics.humifogPumpKW ?? 0, 2)} kW`],
+          [tr('Chauffage CVC commun', 'Common HVAC heating'), `${formatNumber(metrics.commonHvacHeatingThermalKWRaw ?? metrics.commonHvacHeatingThermalKW ?? 0, 2)} kW`],
+          [tr('Heures annuelles utilisées', 'Annual operating hours used'), `${formatNumber(metrics.annualHumidificationHours || energySummary.annualHumidificationHours || 0, 0)} h/year`],
+        ]} />
         <table className="report-table compact">
           <thead>
             <tr>
@@ -1705,14 +1713,6 @@ export default function HvacEnergyOptimizationReport({ data }) {
             ))}
           </tbody>
         </table>
-        <h3>{tr('Charges d’humidification', 'Humidification Loads')}</h3>
-        <KeyValueTable rows={[
-          [tr('Charge d’humidification corrigée', 'Corrected humidification load'), `${formatNumber(metrics.correctedHumidificationLoadRaw ?? metrics.correctedHumidificationLoad ?? 0, 2)} lb/h`],
-          [tr('Énergie vapeur équivalente', 'Equivalent steam energy'), `${formatNumber(metrics.steamEnergyKWRaw ?? metrics.steamEnergyKW ?? 0, 2)} kW`],
-          [tr('Puissance pompe Humifog', 'Humifog pump power'), `${formatNumber(metrics.humifogPumpKWRaw ?? metrics.humifogPumpKW ?? 0, 2)} kW`],
-          [tr('Chauffage CVC commun', 'Common HVAC heating'), `${formatNumber(metrics.commonHvacHeatingThermalKWRaw ?? metrics.commonHvacHeatingThermalKW ?? 0, 2)} kW`],
-          [tr('Heures annuelles utilisées', 'Annual operating hours used'), `${formatNumber(metrics.annualHumidificationHours || energySummary.annualHumidificationHours || 0, 0)} h/year`],
-        ]} />
       </ReportSection>
 
       <ReportSection title={reportSectionTitle('calculations', 'PSYCHROMETRIC CALCULATIONS')} pageBreak allowPageBreak>
