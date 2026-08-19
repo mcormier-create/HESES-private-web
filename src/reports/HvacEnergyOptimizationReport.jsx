@@ -866,6 +866,11 @@ export default function HvacEnergyOptimizationReport({ data }) {
       [tr('Heures avec humidification requise', 'Hours requiring humidification'), `${formatNumber(hourlyWeatherDataSummary.hoursWithHumidificationRequired || 0, 0)}`],
     ]
     : []
+  const formatHumidificationLoad = (value) => {
+    const poundsPerHour = Number(value || 0)
+    const kilogramsPerHour = poundsPerHour * 0.45359237
+    return `${formatNumber(kilogramsPerHour, 2)} kg/hr (${formatNumber(poundsPerHour, 2)} lb/hr)`
+  }
   const reportInputValidationRows = [
     [tr('Emplacement du projet', 'Project location'), project.location || '-'],
     [tr('Mode du rapport', 'Report mode'), includesFreeCoolingAnalysis ? tr('Free Cooling', 'Free Cooling') : tr('100% air extérieur', '100% Outdoor Air')],
@@ -952,6 +957,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
         ['Electricity rate entered', `${formatNumber(systemEconomics.electricityRate, 2)} $/kWh`],
         ['Natural gas rate entered', `${formatNumber(systemEconomics.naturalGasRate, 2)} $/m3`],
         ['Operating schedule', `${systemMetrics.scheduleDescription || ''}`],
+        [tr('Charge massique d’humidification', 'Humidification mass load'), formatHumidificationLoad(systemMetrics.correctedHumidificationLoadRaw ?? systemMetrics.correctedHumidificationLoad)],
         ['Annual humidification hours used', `${formatNumber(systemMetrics.annualHumidificationHours, 0)} h`],
         [tr('Statut météo', 'Weather validation status'), systemMode.weatherValidationStatus || '-'],
       ],
@@ -1677,7 +1683,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
       <ReportSection title={reportSectionTitle('psychrometric', 'PSYCHROMETRIC ANALYSIS')} pageBreak allowPageBreak>
         <h3>{tr('Charges d’humidification', 'Humidification Loads')}</h3>
         <KeyValueTable rows={[
-          [tr('Charge d’humidification corrigée', 'Corrected humidification load'), `${formatNumber(metrics.correctedHumidificationLoadRaw ?? metrics.correctedHumidificationLoad ?? 0, 2)} lb/h`],
+          [tr('Charge massique d’humidification corrigée', 'Corrected humidification mass load'), formatHumidificationLoad(metrics.correctedHumidificationLoadRaw ?? metrics.correctedHumidificationLoad)],
           [tr('Énergie vapeur équivalente', 'Equivalent steam energy'), `${formatNumber(metrics.steamEnergyKWRaw ?? metrics.steamEnergyKW ?? 0, 2)} kW`],
           [tr('Puissance pompe Humifog', 'Humifog pump power'), `${formatNumber(metrics.humifogPumpKWRaw ?? metrics.humifogPumpKW ?? 0, 2)} kW`],
           [tr('Chauffage CVC commun', 'Common HVAC heating'), `${formatNumber(metrics.commonHvacHeatingThermalKWRaw ?? metrics.commonHvacHeatingThermalKW ?? 0, 2)} kW`],
