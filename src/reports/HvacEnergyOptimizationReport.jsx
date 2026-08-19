@@ -1,5 +1,6 @@
 import { Fragment } from 'react'
 import { BASELINE_TECHNOLOGIES, selectedHumifogTechnology, selectedReferenceTechnology, selectedTechnologiesForSystem, summarizeBuildingSavings, summarizeProjectEnergy } from './projectEnergySummary'
+import { humidityRatioFromRH } from '../calculations/psychrometrics.js'
 
 const PROFESSIONAL_REPORT_CSS = `
   .engineering-report {
@@ -587,6 +588,26 @@ const PROFESSIONAL_REPORT_CSS = `
 
 let activeReportLanguage = 'en'
 
+function fallbackHumidificationLoadLbHr(system = {}) {
+  const settings = system.settings || {}
+  const config = system.system || {}
+  const design = system.design || {}
+  const airflowCfm = Number(config.supplyAirflowCfm ?? settings.outsideAirCFM)
+  if (!Number.isFinite(airflowCfm) || airflowCfm <= 0) return null
+  const roomTemperature = Number(design.roomState?.db ?? settings.roomTemperature ?? 22)
+  const roomRh = Number(design.roomState?.rh ?? settings.roomRelativeHumidity ?? 35)
+  const cityWinterTemperatures = { Montreal: -23, Montréal: -23, Quebec: -28, Québec: -28, Ottawa: -25, Toronto: -18, Vancouver: -8, Calgary: -30, Winnipeg: -35 }
+  const outdoorTemperature = Number(design.outdoorState?.db ?? cityWinterTemperatures[settings.selectedCityName] ?? -23)
+  const outdoorRh = Number(design.outdoorState?.rh ?? 90)
+  const is100OA = Boolean(system.mode?.is100OA || Number(settings.minimumOutsideAirPercent) >= 100)
+  const requestedOaPercent = Number(config.selectedOaPercent ?? config.oaMinimumPercent ?? settings.minimumOutsideAirPercent ?? 100)
+  const oaPercent = is100OA ? 100 : Math.max(0, Math.min(100, requestedOaPercent))
+  const indoorW = humidityRatioFromRH(roomTemperature, roomRh)
+  const outdoorW = humidityRatioFromRH(outdoorTemperature, outdoorRh)
+  const enteringW = outdoorW + (1 - oaPercent / 100) * (indoorW - outdoorW)
+  return Math.max(0, 4.5 * airflowCfm * Math.max(0, indoorW - enteringW))
+}
+
 export default function HvacEnergyOptimizationReport({ data }) {
   const normalizedLanguage = String(data.language || 'en').toLowerCase()
   const isFrench = normalizedLanguage.startsWith('fr')
@@ -867,6 +888,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
     ]
     : []
   const formatHumidificationLoad = (value) => {
+    if (!Number.isFinite(Number(value))) return tr('Non disponible', 'Not available')
     const poundsPerHour = Number(value || 0)
     const kilogramsPerHour = poundsPerHour * 0.45359237
     return `${formatNumber(kilogramsPerHour, 2)} kg/hr (${formatNumber(poundsPerHour, 2)} lb/hr)`
@@ -958,7 +980,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
         ['Electricity rate entered', `${formatNumber(systemEconomics.electricityRate, 2)} $/kWh`],
         ['Natural gas rate entered', `${formatNumber(systemEconomics.naturalGasRate, 2)} $/m3`],
         ['Operating schedule', `${systemMetrics.scheduleDescription || ''}`],
-        [tr('Charge massique d’humidification', 'Humidification mass load'), formatHumidificationLoad(systemMetrics.correctedHumidificationLoadRaw ?? systemMetrics.correctedHumidificationLoad ?? systemResults.electricSteam?.humidificationLoadLbHr)],
+        [tr('Charge massique d’humidification', 'Humidification mass load'), formatHumidificationLoad(systemMetrics.correctedHumidificationLoadRaw ?? systemMetrics.correctedHumidificationLoad ?? systemResults.electricSteam?.humidificationLoadLbHr ?? fallbackHumidificationLoadLbHr(projectSystem))],
         ['Annual humidification hours used', `${formatNumber(systemMetrics.annualHumidificationHours, 0)} h`],
         [tr('Statut météo', 'Weather validation status'), systemMode.weatherValidationStatus || '-'],
       ],
@@ -1253,7 +1275,8 @@ export default function HvacEnergyOptimizationReport({ data }) {
               <th>{tr('Énergie annuelle', 'Annual Energy')}</th>
               <th>{tr('Coût annuel', 'Annual Operating Cost')}</th>
               <th>{tr('Investissement installé', 'Installed Investment')}</th>
-              <th>{tr('Économies vs référence', 'Savings vs Reference')}</th>
+              <th>{tr('Économies coût vs référence', 'Cost Savings vs Reference')}</th>
+              <th>{tr('Économies énergie vs référence', 'Energy Savings vs Reference')}</th>
               <th>{tr('Investissement incrémental', 'Incremental Investment')}</th>
               <th>{tr('Retour simple', 'Simple Payback')}</th>
               <th>{tr('ROI annuel simple', 'Simple Annual ROI')}</th>
@@ -1270,6 +1293,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
                   <td>{formatMoney(total.annualOperatingCost)}</td>
                   <td>{formatMoney(total.installedInvestmentCost)}</td>
                   <td>{projectEnergy.referenceTechnology === key ? tr('Référence', 'Reference') : formatMoney(total.annualSavings)}</td>
+                  <td>{projectEnergy.referenceTechnology === key ? tr('Référence', 'Reference') : Number.isFinite(projectEnergy.referenceEnergy) && Number.isFinite(total.annualEnergyKWh) ? formatEnergy(projectEnergy.referenceEnergy - total.annualEnergyKWh) : tr('Non disponible', 'Not available')}</td>
                   <td>{projectEnergy.referenceTechnology === key ? '-' : formatMoney(total.incrementalInvestment)}</td>
                   <td>{projectEnergy.referenceTechnology === key ? '-' : projectPayback(total.simplePaybackYears, total.paybackStatus)}</td>
                   <td>{projectEnergy.referenceTechnology === key ? '-' : projectRoi(total.simpleAnnualRoiPercent)}</td>
@@ -1318,6 +1342,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
         const systemHumidificationLoad = projectSystem.metrics?.correctedHumidificationLoadRaw
           ?? projectSystem.metrics?.correctedHumidificationLoad
           ?? systemResults.electricSteam?.humidificationLoadLbHr
+          ?? fallbackHumidificationLoadLbHr(projectSystem)
         const systemSavings = buildingSavings.bySystem[index]?.savings || summarizeBuildingSavings([projectSystem], projectEnergy.referenceTechnology).totals
         const systemIsFreeCooling = Boolean(systemMode.includesFreeCoolingAnalysis || systemMode.isFreeCoolingMode)
         const systemTechnologies = selectedTechnologiesForSystem(projectSystem).filter((key) => systemResults[key])
