@@ -4894,7 +4894,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     metrics: {
       ...freeCoolingHumifogAnalysis.metrics,
       correctedHumidificationLoad,
-      correctedHumidificationLoadRaw: steamHumidificationLoadRaw,
+      correctedHumidificationLoadRaw: Number(metrics.correctedHumidificationLoadRaw ?? correctedHumidificationLoad),
       steamEnergyKW,
       steamEnergyKWRaw,
       humifogPumpKW: adiabaticPumpKW,
