@@ -932,6 +932,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
     const systemConfig = projectSystem.system || {}
     const systemDesign = projectSystem.design || {}
     const systemMetrics = projectSystem.metrics || {}
+    const systemResults = projectSystem.annualTechnologyResults || projectSystem.results || {}
     const systemEconomics = projectSystem.economics || {}
     const systemOutdoor = systemDesign.outdoorState
     const systemRoom = systemDesign.roomState
@@ -957,7 +958,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
         ['Electricity rate entered', `${formatNumber(systemEconomics.electricityRate, 2)} $/kWh`],
         ['Natural gas rate entered', `${formatNumber(systemEconomics.naturalGasRate, 2)} $/m3`],
         ['Operating schedule', `${systemMetrics.scheduleDescription || ''}`],
-        [tr('Charge massique d’humidification', 'Humidification mass load'), formatHumidificationLoad(systemMetrics.correctedHumidificationLoadRaw ?? systemMetrics.correctedHumidificationLoad ?? projectSystem.annualTechnologyResults?.electricSteam?.humidificationLoadLbHr)],
+        [tr('Charge massique d’humidification', 'Humidification mass load'), formatHumidificationLoad(systemMetrics.correctedHumidificationLoadRaw ?? systemMetrics.correctedHumidificationLoad ?? systemResults.electricSteam?.humidificationLoadLbHr)],
         ['Annual humidification hours used', `${formatNumber(systemMetrics.annualHumidificationHours, 0)} h`],
         [tr('Statut météo', 'Weather validation status'), systemMode.weatherValidationStatus || '-'],
       ],
