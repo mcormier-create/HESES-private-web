@@ -877,7 +877,18 @@ function HesaMultiSystemApp() {
 
   useEffect(() => {
     if (!activeSystem) return
-    window.localStorage.setItem(HESES_MULTI_SYSTEM_STORAGE_KEY, JSON.stringify(systems))
+    try {
+      window.localStorage.setItem(HESES_MULTI_SYSTEM_STORAGE_KEY, JSON.stringify(persistableSystems(systems)))
+    } catch (error) {
+      if (isQuotaExceededStorageError(error)) {
+        try {
+          // Emergency fallback keeps project settings usable while dropping heavy computed payloads.
+          window.localStorage.setItem(HESES_MULTI_SYSTEM_STORAGE_KEY, JSON.stringify(minimalPersistableSystems(systems)))
+        } catch {
+          // Ignore final failure to avoid blocking app rendering.
+        }
+      }
+    }
   }, [systems, activeSystem])
 
   const updateActiveSystem = (settings) => {
@@ -1049,6 +1060,28 @@ function HesaMultiSystemApp() {
       />
     </>
   )
+}
+
+function persistableSystems(systems = []) {
+  return (systems || []).map((system) => ({
+    id: system.id,
+    name: system.name,
+    settings: system.settings,
+    results: system.results,
+  }))
+}
+
+function minimalPersistableSystems(systems = []) {
+  return (systems || []).map((system) => ({
+    id: system.id,
+    name: system.name,
+    settings: system.settings,
+  }))
+}
+
+function isQuotaExceededStorageError(error) {
+  if (!error) return false
+  return error.name === 'QuotaExceededError' || String(error.message || '').toLowerCase().includes('quota')
 }
 
 function loadMultiSystemState(initialSettings, language = 'fr') {
