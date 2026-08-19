@@ -802,6 +802,10 @@ export default function HvacEnergyOptimizationReport({ data }) {
   const design = data.design || {}
   const economics = data.economics || {}
   const message = data.message || {}
+  const isHourlyCalculation = mode.calculationMethod === 'hourly'
+    || String(mode.selectedCalculationMethod || '').toLowerCase().includes('hourly')
+    || String(mode.selectedCalculationMethod || '').toLowerCase().includes('horaire')
+  const isBinCalculation = !isHourlyCalculation
   const points = data.psychrometricPoints || []
   const binRows = data.binRows || []
   const binValidationRows = data.binValidationRows || []
@@ -818,7 +822,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
   const tr = (fr, en) => (isFrench ? fr : en)
   const is100OA = Boolean(mode.is100OA)
   const includesFreeCoolingAnalysis = Boolean(mode.includesFreeCoolingAnalysis && !is100OA)
-  const showBinAnalysis = !Boolean(mode.isCustomOperatingHours)
+  const showBinAnalysis = isBinCalculation
   const selectedOaPercent = system.selectedOaPercent ?? system.oaMinimumPercent ?? system.oaPercent
   const selectedRaPercent = system.selectedRaPercent ?? Math.max(0, 100 - selectedOaPercent)
   const calculatedAverageOaPercent = system.calculatedAverageOaPercent ?? system.oaPercent
@@ -1015,7 +1019,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
         }),
       }
     })
-  const hourlyWeatherDataSummary = mode.hourlyWeatherDataSummary || null
+  const hourlyWeatherDataSummary = isHourlyCalculation ? (mode.hourlyWeatherDataSummary || null) : null
   const hourlyWeatherSummaryRows = hourlyWeatherDataSummary
     ? [
       [tr('Ville sélectionnée', 'Selected city'), hourlyWeatherDataSummary.selectedCity || '-'],
@@ -1057,15 +1061,17 @@ export default function HvacEnergyOptimizationReport({ data }) {
         ? tr('Heures d’exploitation personnalisées', 'Custom operating hours')
         : tr('Heures BIN', 'BIN hours'))],
     [tr('Méthode de calcul', 'Calculation method selected'), mode.selectedCalculationMethod || '-'],
-    [tr('Source météo', 'Weather data source'), mode.weatherDataSource || tr('Gouvernement du Canada — CWEC_FMCCE / fichier météo horaire EPW', 'Government of Canada — CWEC_FMCCE / EPW hourly weather file')],
-    [tr('Organisation', 'Weather source organization'), mode.weatherSourceOrganization || tr('Environnement et Changement climatique Canada', 'Environment and Climate Change Canada')],
-    [tr('Type de fichier', 'Weather climate file type'), mode.weatherClimateFileType || '-'],
-    [tr('Validation', 'Weather file validation status'), mode.weatherValidationStatus || '-'],
-    [tr('Fichier chargé', 'Hourly weather file'), mode.hourlyWeatherFileName || '-'],
-    [tr('Localisation du fichier météo', 'Hourly weather location'), mode.hourlyWeatherFileLocation || '-'],
-    [tr('Enregistrements horaires', 'Hourly weather records loaded'), `${mode.hourlyWeatherRecordsLoaded || 0}`],
-    [tr('Heures d’exploitation utilisées', 'Hourly operating hours used'), `${mode.hourlyWeatherOperatingHoursUsed || 0}`],
-    [tr('Statut du fichier météo horaire', 'Hourly weather file status'), mode.hourlyWeatherParseError ? `${tr('Erreur', 'Error')}: ${mode.hourlyWeatherParseError}` : 'OK'],
+    ...(isHourlyCalculation ? [
+      [tr('Source météo', 'Weather data source'), mode.weatherDataSource || tr('Fichier météo horaire EPW', 'EPW hourly weather file')],
+      [tr('Organisation', 'Weather source organization'), mode.weatherSourceOrganization || '-'],
+      [tr('Type de fichier', 'Weather climate file type'), mode.weatherClimateFileType || '-'],
+      [tr('Validation', 'Weather file validation status'), mode.weatherValidationStatus || '-'],
+      [tr('Fichier chargé', 'Hourly weather file'), mode.hourlyWeatherFileName || '-'],
+      [tr('Localisation du fichier météo', 'Hourly weather location'), mode.hourlyWeatherFileLocation || '-'],
+      [tr('Enregistrements horaires', 'Hourly weather records loaded'), `${mode.hourlyWeatherRecordsLoaded || 0}`],
+      [tr('Heures d’exploitation utilisées', 'Hourly operating hours used'), `${mode.hourlyWeatherOperatingHoursUsed || 0}`],
+      [tr('Statut du fichier météo horaire', 'Hourly weather file status'), mode.hourlyWeatherParseError ? `${tr('Erreur', 'Error')}: ${mode.hourlyWeatherParseError}` : 'OK'],
+    ] : []),
     ...(mode.selectedCalculationMethod?.toLowerCase().includes('hourly') && mode.hourlyAnnualResults
       ? [
         [tr('Énergie annuelle vapeur', 'Annual steam kWh'), `${formatNumber(mode.hourlyAnnualResults.annualSteamKwh || 0, 0)} kWh/year`],
