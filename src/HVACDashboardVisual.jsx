@@ -1081,6 +1081,22 @@ function isQuotaExceededStorageError(error) {
   return error.name === 'QuotaExceededError' || String(error.message || '').toLowerCase().includes('quota')
 }
 
+function compactWeatherBins(records = [], targetCount = 96) {
+  if (records.length <= targetCount) return records
+  const chunkSize = Math.ceil(records.length / targetCount)
+  const compacted = []
+  for (let start = 0; start < records.length; start += chunkSize) {
+    const chunk = records.slice(start, start + chunkSize)
+    const hours = chunk.reduce((total, record) => total + Number(record.hours || 1), 0)
+    compacted.push({
+      tempC: chunk.reduce((total, record) => total + Number(record.tempC || 0), 0) / chunk.length,
+      rh: chunk.reduce((total, record) => total + Number(record.rh || 0), 0) / chunk.length,
+      hours,
+    })
+  }
+  return compacted
+}
+
 function loadMultiSystemState(initialSettings, language = 'fr') {
   if (typeof window !== 'undefined') {
     try {
@@ -4251,6 +4267,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       rh: Number(record.relativeHumidity),
     }))
     : selectedBinWeatherData
+  const freeCoolingOptimizationWeatherData = isHourlySimulationActive
+    ? compactWeatherBins(freeCoolingWeatherData, 96)
+    : freeCoolingWeatherData
   const binEnergyRows = selectedBinWeatherData.map((bin) => {
     const binMetrics = calculateHvacDashboardMetrics({
       outsideAirCFM,
@@ -4452,6 +4471,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
 
   const freeCoolingHumifogAnalysis = calculateFreeCoolingHumifogComparison({
     bins: freeCoolingWeatherData,
+    optimizationBins: freeCoolingOptimizationWeatherData,
     roomDb: roomTemperature,
     roomRh: roomRelativeHumidity,
     minimumOutdoorAirPercent: minimumOutsideAirPercent,

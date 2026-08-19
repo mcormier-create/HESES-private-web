@@ -26,8 +26,10 @@ export function calculateFreeCoolingHumifogComparison({
   heatPumpCOP = 3.8,
   useMeasuredMixedAirTemperature = false,
   measuredMixedAirTemperatureC = 18,
+  optimizationBins = null,
 }) {
   const weatherBins = normalizeBins(bins)
+  const optimizationWeatherBins = normalizeBins(optimizationBins || bins)
   const hasValidBins = weatherBins.length > 0 && weatherBins.every((bin) =>
     Number.isFinite(bin.tempC) &&
     Number.isFinite(bin.hours) &&
@@ -75,7 +77,7 @@ export function calculateFreeCoolingHumifogComparison({
   ])].sort((a, b) => a - b)
 
   const optimizationRows = oaTestPoints.map((oaPercent) => {
-    const rows = weatherBins.map((bin) => calculateHumifogBinRow({
+    const rows = optimizationWeatherBins.map((bin) => calculateHumifogBinRow({
       ...common,
       bin,
       outdoorAirPercent: oaPercent,
