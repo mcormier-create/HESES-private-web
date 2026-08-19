@@ -974,29 +974,10 @@ function HesaMultiSystemApp() {
 
   if (!analysisOpen) {
     return (
-      <HvacDashboardApp
-        key={activeSystem.id}
-        showLandingPage
+      <HesesLandingPage
+        language={systemControlsLanguage}
+        setLanguage={setSystemControlsLanguage}
         onStartAnalysis={() => setAnalysisOpen(true)}
-        onLanguageChange={setSystemControlsLanguage}
-        systemSettings={activeSystem.settings}
-        onSettingsChange={updateActiveSystem}
-        onAnnualResults={(results) => {
-          setSystems((current) => {
-            const next = current.map((system) => system.id === activeSystem.id && JSON.stringify(system.results) !== JSON.stringify(results) ? { ...system, results } : system)
-            return next.some((system, index) => system !== current[index]) ? next : current
-          })
-        }}
-        onReportSnapshot={(snapshot) => {
-          setSystems((current) => {
-            const active = current.find((system) => system.id === activeSystem.id)
-            if (snapshotSignature(active?.reportSnapshot) === snapshotSignature(snapshot)) return current
-            return current.map((system) => system.id === activeSystem.id ? { ...system, reportSnapshot: snapshot } : system)
-          })
-        }}
-        projectSystems={systems}
-        activeSystemName={activeSystem.name}
-        activeSystemId={activeSystem.id}
       />
     )
   }
