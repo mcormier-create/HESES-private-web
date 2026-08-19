@@ -988,11 +988,11 @@ function HesaMultiSystemApp() {
           })
         }}
         onReportSnapshot={(snapshot) => {
-          setSystems((current) => current.map((system) => (
-            system.id === activeSystem.id
-              ? { ...system, reportSnapshot: snapshot }
-              : system
-          )))
+          setSystems((current) => {
+            const active = current.find((system) => system.id === activeSystem.id)
+            if (snapshotSignature(active?.reportSnapshot) === snapshotSignature(snapshot)) return current
+            return current.map((system) => system.id === activeSystem.id ? { ...system, reportSnapshot: snapshot } : system)
+          })
         }}
         projectSystems={systems}
         activeSystemName={activeSystem.name}
@@ -1048,11 +1048,11 @@ function HesaMultiSystemApp() {
           })
         }}
         onReportSnapshot={(snapshot) => {
-          setSystems((current) => current.map((system) => (
-            system.id === activeSystem.id
-              ? { ...system, reportSnapshot: snapshot }
-              : system
-          )))
+          setSystems((current) => {
+            const active = current.find((system) => system.id === activeSystem.id)
+            if (snapshotSignature(active?.reportSnapshot) === snapshotSignature(snapshot)) return current
+            return current.map((system) => system.id === activeSystem.id ? { ...system, reportSnapshot: snapshot } : system)
+          })
         }}
         projectSystems={systems}
         activeSystemName={activeSystem.name}
@@ -1077,6 +1077,22 @@ function minimalPersistableSystems(systems = []) {
     name: system.name,
     settings: system.settings,
   }))
+}
+
+function snapshotSignature(snapshot) {
+  if (!snapshot) return ''
+  const settings = snapshot.settings || {}
+  const metrics = snapshot.metrics || {}
+  return [
+    snapshot.id,
+    snapshot.name,
+    settings.calculationMethod,
+    settings.scheduleMode,
+    settings.hourlyWeatherFileName,
+    metrics.annualHumidificationHours,
+    metrics.correctedHumidificationLoadRaw,
+    snapshot.annualComparison?.savingsKwh,
+  ].map((value) => String(value ?? '')).join('|')
 }
 
 function isQuotaExceededStorageError(error) {
