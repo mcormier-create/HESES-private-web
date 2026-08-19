@@ -3571,6 +3571,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         }
 
         setHourlyWeatherSourceType('custom')
+        setCalculationMethod('hourly')
         setHourlyWeatherFileLocation(weatherLocation || '')
         setHourlyWeatherRecords(records)
         setHourlyWeatherMetadata(customMetadata)
