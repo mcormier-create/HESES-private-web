@@ -1926,23 +1926,44 @@ export default function HvacEnergyOptimizationReport({ data }) {
       )}
 
       {includesFreeCoolingAnalysis && showBinAnalysis && (
-        <ReportSection title={reportSectionTitle('optimization', 'OA / RA OPTIMIZATION')} pageBreak allowPageBreak>
-          <h3>Optimization Matrix</h3>
-          <OptimizationTable rows={optimizationRows} optimal={data.optimal} units={data.units} />
-          <h3>Automatically Determined Optimal Point</h3>
-          <KeyValueTable rows={[
-            ['Optimal OA %', `${formatNumber(data.optimal.oaPercent, 0)}%`],
-            ['Optimal RA %', `${formatNumber(data.optimal.raPercent, 0)}%`],
-            ['Minimum Annual Energy', formatEnergy(data.optimal.totalEnergyKwh)],
-            ['Annual Cost', formatMoney(data.optimal.annualCost)],
-            [
-              'ASHRAE Compliance',
-              (humifog.averageOa || 0) >= (system.oaMinimumPercent || 0)
-                ? `Average Humifog OA is above the ${formatNumber(system.oaMinimumPercent, 0)}% design minimum. Final code compliance to be verified by the engineer of record.`
-                : `Humifog damper modulation calculates OA below the ${formatNumber(system.oaMinimumPercent, 0)}% design minimum in some BINs. Minimum ventilation compliance must be verified by the engineer of record.`,
-            ],
-          ]} />
-        </ReportSection>
+        projectSystems.map((projectSystem, systemIndex) => {
+          const systemName = projectSystem.name || projectSystem.system?.type || `AHU-${systemIndex + 1}`
+          const systemOptimizationRows = projectSystem.optimizationRows || (systemIndex === 0 ? optimizationRows : [])
+          const systemOptimal = projectSystem.optimal || (systemIndex === 0 ? data.optimal : null)
+          const systemConfig = projectSystem.system || (systemIndex === 0 ? system : {})
+          const systemHumifog = projectSystem.annualComparison?.humifog || (systemIndex === 0 ? humifog : {})
+          const hasOptimization = systemOptimizationRows.length > 0 && systemOptimal
+          return (
+            <ReportSection key={`optimization-${systemName}-${systemIndex}`} title={`${reportSectionTitle('optimization', 'OA / RA OPTIMIZATION')} - ${systemName}`} pageBreak allowPageBreak>
+              {hasOptimization ? (
+                <>
+                  <h3>{tr('Matrice d’optimisation', 'Optimization Matrix')}</h3>
+                  <OptimizationTable rows={systemOptimizationRows} optimal={systemOptimal} units={data.units} />
+                  <h3>{tr('Point optimal déterminé automatiquement', 'Automatically Determined Optimal Point')}</h3>
+                  <KeyValueTable rows={[
+                    [tr('OA optimale', 'Optimal OA %'), `${formatNumber(systemOptimal.oaPercent, 0)}%`],
+                    [tr('RA optimale', 'Optimal RA %'), `${formatNumber(systemOptimal.raPercent, 0)}%`],
+                    [tr('Énergie annuelle minimale', 'Minimum Annual Energy'), formatEnergy(systemOptimal.totalEnergyKwh)],
+                    [tr('Coût annuel', 'Annual Cost'), formatMoney(systemOptimal.annualCost)],
+                    [
+                      tr('Conformité ASHRAE', 'ASHRAE Compliance'),
+                      (systemHumifog.averageOa || 0) >= (systemConfig.oaMinimumPercent || 0)
+                        ? `${tr('La moyenne OA Humifog est supérieure au minimum de conception de', 'Average Humifog OA is above the')} ${formatNumber(systemConfig.oaMinimumPercent, 0)}% ${tr('. La conformité finale doit être vérifiée par l’ingénieur responsable.', '. Final code compliance must be verified by the engineer of record.')}`
+                        : `${tr('La modulation du registre Humifog calcule une OA inférieure au minimum de conception de', 'Humifog damper modulation calculates OA below the')} ${formatNumber(systemConfig.oaMinimumPercent, 0)}% ${tr('dans certains BIN. La conformité de ventilation doit être vérifiée par l’ingénieur responsable.', 'in some BINs. Minimum ventilation compliance must be verified by the engineer of record.')}`,
+                    ],
+                  ]} />
+                </>
+              ) : (
+                <p className="report-text">
+                  {tr(
+                    `Les données d’optimisation OA/RA ne sont pas disponibles pour ${systemName}. Régénérez l’analyse de cette UTA avant de produire le rapport.`,
+                    `OA/RA optimization data is not available for ${systemName}. Recalculate this AHU before generating the report.`,
+                  )}
+                </p>
+              )}
+            </ReportSection>
+          )
+        })
       )}
 
       {includesFreeCoolingAnalysis && (

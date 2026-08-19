@@ -5215,6 +5215,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     project: reportData.project,
     metrics: reportData.metrics,
     psychrometricPoints: reportData.psychrometricPoints,
+    optimizationRows: reportData.optimizationRows,
+    optimal: reportData.optimal,
+    validation: reportData.validation,
     economics: reportData.economics,
     annualComparison: reportData.annualComparison,
     annualTechnologyResults: {
