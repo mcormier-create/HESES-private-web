@@ -1,6 +1,8 @@
 import { Fragment } from 'react'
 import { BASELINE_TECHNOLOGIES, selectedHumifogTechnology, selectedReferenceTechnology, selectedTechnologiesForSystem, summarizeBuildingSavings, summarizeProjectEnergy } from './projectEnergySummary'
 import { humidityRatioFromRH, psychrometricState } from '../calculations/psychrometrics.js'
+import { calculateFreeCoolingHumifogComparison } from '../services/freeCoolingHumifogService.js'
+import { cityBinData } from '../calculations/binAnalysis.js'
 
 const PROFESSIONAL_REPORT_CSS = `
   .engineering-report {
@@ -694,6 +696,70 @@ function fallbackPsychrometricPointsForSystem(projectSystem = {}) {
   const hardFallbackOutdoor = makeFallbackPoint('oa', 'Outdoor air', -23, 90)
   const hardFallbackReturn = makeFallbackPoint('ra', 'Return air', 22, 35)
   return [hardFallbackOutdoor, hardFallbackReturn].filter(Boolean)
+}
+
+function cityKeyFromName(cityName = '') {
+  const normalized = String(cityName || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+  if (normalized.includes('montreal')) return 'montreal'
+  if (normalized.includes('quebec')) return 'quebec'
+  if (normalized.includes('ottawa')) return 'ottawa'
+  if (normalized.includes('toronto')) return 'toronto'
+  if (normalized.includes('vancouver')) return 'vancouver'
+  return 'montreal'
+}
+
+function selectReheatSystemForFallback(systemConfig = {}) {
+  const source = String(systemConfig.reheatEnergySource || systemConfig.heatingType || '').toLowerCase()
+  if (source.includes('thermopompe') || source.includes('heat pump')) {
+    return { energie: 'Thermopompe', facteur: 1 }
+  }
+  if (source.includes('gaz') || source.includes('natural gas')) {
+    return { energie: 'Gaz naturel', rendement: 88, facteur: 1 }
+  }
+  if (source.includes('passive') || source.includes('recovery') || source.includes('recuperation')) {
+    return { energie: 'Récupération passive', facteur: 0 }
+  }
+  return { energie: 'Electricity', facteur: 1 }
+}
+
+function deriveFreeCoolingDataForSystem(projectSystem = {}) {
+  const settings = projectSystem.settings || {}
+  const systemConfig = projectSystem.system || {}
+  const design = projectSystem.design || {}
+  const economics = projectSystem.economics || {}
+  const existingBinRows = Array.isArray(projectSystem.binRows) ? projectSystem.binRows : []
+  const fallbackBins = existingBinRows.length > 0
+    ? existingBinRows
+      .filter((row) => Number.isFinite(Number(row.tempC)) && Number.isFinite(Number(row.hours)) && Number(row.hours) > 0)
+      .map((row) => ({
+        tempC: Number(row.tempC),
+        hours: Number(row.hours),
+        rh: Number.isFinite(Number(row.rh)) ? Number(row.rh) : undefined,
+      }))
+    : (cityBinData[cityKeyFromName(settings.selectedCityName || projectSystem.project?.location)]?.bins || [])
+
+  if (!fallbackBins.length) return null
+
+  const derived = calculateFreeCoolingHumifogComparison({
+    bins: fallbackBins,
+    roomDb: Number(design.roomState?.db ?? settings.roomTemperature ?? 22),
+    roomRh: Number(design.roomState?.rh ?? settings.roomRelativeHumidity ?? 35),
+    minimumOutdoorAirPercent: Number(systemConfig.selectedOaPercent ?? systemConfig.oaMinimumPercent ?? settings.minimumOutsideAirPercent ?? 20),
+    recoveryType: systemConfig.recoveryType || 'none',
+    recoveryEfficiency: Number(systemConfig.recoverySensibleEfficiency ?? systemConfig.recoveryEfficiency ?? 0),
+    humifogEffectiveness: Number(systemConfig.humifogEfficiency ?? 72),
+    airflowCfm: Number(systemConfig.supplyAirflowCfm ?? settings.outsideAirCFM ?? 12500),
+    electricityRate: Number(economics.electricityRate ?? 0.12),
+    naturalGasRate: Number(economics.naturalGasRate ?? 0.45),
+    selectedReheatSystem: selectReheatSystemForFallback(systemConfig),
+    heatPumpCOP: Number(settings.heatPumpCOP ?? 3.8),
+  })
+
+  if (!derived || !derived.isComplete) return null
+  return derived
 }
 
 export default function HvacEnergyOptimizationReport({ data }) {
@@ -1938,10 +2004,18 @@ export default function HvacEnergyOptimizationReport({ data }) {
       {includesFreeCoolingAnalysis && showBinAnalysis && (
         projectSystems.map((projectSystem, systemIndex) => {
           const systemName = projectSystem.name || projectSystem.system?.type || `AHU-${systemIndex + 1}`
-          const systemOptimizationRows = projectSystem.optimizationRows || (systemIndex === 0 ? optimizationRows : [])
-          const systemOptimal = projectSystem.optimal || (systemIndex === 0 ? data.optimal : null)
+          const fallbackDerived = deriveFreeCoolingDataForSystem(projectSystem)
+          const systemOptimizationRows = (projectSystem.optimizationRows && projectSystem.optimizationRows.length > 0)
+            ? projectSystem.optimizationRows
+            : (systemIndex === 0 && optimizationRows.length > 0 ? optimizationRows : (fallbackDerived?.optimizationRows || []))
+          const systemOptimal = projectSystem.optimal
+            || (systemIndex === 0 ? data.optimal : null)
+            || fallbackDerived?.optimal
           const systemConfig = projectSystem.system || (systemIndex === 0 ? system : {})
-          const systemHumifog = projectSystem.annualComparison?.humifog || (systemIndex === 0 ? humifog : {})
+          const systemHumifog = projectSystem.annualComparison?.humifog
+            || (systemIndex === 0 ? humifog : {})
+            || fallbackDerived?.annualComparison?.humifog
+            || {}
           const hasOptimization = systemOptimizationRows.length > 0 && systemOptimal
           return (
             <ReportSection key={`optimization-${systemName}-${systemIndex}`} title={`${reportSectionTitle('optimization', 'OA / RA OPTIMIZATION')} - ${systemName}`} pageBreak allowPageBreak>
@@ -1979,10 +2053,16 @@ export default function HvacEnergyOptimizationReport({ data }) {
       {includesFreeCoolingAnalysis && (
         projectSystems.map((projectSystem, systemIndex) => {
           const systemName = projectSystem.name || projectSystem.system?.type || `AHU-${systemIndex + 1}`
-          const systemAnnual = projectSystem.annualComparison || (systemIndex === 0 ? annual : {})
+          const fallbackDerived = deriveFreeCoolingDataForSystem(projectSystem)
+          const systemAnnual =
+            (projectSystem.annualComparison?.freeCooling || projectSystem.annualComparison?.humifog)
+              ? projectSystem.annualComparison
+              : (systemIndex === 0 ? annual : (fallbackDerived?.annualComparison || {}))
           const systemFreeCooling = systemAnnual.freeCooling || {}
           const systemHumifog = systemAnnual.humifog || {}
-          const systemBinRows = projectSystem.binRows || (systemIndex === 0 ? binRows : [])
+          const systemBinRows = (projectSystem.binRows && projectSystem.binRows.length > 0)
+            ? projectSystem.binRows
+            : (systemIndex === 0 ? binRows : (fallbackDerived?.binRows || []))
           const systemMode = projectSystem.mode || (systemIndex === 0 ? mode : {})
           const systemConfig = projectSystem.system || (systemIndex === 0 ? system : {})
           const systemResults = projectSystem.annualTechnologyResults || projectSystem.results || {}
