@@ -1083,19 +1083,29 @@ export default function HvacEnergyOptimizationReport({ data }) {
     const minimumOa = Number(row.minimumOutdoorAirPercent ?? system.oaMinimumPercent ?? 0)
     return total + (Number(row.outdoorAirPercent) > minimumOa + 0.05 ? Number(row.hours || 0) : 0)
   }, 0)
-  const freeCoolingOperatingRows = [
-    [tr('OA moyen', 'Average OA'), `${formatNumber(freeCooling.averageAppliedOa ?? freeCooling.averageOa, 1)}%`, `${formatNumber(humifog.averageAppliedOa ?? humifog.averageOa, 1)}%`, `${formatNumber((humifog.averageAppliedOa ?? 0) - (freeCooling.averageAppliedOa ?? 0), 1)} points`],
-    [tr('RA moyen', 'Average RA'), `${formatNumber(100 - (freeCooling.averageAppliedOa ?? freeCooling.averageOa ?? 0), 1)}%`, `${formatNumber(100 - (humifog.averageAppliedOa ?? humifog.averageOa ?? 0), 1)}%`, `${formatNumber((freeCooling.averageAppliedOa ?? 0) - (humifog.averageAppliedOa ?? 0), 1)} points`],
-    [tr('Température moyenne de mélange', 'Average mixed-air temperature'), formatTemp(freeCooling.averageMixedDb, data.units, data.language), formatTemp(humifog.averageMixedDb, data.units, data.language), formatTemp((freeCooling.averageMixedDb ?? 0) - (humifog.averageMixedDb ?? 0), data.units, data.language)],
-    [tr('Température avant Humifog', 'Temperature before Humifog'), '-', formatTemp(humifog.averageInletToHumifogDb, data.units, data.language), '-'],
-    [tr('Température après Humifog', 'Temperature after Humifog'), '-', formatTemp(humifog.averageAfterHumifogDb, data.units, data.language), '-'],
-    [tr('Heures de fonctionnement Free Cooling', 'Free Cooling operating hours'), `${formatNumber(freeCoolingOperatingHours, 0)} h`, `${formatNumber(freeCoolingOperatingHours, 0)} h`, '-'],
-    [tr('Énergie de chauffage évitée grâce au Free Cooling', 'Heating Energy Avoided by Free Cooling'), formatEnergy(freeCooling.freeCoolingObtainedKwh), formatEnergy(humifog.freeCoolingObtainedKwh), formatEnergy(humifog.freeCoolingObtainedKwh ?? 0)],
-    [tr('Besoin thermique annuel de réchauffage Humifog', 'Annual Humifog thermal reheat requirement'), '-', formatEnergy(humifogReheatThermalKwh), '-'],
-    [tr('Énergie d’entrée réellement consommée pour le réchauffage', 'Actual reheat input energy consumed'), '-', formatEnergy(humifogReheatAppliedKwh), '-'],
-    [tr('Énergie pompe Humifog', 'Humifog pump energy'), '-', formatEnergy(humifog.humidificationEnergyKwh), '-'],
-    [tr('Énergie électrique totale réelle Humifog applicable au Free Cooling', 'Actual Humifog total energy applicable to Free Cooling'), '-', formatEnergy(humifog.totalEnergyKwh), '-'],
-  ]
+  const buildFreeCoolingOperatingRows = ({ systemFreeCooling, systemHumifog, systemBinRows, systemReheatThermalKwh, systemReheatAppliedKwh, systemPumpEnergyKwh, systemTotalEnergyKwh }) => {
+    const systemFreeCoolingOperatingHours = systemBinRows.reduce((total, row) => {
+      const minimumOa = Number(row.minimumOutdoorAirPercent ?? 0)
+      return total + (Number(row.outdoorAirPercent) > minimumOa + 0.05 ? Number(row.hours || 0) : 0)
+    }, 0)
+    const referenceOa = systemFreeCooling.averageAppliedOa ?? systemFreeCooling.averageOa ?? 0
+    const optimizedOa = systemHumifog.averageAppliedOa ?? systemHumifog.averageOa ?? 0
+    const referenceAvoided = Number(systemFreeCooling.freeCoolingObtainedKwh || 0)
+    const optimizedAvoided = Number(systemHumifog.freeCoolingObtainedKwh || 0)
+    return [
+      [tr('OA moyen', 'Average OA'), `${formatNumber(referenceOa, 1)}%`, `${formatNumber(optimizedOa, 1)}%`, `${formatNumber(optimizedOa - referenceOa, 1)} points`],
+      [tr('RA moyen', 'Average RA'), `${formatNumber(100 - referenceOa, 1)}%`, `${formatNumber(100 - optimizedOa, 1)}%`, `${formatNumber(referenceOa - optimizedOa, 1)} points`],
+      [tr('Température moyenne de mélange', 'Average mixed-air temperature'), formatTemp(systemFreeCooling.averageMixedDb, data.units, data.language), formatTemp(systemHumifog.averageMixedDb, data.units, data.language), formatTemp((systemHumifog.averageMixedDb ?? 0) - (systemFreeCooling.averageMixedDb ?? 0), data.units, data.language)],
+      [tr('Température avant Humifog', 'Temperature before Humifog'), '-', formatTemp(systemHumifog.averageInletToHumifogDb, data.units, data.language), '-'],
+      [tr('Température après Humifog', 'Temperature after Humifog'), '-', formatTemp(systemHumifog.averageAfterHumifogDb, data.units, data.language), '-'],
+      [tr('Heures de fonctionnement Free Cooling', 'Free Cooling operating hours'), `${formatNumber(systemFreeCoolingOperatingHours, 0)} h`, `${formatNumber(systemFreeCoolingOperatingHours, 0)} h`, '-'],
+      [tr('Énergie de chauffage évitée grâce au Free Cooling', 'Heating Energy Avoided by Free Cooling'), formatEnergy(referenceAvoided), formatEnergy(optimizedAvoided), formatEnergy(optimizedAvoided - referenceAvoided)],
+      [tr('Besoin thermique annuel de réchauffage Humifog', 'Annual Humifog thermal reheat requirement'), '-', formatEnergy(systemReheatThermalKwh), '-'],
+      [tr('Énergie d’entrée réellement consommée pour le réchauffage', 'Actual reheat input energy consumed'), '-', formatEnergy(systemReheatAppliedKwh), '-'],
+      [tr('Énergie pompe Humifog', 'Humifog pump energy'), '-', formatEnergy(systemPumpEnergyKwh), '-'],
+      [tr('Énergie électrique totale réelle Humifog applicable au Free Cooling', 'Actual Humifog total energy applicable to Free Cooling'), '-', formatEnergy(systemTotalEnergyKwh), '-'],
+    ]
+  }
   const criticalReheatRow = binValidationRows.reduce(
     (critical, row) => (row.reheatLoadKw || 0) > (critical?.reheatLoadKw || -1) ? row : critical,
     null
@@ -1967,36 +1977,58 @@ export default function HvacEnergyOptimizationReport({ data }) {
       )}
 
       {includesFreeCoolingAnalysis && (
-        <ReportSection title={reportSectionTitle('freeCooling', 'FREE COOLING ANALYSIS')} pageBreak allowPageBreak>
-          <h3>{tr('Fonctionnement et bénéfices Free Cooling', 'Free Cooling Operation and Benefits')}</h3>
-          <table className="report-table">
-            <thead>
-              <tr>
-                <th>{tr('Paramètre', 'Parameter')}</th>
-                <th>{tr('Vapeur / Référence', 'Steam / Reference')}</th>
-                <th>{tr('Humifog optimisé', 'Optimized Humifog')}</th>
-                <th>{tr('Écart / bénéfice', 'Difference / Benefit')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {freeCoolingOperatingRows.map(([label, referenceValue, humifogValue, difference]) => (
-                <tr key={label}><td>{label}</td><td>{referenceValue}</td><td>{humifogValue}</td><td>{difference}</td></tr>
-              ))}
-            </tbody>
-          </table>
-          <h3>Humifog Reheat Detail</h3>
-          <KeyValueTable rows={[
-            ['Reheat applies', reheatApplies ? 'Yes' : 'No'],
-            ['Selected reheat method', selectedReheatName],
-            ['Annual reheat thermal energy', reheatApplies ? formatEnergy(humifogReheatThermalKwh) : 'Not required'],
-            ['Applied reheat energy by selected method', reheatApplies ? formatEnergy(humifogReheatAppliedKwh) : 'Not required'],
-            ['Heat pump COP equivalent', selectedReheatSource === 'heatPump' && heatPumpCop ? `${formatEnergy(humifogReheatEquivalentHeatPumpKwh)} / COP ${formatNumber(heatPumpCop, 1)}` : '-'],
-            ...(showBinAnalysis ? [
-              ['Maximum BIN reheat input', criticalReheatRow && (criticalReheatRow.reheatLoadKw || 0) > 0 ? formatPower(criticalReheatRow.reheatLoadKw) : 'Not required'],
-              ['Critical BIN', criticalReheatRow && (criticalReheatRow.reheatLoadKw || 0) > 0 ? `${formatTemp(criticalReheatRow.tempC, data.units, data.language)} / ${formatNumber(criticalReheatRow.hours, 0, data.language)} h` : '-'],
-            ] : []),
-          ]} />
-        </ReportSection>
+        projectSystems.map((projectSystem, systemIndex) => {
+          const systemName = projectSystem.name || projectSystem.system?.type || `AHU-${systemIndex + 1}`
+          const systemAnnual = projectSystem.annualComparison || (systemIndex === 0 ? annual : {})
+          const systemFreeCooling = systemAnnual.freeCooling || {}
+          const systemHumifog = systemAnnual.humifog || {}
+          const systemBinRows = projectSystem.binRows || (systemIndex === 0 ? binRows : [])
+          const systemMode = projectSystem.mode || (systemIndex === 0 ? mode : {})
+          const systemConfig = projectSystem.system || (systemIndex === 0 ? system : {})
+          const systemResults = projectSystem.annualTechnologyResults || projectSystem.results || {}
+          const systemHumifogKey = selectedHumifogTechnology({ mode: systemMode, system: systemConfig })
+          const systemHumifogResult = systemResults[systemHumifogKey] || systemResults.humifogFreeCooling || {}
+          const systemReheatThermalKwh = systemIndex === 0 ? humifogReheatThermalKwh : (systemHumifogResult.thermalReheatKWh || 0)
+          const systemReheatAppliedKwh = systemIndex === 0 ? humifogReheatAppliedKwh : (systemHumifogResult.reheatKWh || 0)
+          const systemPumpEnergyKwh = systemIndex === 0 ? humifog.humidificationEnergyKwh : (systemHumifogResult.pumpKWh || systemHumifog.humidificationKwh || 0)
+          const systemTotalEnergyKwh = systemIndex === 0 ? humifog.totalEnergyKwh : (systemHumifogResult.annualEnergyKWh || systemHumifog.totalEnergyKwh || 0)
+          const systemRows = buildFreeCoolingOperatingRows({
+            systemFreeCooling,
+            systemHumifog,
+            systemBinRows,
+            systemReheatThermalKwh,
+            systemReheatAppliedKwh,
+            systemPumpEnergyKwh,
+            systemTotalEnergyKwh,
+          })
+          return (
+            <ReportSection key={`free-cooling-${systemName}-${systemIndex}`} title={`${reportSectionTitle('freeCooling', 'FREE COOLING ANALYSIS')} - ${systemName}`} pageBreak allowPageBreak>
+              <h3>{tr('Fonctionnement et bénéfices Free Cooling', 'Free Cooling Operation and Benefits')}</h3>
+              <table className="report-table">
+                <thead>
+                  <tr>
+                    <th>{tr('Paramètre', 'Parameter')}</th>
+                    <th>{tr('Vapeur / Référence', 'Steam / Reference')}</th>
+                    <th>{tr('Humifog optimisé', 'Optimized Humifog')}</th>
+                    <th>{tr('Écart / bénéfice', 'Difference / Benefit')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {systemRows.map(([label, referenceValue, humifogValue, difference]) => (
+                    <tr key={label}><td>{label}</td><td>{referenceValue}</td><td>{humifogValue}</td><td>{difference}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+              <h3>{tr('Détail du réchauffage Humifog', 'Humifog Reheat Detail')}</h3>
+              <KeyValueTable rows={[
+                [tr('Réchauffage requis', 'Reheat applies'), systemReheatAppliedKwh > 0 ? tr('Oui', 'Yes') : tr('Non', 'No')],
+                [tr('Méthode de réchauffage sélectionnée', 'Selected reheat method'), systemIndex === 0 ? selectedReheatName : (systemConfig.reheatMethodLabel || systemConfig.heatingType || '-')],
+                [tr('Énergie thermique annuelle de réchauffage', 'Annual reheat thermal energy'), systemReheatAppliedKwh > 0 ? formatEnergy(systemReheatThermalKwh) : tr('Non requis', 'Not required')],
+                [tr('Énergie d’entrée consommée', 'Applied reheat energy by selected method'), systemReheatAppliedKwh > 0 ? formatEnergy(systemReheatAppliedKwh) : tr('Non requis', 'Not required')],
+              ]} />
+            </ReportSection>
+          )
+        })
       )}
 
       {!includesFreeCoolingAnalysis && (
