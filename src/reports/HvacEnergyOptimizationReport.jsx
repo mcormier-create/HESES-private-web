@@ -1,6 +1,6 @@
 import { Fragment } from 'react'
 import { BASELINE_TECHNOLOGIES, selectedHumifogTechnology, selectedReferenceTechnology, selectedTechnologiesForSystem, summarizeBuildingSavings, summarizeProjectEnergy } from './projectEnergySummary'
-import { humidityRatioFromRH } from '../calculations/psychrometrics.js'
+import { humidityRatioFromRH, psychrometricState } from '../calculations/psychrometrics.js'
 
 const PROFESSIONAL_REPORT_CSS = `
   .engineering-report {
@@ -606,6 +606,94 @@ function fallbackHumidificationLoadLbHr(system = {}) {
   const outdoorW = humidityRatioFromRH(outdoorTemperature, outdoorRh)
   const enteringW = outdoorW + (1 - oaPercent / 100) * (indoorW - outdoorW)
   return Math.max(0, 4.5 * airflowCfm * Math.max(0, indoorW - enteringW))
+}
+
+function makeFallbackPoint(key, label, dryBulbC, relativeHumidity) {
+  const db = Number(dryBulbC)
+  const rh = Number(relativeHumidity)
+  if (!Number.isFinite(db) || !Number.isFinite(rh)) return null
+  return {
+    key,
+    label,
+    state: psychrometricState({ dryBulbC: db, relativeHumidity: rh }),
+  }
+}
+
+function fallbackPsychrometricPointsForSystem(projectSystem = {}) {
+  const design = projectSystem.design || {}
+  const systemConfig = projectSystem.system || {}
+  const settings = projectSystem.settings || {}
+  const fallbackPoints = []
+  const cityWinterTemperatures = {
+    Montreal: -23,
+    Montréal: -23,
+    Quebec: -28,
+    Québec: -28,
+    Ottawa: -25,
+    Toronto: -18,
+    Vancouver: -8,
+    Calgary: -30,
+    Winnipeg: -35,
+  }
+
+  const outdoorDb = Number.isFinite(Number(design.outdoorState?.db))
+    ? Number(design.outdoorState.db)
+    : Number(cityWinterTemperatures[settings.selectedCityName] ?? -23)
+  const outdoorRh = Number.isFinite(Number(design.outdoorState?.rh))
+    ? Number(design.outdoorState.rh)
+    : 90
+  const roomDb = Number.isFinite(Number(design.roomState?.db))
+    ? Number(design.roomState.db)
+    : Number(settings.roomTemperature ?? 22)
+  const roomRh = Number.isFinite(Number(design.roomState?.rh))
+    ? Number(design.roomState.rh)
+    : Number(settings.roomRelativeHumidity ?? 35)
+
+  const outdoorPoint = makeFallbackPoint(
+    'oa',
+    'Outdoor air',
+    outdoorDb,
+    outdoorRh
+  )
+  if (outdoorPoint) fallbackPoints.push(outdoorPoint)
+
+  const returnPoint = makeFallbackPoint(
+    'ra',
+    'Return air',
+    roomDb,
+    roomRh
+  )
+  if (returnPoint) fallbackPoints.push(returnPoint)
+
+  ;(systemConfig.psychrometricStates || []).forEach((item, index) => {
+    const label = String(item?.label || '').toLowerCase()
+    let key = `state-${index + 1}`
+    if (label.includes('mix')) key = 'mixed'
+    else if (label.includes('avant') || label.includes('before')) key = 'preheat'
+    else if (label.includes('humifog')) key = 'humifog'
+    else if (label.includes('chauffage') || label.includes('heating') || label.includes('reheat')) key = 'heating'
+
+    const point = makeFallbackPoint(
+      key,
+      item?.label || `State ${index + 1}`,
+      item?.temperature,
+      item?.relativeHumidity
+    )
+    if (point) fallbackPoints.push(point)
+  })
+
+  const dedupedPoints = []
+  const seen = new Set()
+  fallbackPoints.forEach((point) => {
+    if (seen.has(point.key)) return
+    seen.add(point.key)
+    dedupedPoints.push(point)
+  })
+  if (dedupedPoints.length > 0) return dedupedPoints
+
+  const hardFallbackOutdoor = makeFallbackPoint('oa', 'Outdoor air', -23, 90)
+  const hardFallbackReturn = makeFallbackPoint('ra', 'Return air', 22, 35)
+  return [hardFallbackOutdoor, hardFallbackReturn].filter(Boolean)
 }
 
 export default function HvacEnergyOptimizationReport({ data }) {
@@ -1713,7 +1801,10 @@ export default function HvacEnergyOptimizationReport({ data }) {
         const systemName = projectSystem.name || projectSystem.system?.type || `AHU-${systemIndex + 1}`
         const systemMetrics = projectSystem.metrics || (systemIndex === 0 ? metrics : {})
         const systemResults = projectSystem.annualTechnologyResults || projectSystem.results || {}
-        const systemPoints = projectSystem.psychrometricPoints || (systemIndex === 0 ? points : [])
+        const fallbackPoints = fallbackPsychrometricPointsForSystem(projectSystem)
+        const systemPoints = Array.isArray(projectSystem.psychrometricPoints) && projectSystem.psychrometricPoints.length > 0
+          ? projectSystem.psychrometricPoints
+          : (Array.isArray(points) && points.length > 0 && systemIndex === 0 ? points : fallbackPoints)
         const systemLoad = systemMetrics.correctedHumidificationLoadRaw
           ?? systemMetrics.correctedHumidificationLoad
           ?? systemResults.electricSteam?.humidificationLoadLbHr

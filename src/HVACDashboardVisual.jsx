@@ -5202,6 +5202,13 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const reportSnapshot = {
     id: activeSystemId,
     name: activeSystemName || reportData.system.type,
+    settings: {
+      selectedCityName: selectedCity.nom,
+      outsideAirCFM,
+      minimumOutsideAirPercent,
+      roomTemperature,
+      roomRelativeHumidity,
+    },
     mode: reportData.mode,
     system: reportData.system,
     design: reportData.design,
@@ -5235,6 +5242,12 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     if (existingSnapshot) {
       return {
         ...existingSnapshot,
+        id: existingSnapshot.id || system.id,
+        name: existingSnapshot.name || system.name,
+        settings: {
+          ...(existingSnapshot.settings || {}),
+          ...savedSettings,
+        },
         economics: {
           ...(existingSnapshot.economics || {}),
           installedCosts: {
