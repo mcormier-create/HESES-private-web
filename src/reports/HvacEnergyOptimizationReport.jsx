@@ -1709,46 +1709,60 @@ export default function HvacEnergyOptimizationReport({ data }) {
         )
       })}
 
-      <ReportSection title={reportSectionTitle('psychrometric', 'PSYCHROMETRIC ANALYSIS')} pageBreak allowPageBreak>
-        <h3>{tr('Charges d’humidification', 'Humidification Loads')}</h3>
-        <KeyValueTable rows={[
-          [tr('Charge massique d’humidification corrigée', 'Corrected humidification mass load'), formatHumidificationLoad(metrics.correctedHumidificationLoadRaw ?? metrics.correctedHumidificationLoad)],
-          [tr('Énergie vapeur équivalente', 'Equivalent steam energy'), `${formatNumber(metrics.steamEnergyKWRaw ?? metrics.steamEnergyKW ?? 0, 2)} kW`],
-          [tr('Puissance pompe Humifog', 'Humifog pump power'), `${formatNumber(metrics.humifogPumpKWRaw ?? metrics.humifogPumpKW ?? 0, 2)} kW`],
-          [tr('Chauffage CVC commun', 'Common HVAC heating'), `${formatNumber(metrics.commonHvacHeatingThermalKWRaw ?? metrics.commonHvacHeatingThermalKW ?? 0, 2)} kW`],
-          [tr('Heures annuelles utilisées', 'Annual operating hours used'), `${formatNumber(metrics.annualHumidificationHours || energySummary.annualHumidificationHours || 0, 0)} h/year`],
-        ]} />
-        <table className="report-table compact">
-          <thead>
-            <tr>
-              <th>{tr('Point', 'Point')}</th>
-              <th>{tr('État de l’air', 'Air State')}</th>
-              <th>{tr('Température', 'Temperature')}</th>
-              <th>{tr('Humidité relative', 'Relative Humidity')}</th>
-              <th>{tr('Rapport d’humidité', 'Humidity Ratio')}</th>
-              <th>{tr('Enthalpie', 'Enthalpy')}</th>
-              <th>{tr('Bulbe humide', 'Wet Bulb')}</th>
-              <th>{tr('Point de rosée', 'Dew Point')}</th>
-              <th>{tr('Volume spécifique', 'Specific Volume')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {points.map((point, index) => (
-              <tr key={`${point.key}-${index}`}>
-                <td>Point {index + 1}</td>
-                <td>{formatPointLabel(point.label)}</td>
-                <td>{formatTemp(point.state.db, data.units, data.language)}</td>
-                <td>{formatNumber(point.state.rh, 0)}%</td>
-                <td>{formatHumidity(point.state.w, data.units)}</td>
-                <td>{formatEnthalpy(point.state.h, data.units)}</td>
-                <td>{formatTemp(point.state.wb, data.units, data.language)}</td>
-                <td>{formatTemp(point.state.dp, data.units, data.language)}</td>
-                <td>{formatSpecificVolume(point.state, data.units)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </ReportSection>
+      {projectSystems.map((projectSystem, systemIndex) => {
+        const systemName = projectSystem.name || projectSystem.system?.type || `AHU-${systemIndex + 1}`
+        const systemMetrics = projectSystem.metrics || (systemIndex === 0 ? metrics : {})
+        const systemResults = projectSystem.annualTechnologyResults || projectSystem.results || {}
+        const systemPoints = projectSystem.psychrometricPoints || (systemIndex === 0 ? points : [])
+        const systemLoad = systemMetrics.correctedHumidificationLoadRaw
+          ?? systemMetrics.correctedHumidificationLoad
+          ?? systemResults.electricSteam?.humidificationLoadLbHr
+          ?? fallbackHumidificationLoadLbHr(projectSystem)
+        return (
+          <ReportSection key={`psychrometric-${systemName}-${systemIndex}`} title={`${reportSectionTitle('psychrometric', 'PSYCHROMETRIC ANALYSIS')} - ${systemName}`} pageBreak allowPageBreak>
+            <h3>{tr('Charges d’humidification', 'Humidification Loads')}</h3>
+            <KeyValueTable rows={[
+              [tr('Charge massique d’humidification corrigée', 'Corrected humidification mass load'), formatHumidificationLoad(systemLoad)],
+              [tr('Énergie vapeur équivalente', 'Equivalent steam energy'), `${formatNumber(systemMetrics.steamEnergyKWRaw ?? systemMetrics.steamEnergyKW ?? 0, 2)} kW`],
+              [tr('Puissance pompe Humifog', 'Humifog pump power'), `${formatNumber(systemMetrics.humifogPumpKWRaw ?? systemMetrics.humifogPumpKW ?? 0, 2)} kW`],
+              [tr('Chauffage CVC commun', 'Common HVAC heating'), `${formatNumber(systemMetrics.commonHvacHeatingThermalKWRaw ?? systemMetrics.commonHvacHeatingThermalKW ?? 0, 2)} kW`],
+              [tr('Heures annuelles utilisées', 'Annual operating hours used'), `${formatNumber(systemMetrics.annualHumidificationHours || energySummary.annualHumidificationHours || 0, 0)} h/year`],
+            ]} />
+            <table className="report-table compact">
+              <thead>
+                <tr>
+                  <th>{tr('Point', 'Point')}</th>
+                  <th>{tr('État de l’air', 'Air State')}</th>
+                  <th>{tr('Température', 'Temperature')}</th>
+                  <th>{tr('Humidité relative', 'Relative Humidity')}</th>
+                  <th>{tr('Rapport d’humidité', 'Humidity Ratio')}</th>
+                  <th>{tr('Enthalpie', 'Enthalpy')}</th>
+                  <th>{tr('Bulbe humide', 'Wet Bulb')}</th>
+                  <th>{tr('Point de rosée', 'Dew Point')}</th>
+                  <th>{tr('Volume spécifique', 'Specific Volume')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {systemPoints.length > 0 ? systemPoints.map((point, pointIndex) => (
+                  <tr key={`${point.key}-${pointIndex}`}>
+                    <td>Point {pointIndex + 1}</td>
+                    <td>{formatPointLabel(point.label)}</td>
+                    <td>{formatTemp(point.state.db, data.units, data.language)}</td>
+                    <td>{formatNumber(point.state.rh, 0)}%</td>
+                    <td>{formatHumidity(point.state.w, data.units)}</td>
+                    <td>{formatEnthalpy(point.state.h, data.units)}</td>
+                    <td>{formatTemp(point.state.wb, data.units, data.language)}</td>
+                    <td>{formatTemp(point.state.dp, data.units, data.language)}</td>
+                    <td>{formatSpecificVolume(point.state, data.units)}</td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan="9">{tr('Données psychrométriques non disponibles pour cette UTA.', 'Psychrometric data unavailable for this HVAC system.')}</td></tr>
+                )}
+              </tbody>
+            </table>
+          </ReportSection>
+        )
+      })}
 
       <ReportSection title={reportSectionTitle('calculations', 'PSYCHROMETRIC CALCULATIONS')} pageBreak allowPageBreak>
 
