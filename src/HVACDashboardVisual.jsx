@@ -5218,10 +5218,33 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   useEffect(() => {
     onReportSnapshot?.(reportSnapshot)
   }, [reportSnapshotSerialized])
-  reportData.projectSystems = (projectSystems || []).map((system) => (
-    system.id === activeSystemId
-      ? reportSnapshot
-      : (system.reportSnapshot || {
+  reportData.projectSystems = (projectSystems || []).map((system) => {
+    if (system.id === activeSystemId) return reportSnapshot
+
+    const savedSettings = system.settings || {}
+    const savedInstalledCosts = {
+      electricSteam: finiteSetting(savedSettings, 'electricSteamInstalledCost', null),
+      naturalGasSteam: finiteSetting(savedSettings, 'naturalGasSteamInstalledCost', null),
+      atmosphericGasHumidifier: finiteSetting(savedSettings, 'atmosphericGasHumidifierInstalledCost', null),
+      humifog: finiteSetting(savedSettings, 'humifogInstalledCost', null),
+      freeCoolingControls: finiteSetting(savedSettings, 'freeCoolingControlsInstalledCost', null),
+      heatRecovery: finiteSetting(savedSettings, 'heatRecoveryInstalledCost', null),
+    }
+    const existingSnapshot = system.reportSnapshot
+    if (existingSnapshot) {
+      return {
+        ...existingSnapshot,
+        economics: {
+          ...(existingSnapshot.economics || {}),
+          installedCosts: {
+            ...(existingSnapshot.economics?.installedCosts || {}),
+            ...Object.fromEntries(Object.entries(savedInstalledCosts).filter(([, value]) => value !== null)),
+          },
+        },
+      }
+    }
+
+    return {
         name: system.name,
         mode: {
           selectedCalculationMethod: system.settings?.calculationMethod === 'hourly'
@@ -5236,8 +5259,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         economics: {},
         annualComparison: { freeCooling: {}, humifog: {} },
         annualTechnologyResults: system.results || {},
-      })
-  ))
+      }
+  })
   const freeCoolingAnnualTechnologyOptions = [
     {
       key: 'electricSteam',

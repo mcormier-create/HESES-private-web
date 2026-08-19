@@ -42,12 +42,15 @@ function installedCostFor(results, installedCosts, key) {
     : key === 'humifogElectric' || key === 'humifogHeatPump' || key === 'humifogFreeCooling' || key === 'humifogSelected'
       ? 'humifog'
       : key
-  return finiteOrNull(
-    results[key]?.installedInvestmentCost ??
+  const resultCost = finiteOrNull(results[key]?.installedInvestmentCost)
+  const configuredCost = finiteOrNull(
     installedCosts[key] ??
     installedCosts[inputKey] ??
     installedCosts.selectedHumifog
   )
+  return resultCost !== null && resultCost > 0
+    ? resultCost
+    : configuredCost ?? resultCost
 }
 
 export function selectedHumifogTechnology(system = {}) {
