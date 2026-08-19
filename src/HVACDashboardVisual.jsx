@@ -6317,42 +6317,6 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     </div>
                   </div>
                 )}
-                {is100OA && (
-                  <div className="mt-6 rounded-2xl border border-orange-200 bg-white p-4">
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                      <label className="grid gap-2 text-sm font-semibold text-slate-700">
-                        <span>{t.sensibleEfficiency}</span>
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          step="1"
-                          value={Math.round(wheelEfficiency)}
-                          onChange={(event) => setWheelEfficiency(clampValue(Number(event.target.value), 0, 100))}
-                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
-                        />
-                        <span className="text-xs font-normal text-slate-500">
-                          {language === 'fr' ? 'Paramètre mémorisé; non appliqué sans air de retour.' : 'Stored setting; not applied without return air.'}
-                        </span>
-                      </label>
-                      <label className="grid gap-2 text-sm font-semibold text-slate-700">
-                        <span>{t.latentEfficiency}</span>
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          step="1"
-                          value={Math.round(latentRecoveryEfficiency)}
-                          onChange={(event) => setLatentRecoveryEfficiency(clampValue(Number(event.target.value), 0, 100))}
-                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
-                        />
-                        <span className="text-xs font-normal text-slate-500">
-                          {language === 'fr' ? 'Paramètre mémorisé; non appliqué sans air de retour.' : 'Stored setting; not applied without return air.'}
-                        </span>
-                      </label>
-                    </div>
-                  </div>
-                )}
               </div>
             )}
             {false && (
