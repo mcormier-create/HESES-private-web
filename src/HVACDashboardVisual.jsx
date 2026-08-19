@@ -4207,6 +4207,13 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     hours,
     rh: Math.round(Math.max(35, Math.min(90, selectedCity.humidite + (10 - tempC) * 0.45))),
   }))
+  const freeCoolingWeatherData = isHourlySimulationActive
+    ? filteredHourlyRecords.map((record) => ({
+      tempC: Number(record.dryBulbC),
+      hours: 1,
+      rh: Number(record.relativeHumidity),
+    }))
+    : selectedBinWeatherData
   const binEnergyRows = selectedBinWeatherData.map((bin) => {
     const binMetrics = calculateHvacDashboardMetrics({
       outsideAirCFM,
@@ -4407,7 +4414,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const annualEliminatedGESResolved = annualNaturalGasGESResolved - annualAdiabaticGESResolved
 
   const freeCoolingHumifogAnalysis = calculateFreeCoolingHumifogComparison({
-    bins: selectedBinWeatherData,
+    bins: freeCoolingWeatherData,
     roomDb: roomTemperature,
     roomRh: roomRelativeHumidity,
     minimumOutdoorAirPercent: minimumOutsideAirPercent,
