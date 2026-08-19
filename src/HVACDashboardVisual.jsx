@@ -4776,9 +4776,11 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       showFreeCoolingTables,
       includesFreeCoolingAnalysis: showFreeCoolingTables && !is100OA,
       ventilationModeName: ventilationMode.nom,
-      selectedCalculationMethod: isCustomOperatingHoursMode
-        ? (language === 'fr' ? 'Heures d’exploitation personnalisées' : 'Custom operating hours')
-        : calculationMethod === 'hourly' ? t.hourlyWeatherMethod : t.binHoursMethod,
+      selectedCalculationMethod: calculationMethod === 'hourly'
+        ? t.hourlyWeatherMethod
+        : isCustomOperatingHoursMode
+          ? (language === 'fr' ? 'Heures d’exploitation personnalisées' : 'Custom operating hours')
+          : t.binHoursMethod,
       isCustomOperatingHours: isCustomOperatingHoursMode,
       hourlyWeatherSourceType,
       hourlyWeatherFileName,
@@ -4891,6 +4893,14 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     message: freeCoolingHumifogAnalysis.message,
     metrics: {
       ...freeCoolingHumifogAnalysis.metrics,
+      correctedHumidificationLoad,
+      correctedHumidificationLoadRaw: steamHumidificationLoadRaw,
+      steamEnergyKW,
+      steamEnergyKWRaw,
+      humifogPumpKW: adiabaticPumpKW,
+      humifogPumpKWRaw: adiabaticPumpKWRaw,
+      commonHvacHeatingThermalKW,
+      commonHvacHeatingThermalKWRaw,
       scheduleFactor,
       scheduleDescription: scheduleDescriptionText,
       recoveryEnergyReductionKW,
@@ -5187,9 +5197,11 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       : (system.reportSnapshot || {
         name: system.name,
         mode: {
-          selectedCalculationMethod: system.settings?.scheduleMode === '24-7'
-            ? (language === 'fr' ? 'Heures BIN' : 'BIN Hours')
-            : (language === 'fr' ? 'Heures personnalisées' : 'Custom Operating Hours'),
+          selectedCalculationMethod: system.settings?.calculationMethod === 'hourly'
+            ? (language === 'fr' ? 'Simulation météo horaire 8760' : 'Hourly weather simulation 8760')
+            : system.settings?.scheduleMode === '24-7'
+              ? (language === 'fr' ? 'Heures BIN' : 'BIN Hours')
+              : (language === 'fr' ? 'Heures personnalisées' : 'Custom Operating Hours'),
         },
         system: { supplyAirflowCfm: system.settings?.outsideAirCFM },
         project: {},
@@ -8069,7 +8081,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     [language === 'fr' ? 'Rechauffage thermique requis' : 'Required thermal reheat', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.adiabaticReheatThermalKwh)],
                     [language === 'fr' ? 'Rechauffage applique selon methode' : 'Applied reheat by selected method', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.selectedReheatEnergyKwh)],
                     [language === 'fr' ? 'Cout rechauffage selectionne' : 'Selected reheat cost', formatAnnualCostIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.selectedReheatCost)],
-                    [language === 'fr' ? 'Equivalent thermopompe COP' : 'Heat-pump COP equivalent', `${formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.adiabaticReheatElectricKwh)} / COP ${formatNumber(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.heatPumpCOP ?? heatPumpCOP, 1)}`],
+                    ...(usesHeatPumpReheat
+                      ? [[language === 'fr' ? 'Equivalent thermopompe COP' : 'Heat-pump COP equivalent', `${formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.adiabaticReheatElectricKwh)} / COP ${formatNumber(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.heatPumpCOP ?? heatPumpCOP, 1)}`]]
+                      : []),
                     [language === 'fr' ? 'Total annuel Humifog' : 'Total annual Humifog kWh', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.totalAnnualHumifogKwh)],
                     [language === 'fr' ? 'Cout annuel Humifog' : 'Annual Humifog cost', formatAnnualCostIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.totalAnnualHumifogCost)],
                   ].map(([label, value]) => (

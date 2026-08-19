@@ -844,9 +844,11 @@ export default function HvacEnergyOptimizationReport({ data }) {
     [tr('Emplacement du projet', 'Project location'), project.location || '-'],
     [tr('Mode du rapport', 'Report mode'), includesFreeCoolingAnalysis ? tr('Free Cooling', 'Free Cooling') : tr('100% air extérieur', '100% Outdoor Air')],
     [tr('Mode de ventilation sélectionné', 'Ventilation mode selected'), mode.ventilationModeName || '-'],
-    [tr('Mode d’exploitation', 'Operating mode'), mode.isCustomOperatingHours
-      ? tr('Heures d’exploitation personnalisées', 'Custom operating hours')
-      : tr('Heures BIN', 'BIN hours')],
+    [tr('Mode d’exploitation', 'Operating mode'), mode.selectedCalculationMethod?.toLowerCase().includes('hourly')
+      ? tr('Simulation météo horaire 8760', 'Hourly weather simulation 8760')
+      : mode.isCustomOperatingHours
+        ? tr('Heures d’exploitation personnalisées', 'Custom operating hours')
+        : tr('Heures BIN', 'BIN hours')],
     [tr('Méthode de calcul', 'Calculation method selected'), mode.selectedCalculationMethod || '-'],
     [tr('Source météo', 'Weather data source'), mode.weatherDataSource || tr('Gouvernement du Canada — CWEC_FMCCE / fichier météo horaire EPW', 'Government of Canada — CWEC_FMCCE / EPW hourly weather file')],
     [tr('Organisation', 'Weather source organization'), mode.weatherSourceOrganization || tr('Environnement et Changement climatique Canada', 'Environment and Climate Change Canada')],
@@ -1677,6 +1679,14 @@ export default function HvacEnergyOptimizationReport({ data }) {
             ))}
           </tbody>
         </table>
+        <h3>{tr('Charges d’humidification', 'Humidification Loads')}</h3>
+        <KeyValueTable rows={[
+          [tr('Charge d’humidification corrigée', 'Corrected humidification load'), `${formatNumber(metrics.correctedHumidificationLoadRaw ?? metrics.correctedHumidificationLoad ?? 0, 2)} lb/h`],
+          [tr('Énergie vapeur équivalente', 'Equivalent steam energy'), `${formatNumber(metrics.steamEnergyKWRaw ?? metrics.steamEnergyKW ?? 0, 2)} kW`],
+          [tr('Puissance pompe Humifog', 'Humifog pump power'), `${formatNumber(metrics.humifogPumpKWRaw ?? metrics.humifogPumpKW ?? 0, 2)} kW`],
+          [tr('Chauffage CVC commun', 'Common HVAC heating'), `${formatNumber(metrics.commonHvacHeatingThermalKWRaw ?? metrics.commonHvacHeatingThermalKW ?? 0, 2)} kW`],
+          [tr('Heures annuelles utilisées', 'Annual operating hours used'), `${formatNumber(metrics.annualHumidificationHours || energySummary.annualHumidificationHours || 0, 0)} h/year`],
+        ]} />
       </ReportSection>
 
       <ReportSection title={reportSectionTitle('calculations', 'PSYCHROMETRIC CALCULATIONS')} pageBreak allowPageBreak>
