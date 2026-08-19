@@ -814,6 +814,32 @@ export default function HvacEnergyOptimizationReport({ data }) {
         ? tr('Non rentable', 'Not economical')
         : tr('Non disponible', 'Not available')
   const projectRoi = (value) => Number.isFinite(value) ? `${formatNumber(value, 1)}%` : '-'
+  const equipmentCostCompositionRows = isMultiSystemReport
+    ? projectSystems.flatMap((projectSystem, index) => {
+      const systemBreakdown = projectSystem.economics?.installedCostBreakdown || {}
+      const systemReference = buildingSavings.bySystem[index]?.savings?.referenceTechnology
+      const systemTechnologies = [...BASELINE_TECHNOLOGIES, 'humifog']
+      return systemTechnologies
+        .filter((key) => systemBreakdown[key])
+        .map((key) => ({
+          label: `${projectSystem.name || projectSystem.system?.type || `AHU-${index + 1}`} - ${technologyNames[key] || key}`,
+          reference: systemReference === (key === 'humifog' ? selectedHumifogTechnology(projectSystem) : key),
+          ...systemBreakdown[key],
+        }))
+    })
+    : roiRows.map((row) => {
+      const breakdownKey = row.key === 'atmosphericGasHumidifier' ? 'atmosphericGasHumidifier' : row.key === 'humifog' ? 'humifog' : row.key
+      return {
+        label: row.label,
+        reference: row.reference,
+        ...(economics.installedCostBreakdown?.[breakdownKey] || {
+          base: row.installedCost,
+          heatRecoveryAdder: 0,
+          freeCoolingControlsAdder: 0,
+          total: row.installedCost,
+        }),
+      }
+    })
   const hourlyWeatherDataSummary = mode.hourlyWeatherDataSummary || null
   const hourlyWeatherSummaryRows = hourlyWeatherDataSummary
     ? [
@@ -1961,6 +1987,41 @@ export default function HvacEnergyOptimizationReport({ data }) {
                     <td>{row.reference ? '-' : formatSignedMoney(row.annualSavings)}</td>
                     <td>{row.reference ? '-' : formatSignedMoney(row.incrementalCost)}</td>
                     <td>{formatPayback(row)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+        {equipmentCostCompositionRows.length > 0 && (
+          <>
+            <h3>{tr('Composition du coût d’équipement', 'Equipment Cost Composition')}</h3>
+            <p className="report-text">
+              {tr(
+                'Le total installé présenté ici est le même montant utilisé pour le calcul du coût incrémental, du retour simple et du ROI.',
+                'The installed total shown here is the same amount used to calculate incremental cost, simple payback and ROI.'
+              )}
+            </p>
+            <table className="report-table">
+              <thead>
+                <tr>
+                  <th>{tr('Système / technologie', 'System / Technology')}</th>
+                  <th>{tr('Équipement de base', 'Base Equipment')}</th>
+                  <th>{tr('Adder récupération', 'Heat Recovery Adder')}</th>
+                  <th>{tr('Adder contrôles Free Cooling', 'Free Cooling Controls Adder')}</th>
+                  <th>{tr('Total utilisé pour ROI', 'Total Used for ROI')}</th>
+                  <th>{tr('Référence', 'Reference')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {equipmentCostCompositionRows.map((row) => (
+                  <tr key={row.label}>
+                    <td>{row.label}</td>
+                    <td>{formatMoney(row.base)}</td>
+                    <td>{formatMoney(row.heatRecoveryAdder)}</td>
+                    <td>{formatMoney(row.freeCoolingControlsAdder)}</td>
+                    <td><strong>{formatMoney(row.total)}</strong></td>
+                    <td>{row.reference ? tr('Oui', 'Yes') : '-'}</td>
                   </tr>
                 ))}
               </tbody>

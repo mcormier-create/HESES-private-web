@@ -4591,6 +4591,32 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     baseline: baseSystemInstalledCost,
     selectedHumifog: selectedHumifogInstalledCost,
   }
+  const installedCostBreakdown = {
+    electricSteam: {
+      base: electricSteamInstalledCost,
+      heatRecoveryAdder: 0,
+      freeCoolingControlsAdder: isFreeCoolingMode ? freeCoolingControlsInstalledCost : 0,
+      total: installedCostInputs.electricSteam,
+    },
+    naturalGasSteam: {
+      base: naturalGasSteamInstalledCost,
+      heatRecoveryAdder: 0,
+      freeCoolingControlsAdder: isFreeCoolingMode ? freeCoolingControlsInstalledCost : 0,
+      total: installedCostInputs.naturalGasSteam,
+    },
+    atmosphericGasHumidifier: {
+      base: atmosphericGasHumidifierInstalledCost,
+      heatRecoveryAdder: 0,
+      freeCoolingControlsAdder: isFreeCoolingMode ? freeCoolingControlsInstalledCost : 0,
+      total: installedCostInputs.atmosphericGasHumidifier,
+    },
+    humifog: {
+      base: humifogInstalledCost,
+      heatRecoveryAdder: !isFreeCoolingMode && hasChartRecovery ? heatRecoveryInstalledCost : 0,
+      freeCoolingControlsAdder: isFreeCoolingMode ? freeCoolingControlsInstalledCost : 0,
+      total: installedCostInputs.humifog,
+    },
+  }
   const freeCoolingSteamAnnual = freeCoolingHumifogAnalysis.annualComparison.freeCooling || {}
   const freeCoolingHumifogAnnual = freeCoolingHumifogAnalysis.annualComparison.humifog || {}
   const freeCoolingSteamHumidificationKwh = freeCoolingSteamAnnual.humidificationEnergyKwh || 0
@@ -4623,32 +4649,29 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         ? annualAtmosphericGasHumidifierCostResolved
         : annualSteamCostResolved
   const referenceInstalledCost = referenceRoiKey === 'naturalGasSteam'
-    ? naturalGasSteamInstalledCost
+    ? installedCostInputs.naturalGasSteam
     : referenceRoiKey === 'atmosphericGasHumidifier'
-      ? atmosphericGasHumidifierInstalledCost
-      : electricSteamInstalledCost
-  const referenceInstalledCostWithControls = isFreeCoolingMode
-    ? referenceInstalledCost + freeCoolingControlsInstalledCost
-    : referenceInstalledCost
+      ? installedCostInputs.atmosphericGasHumidifier
+      : installedCostInputs.electricSteam
   const roiOptions = [
     {
       key: 'electricSteam',
       label: language === 'fr' ? 'Humidificateur électrique vapeur' : 'Electric steam humidifier',
-      installedCost: electricSteamInstalledCost,
+      installedCost: installedCostInputs.electricSteam,
       annualCost: isFreeCoolingMode ? freeCoolingHumifogAnalysis.annualComparison.freeCooling.annualCost : annualSteamCostResolved,
       reference: referenceRoiKey === 'electricSteam',
     },
     {
       key: 'naturalGasSteam',
       label: language === 'fr' ? 'Bouilloire vapeur gaz naturel' : 'Natural gas steam boiler',
-      installedCost: naturalGasSteamInstalledCost,
+      installedCost: installedCostInputs.naturalGasSteam,
       annualCost: isFreeCoolingMode ? freeCoolingNaturalGasAnnualCost : annualNaturalGasCostResolved,
       reference: referenceRoiKey === 'naturalGasSteam',
     },
     {
       key: 'atmosphericGasHumidifier',
       label: language === 'fr' ? 'Humidificateur gaz atmosphérique' : 'Atmospheric gas humidifier',
-      installedCost: atmosphericGasHumidifierInstalledCost,
+      installedCost: installedCostInputs.atmosphericGasHumidifier,
       annualCost: isFreeCoolingMode ? freeCoolingAtmosphericGasAnnualCost : annualAtmosphericGasHumidifierCostResolved,
       reference: referenceRoiKey === 'atmosphericGasHumidifier',
     },
@@ -4657,13 +4680,13 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       label: isFreeCoolingMode
         ? (language === 'fr' ? 'Humifog optimisé + Free Cooling' : 'Humifog optimized + Free Cooling')
         : (language === 'fr' ? 'Humifog adiabatique' : 'Humifog adiabatic'),
-      installedCost: selectedHumifogInstalledCost,
+      installedCost: installedCostInputs.humifog,
       annualCost: isFreeCoolingMode ? freeCoolingHumifogAnalysis.annualComparison.humifog.annualCost : annualAdiabaticCostResolved,
     },
   ]
   const roiRows = roiOptions.map((option) => {
     const annualSavings = Math.round(referenceAnnualCost - option.annualCost)
-    const incrementalCost = Math.round(option.installedCost - referenceInstalledCostWithControls)
+    const incrementalCost = Math.round(option.installedCost - referenceInstalledCost)
     const paybackYears = annualSavings > 0
       ? Math.max(0, incrementalCost) / annualSavings
       : null
@@ -4955,6 +4978,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       steamBoilerEfficiency,
       atmosphericGasHumidifierEfficiency,
       installedCosts: installedCostInputs,
+      installedCostBreakdown,
       roiRows,
       selectedRoi: selectedRoiRow,
       estimatedPayback,
