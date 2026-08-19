@@ -989,7 +989,7 @@ function HesaMultiSystemApp() {
         }}
         onReportSnapshot={(snapshot) => {
           setSystems((current) => current.map((system) => (
-            system.id === activeSystem.id && JSON.stringify(system.reportSnapshot) !== JSON.stringify(snapshot)
+            system.id === activeSystem.id
               ? { ...system, reportSnapshot: snapshot }
               : system
           )))
@@ -1049,7 +1049,7 @@ function HesaMultiSystemApp() {
         }}
         onReportSnapshot={(snapshot) => {
           setSystems((current) => current.map((system) => (
-            system.id === activeSystem.id && JSON.stringify(system.reportSnapshot) !== JSON.stringify(snapshot)
+            system.id === activeSystem.id
               ? { ...system, reportSnapshot: snapshot }
               : system
           )))
@@ -1088,7 +1088,14 @@ function loadMultiSystemState(initialSettings, language = 'fr') {
   if (typeof window !== 'undefined') {
     try {
       const saved = JSON.parse(window.localStorage.getItem(HESES_MULTI_SYSTEM_STORAGE_KEY) || 'null')
-      if (Array.isArray(saved) && saved.length > 0) return saved.slice(0, 6)
+      if (Array.isArray(saved) && saved.length > 0) {
+        return saved.slice(0, 6).map((system, index) => ({
+          id: system.id || `system-${index + 1}`,
+          name: system.name || (language === 'en' ? `AHU-${index + 1}` : `UTA-${index + 1}`),
+          settings: system.settings || initialSettings,
+          results: system.results,
+        }))
+      }
     } catch {
       // Fall back to the legacy single-system settings.
     }
@@ -5884,7 +5891,13 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       <HesesLandingPage
         language={language}
         setLanguage={setLanguage}
-        onStartAnalysis={() => setShowLandingPage(false)}
+        onStartAnalysis={() => {
+          if (typeof controlledStartAnalysis === 'function') {
+            controlledStartAnalysis()
+            return
+          }
+          setInternalShowLandingPage(false)
+        }}
       />
     )
   }
