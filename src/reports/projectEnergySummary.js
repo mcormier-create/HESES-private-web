@@ -37,7 +37,17 @@ function sumNullable(values) {
 }
 
 function installedCostFor(results, installedCosts, key) {
-  return finiteOrNull(results[key]?.installedInvestmentCost ?? installedCosts[key])
+  const inputKey = key === 'atmosphericGas'
+    ? 'atmosphericGasHumidifier'
+    : key === 'humifogElectric' || key === 'humifogHeatPump' || key === 'humifogFreeCooling' || key === 'humifogSelected'
+      ? 'humifog'
+      : key
+  return finiteOrNull(
+    results[key]?.installedInvestmentCost ??
+    installedCosts[key] ??
+    installedCosts[inputKey] ??
+    installedCosts.selectedHumifog
+  )
 }
 
 export function selectedHumifogTechnology(system = {}) {
