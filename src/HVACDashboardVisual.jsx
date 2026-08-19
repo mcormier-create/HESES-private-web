@@ -5175,6 +5175,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       hoursBasis: annualHoursBasis,
     },
   }
+  Object.values(annualTechnologyResults).forEach((result) => {
+    result.humidificationLoadLbHr = Number(metrics.correctedHumidificationLoadRaw ?? correctedHumidificationLoad ?? 0)
+  })
   const annualTechnologyResultsSerialized = JSON.stringify(annualTechnologyResults)
   useEffect(() => {
     onAnnualResults?.(annualTechnologyResults)

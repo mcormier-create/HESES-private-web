@@ -957,7 +957,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
         ['Electricity rate entered', `${formatNumber(systemEconomics.electricityRate, 2)} $/kWh`],
         ['Natural gas rate entered', `${formatNumber(systemEconomics.naturalGasRate, 2)} $/m3`],
         ['Operating schedule', `${systemMetrics.scheduleDescription || ''}`],
-        [tr('Charge massique d’humidification', 'Humidification mass load'), formatHumidificationLoad(systemMetrics.correctedHumidificationLoadRaw ?? systemMetrics.correctedHumidificationLoad)],
+        [tr('Charge massique d’humidification', 'Humidification mass load'), formatHumidificationLoad(systemMetrics.correctedHumidificationLoadRaw ?? systemMetrics.correctedHumidificationLoad ?? projectSystem.annualTechnologyResults?.electricSteam?.humidificationLoadLbHr)],
         ['Annual humidification hours used', `${formatNumber(systemMetrics.annualHumidificationHours, 0)} h`],
         [tr('Statut météo', 'Weather validation status'), systemMode.weatherValidationStatus || '-'],
       ],
@@ -1314,6 +1314,9 @@ export default function HvacEnergyOptimizationReport({ data }) {
         const systemMode = projectSystem.mode || {}
         const systemData = projectSystem.system || {}
         const systemResults = projectSystem.annualTechnologyResults || projectSystem.results || {}
+        const systemHumidificationLoad = projectSystem.metrics?.correctedHumidificationLoadRaw
+          ?? projectSystem.metrics?.correctedHumidificationLoad
+          ?? systemResults.electricSteam?.humidificationLoadLbHr
         const systemSavings = buildingSavings.bySystem[index]?.savings || summarizeBuildingSavings([projectSystem], projectEnergy.referenceTechnology).totals
         const systemIsFreeCooling = Boolean(systemMode.includesFreeCoolingAnalysis || systemMode.isFreeCoolingMode)
         const systemTechnologies = selectedTechnologiesForSystem(projectSystem).filter((key) => systemResults[key])
@@ -1329,7 +1332,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
               [tr('Climat', 'Climate'), projectSystem.project?.location || '-'],
               [tr('Base horaire', 'Operating-hour basis'), systemMode.selectedCalculationMethod || systemResults.electricSteam?.hoursBasis || '-'],
               [tr('Horaire', 'Operating schedule'), projectSystem.metrics?.scheduleDescription || '-'],
-              [tr('Charge d’humidification', 'Humidification load'), formatPower(projectSystem.metrics?.correctedHumidificationLoad)],
+              [tr('Charge massique d’humidification', 'Humidification mass load'), formatHumidificationLoad(systemHumidificationLoad)],
               [tr('Récupération de chaleur', 'Heat recovery'), systemData.recoveryType || '-'],
             ]} />
             <h3>{tr('Bilan énergétique annuel', 'Annual Energy Balance')}</h3>
