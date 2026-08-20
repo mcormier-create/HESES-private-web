@@ -600,6 +600,7 @@ function HesesPrintableReportPage() {
   const reportHtml = typeof window === 'undefined'
     ? ''
     : window.sessionStorage.getItem(HESES_PRINT_REPORT_STORAGE_KEY) || ''
+  const printInProgressRef = useRef(false)
   const [htmlReportUrl, setHtmlReportUrl] = useState('')
   const [pdfReportUrl, setPdfReportUrl] = useState('')
   const [pdfDownloadUrl, setPdfDownloadUrl] = useState('')
@@ -609,10 +610,46 @@ function HesesPrintableReportPage() {
   const [isGeneratingBrowserPdf, setIsGeneratingBrowserPdf] = useState(false)
 
   const printCurrentReport = () => {
-    if (typeof window === 'undefined') return
+    if (typeof window === 'undefined' || printInProgressRef.current) return
+    printInProgressRef.current = true
+    console.time('printCurrentReport-total')
+    console.time('printCurrentReport-build-html')
     setPdfReportStatus('Ouverture de la fenetre d impression du rapport original...')
-    window.focus()
-    window.print()
+
+    try {
+      const printWindow = window.open('', '_blank', 'noopener,noreferrer,popup,width=1200,height=900')
+      if (!printWindow) {
+        setPdfReportStatus('Autorisez les fenetres contextuelles pour imprimer le rapport.')
+        console.timeEnd('printCurrentReport-build-html')
+        console.timeEnd('printCurrentReport-total')
+        printInProgressRef.current = false
+        return
+      }
+
+      const html = reportHtml || ''
+      console.timeEnd('printCurrentReport-build-html')
+      console.time('printCurrentReport-write-doc')
+      printWindow.document.open()
+      printWindow.document.write(html)
+      printWindow.document.close()
+      console.timeEnd('printCurrentReport-write-doc')
+      console.time('printCurrentReport-print')
+      const onAfterPrint = () => {
+        console.timeEnd('printCurrentReport-print')
+        console.timeEnd('printCurrentReport-total')
+        printInProgressRef.current = false
+        try { printWindow.close() } catch { }
+      }
+      printWindow.addEventListener('afterprint', onAfterPrint, { once: true })
+      printWindow.focus()
+      printWindow.print()
+    } catch (error) {
+      console.error('Erreur impression rapport original:', error)
+      printInProgressRef.current = false
+      console.timeEnd('printCurrentReport-build-html')
+      console.timeEnd('printCurrentReport-total')
+      setPdfReportStatus('Impossible de preparer limpression du rapport original.')
+    }
   }
 
   const openLocalPdfInWindows = () => {
@@ -2916,6 +2953,8 @@ function HesesLandingPage({ language, setLanguage, onStartAnalysis }) {
 
 function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartAnalysis: controlledStartAnalysis, onLanguageChange, systemSettings, onSettingsChange, onAnnualResults, onReportSnapshot, projectSystems, activeSystemName, activeSystemId }) {
   const reportRef = useRef(null)
+  const printWindowRef = useRef(null)
+  const printInProgressRef = useRef(false)
   const hourlyWeatherFileInputRef = useRef(null)
   const initialProjectSettings = systemSettings || getInitialProjectSettings()
   const [language, setLanguage] = useState(initialProjectSettings.language || 'fr')
@@ -3059,9 +3098,14 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
 
   const openPrintableReportPage = () => {
     persistProjectLocally()
-    const html = buildPrintableReportHtml({ autoPrint: false })
-    window.sessionStorage.setItem(HESES_PRINT_REPORT_STORAGE_KEY, html)
-    window.location.href = '/heses-report-print'
+    setReportStatus(language === 'fr'
+      ? 'Préparation du rapport...'
+      : 'Preparing report...')
+    window.setTimeout(() => {
+      const html = buildPrintableReportHtml({ autoPrint: false })
+      window.sessionStorage.setItem(HESES_PRINT_REPORT_STORAGE_KEY, html)
+      window.location.href = '/heses-report-print'
+    }, 0)
   }
 
   const generatePDF = () => {
@@ -3078,26 +3122,84 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   }
 
   const printReportPreview = () => {
+    if (printInProgressRef.current) {
+      console.warn('printReportPreview: impression déjà en cours, ignorer la demande.')
+      return
+    }
+
+    printInProgressRef.current = true
+    console.time('printReportPreview-total')
+    console.time('printReportPreview-collect-report-html')
     try {
-      setReportPreviewVisible(true)
-      openPrintableReportPage()
+      if (printWindowRef.current && !printWindowRef.current.closed) {
+        printWindowRef.current.focus()
+        printInProgressRef.current = false
+        console.timeEnd('printReportPreview-collect-report-html')
+        console.timeEnd('printReportPreview-total')
+        return
+      }
+
+      const reportBodyHtml = reportRef.current?.innerHTML || buildPrintableReportMarkup()
+      console.timeEnd('printReportPreview-collect-report-html')
+      console.time('printReportPreview-open-window')
+      const printWindow = window.open('', '_blank', 'popup,width=1200,height=900')
+      if (!printWindow) {
+        setReportStatus(language === 'fr'
+          ? 'Autorisez les fenêtres contextuelles pour imprimer le rapport.'
+          : 'Allow pop-up windows to print the report.')
+        printInProgressRef.current = false
+        console.timeEnd('printReportPreview-open-window')
+        console.timeEnd('printReportPreview-total')
+        return
+      }
+
+      printWindowRef.current = printWindow
+      printWindow.document.open()
+      printWindow.document.write('<!doctype html><html><head><meta charset="utf-8" /></head><body style="font-family:Arial,sans-serif;padding:32px">Préparation du rapport…</body></html>')
+      printWindow.document.close()
+      console.timeEnd('printReportPreview-open-window')
+      setReportStatus(language === 'fr' ? 'Préparation de l’impression...' : 'Preparing print...')
+
+      console.time('printReportPreview-build-print-doc')
+      const html = buildPrintableReportHtml({ autoPrint: true, includeActions: false, bodyHtml: reportBodyHtml })
+      console.timeEnd('printReportPreview-build-print-doc')
+
+      console.time('printReportPreview-write-doc')
+      printWindow.document.open()
+      printWindow.document.write(html)
+      printWindow.document.close()
+      console.timeEnd('printReportPreview-write-doc')
+
+      console.time('printReportPreview-print-call')
+      const handlePrintDone = () => {
+        console.timeEnd('printReportPreview-print-call')
+        console.timeEnd('printReportPreview-total')
+        printInProgressRef.current = false
+        if (printWindowRef.current === printWindow) printWindowRef.current = null
+      }
+
+      printWindow.addEventListener('afterprint', handlePrintDone, { once: true })
+      printWindow.focus()
+      printWindow.print()
     } catch (error) {
       console.error('Erreur impression rapport:', error)
+      printInProgressRef.current = false
+      console.timeEnd('printReportPreview-collect-report-html')
+      console.timeEnd('printReportPreview-total')
       alert(t.pdfError)
     }
   }
   const buildPrintableReportMarkup = () => (
-    localizeReportHtml(
-      renderToStaticMarkup(<HvacEnergyOptimizationReport data={reportData} />),
-      language
-    )
+    renderToStaticMarkup(<HvacEnergyOptimizationReport data={reportData} />)
       .replaceAll('src="/', `src="${window.location.origin}/`)
   )
 
-  const buildPrintableReportHtml = ({ autoPrint = false } = {}) => {
+  const buildPrintableReportHtml = ({ autoPrint = false, includeActions = true, bodyHtml } = {}) => {
+    console.time('buildPrintableReportHtml-total')
     const reportTitle = language === 'fr' ? 'Rapport HVAC Enersol' : t.reportTitle
-    const reportHtml = buildPrintableReportMarkup()
+    const reportHtml = bodyHtml || buildPrintableReportMarkup()
     const printLabel = language === 'fr' ? 'Imprimer / Enregistrer en PDF' : 'Print / Save as PDF'
+    console.timeEnd('buildPrintableReportHtml-total')
     const openWindowsPdfLabel = language === 'fr' ? 'Ouvrir PDF dans Windows' : 'Open PDF in Windows'
     const printHint = language === 'fr'
       ? 'Si l impression ne s ouvre pas ici, ouvrez le PDF dans Windows et utilisez Ctrl+P.'
@@ -3269,31 +3371,37 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     </style>
   </head>
   <body>
-    <div class="print-actions">
+    ${includeActions ? `<div class="print-actions">
       <button type="button" onclick="window.print()">${printLabel}</button>
       <button type="button" onclick="fetch('/api/heses-report-open-local-pdf', { method: 'POST' }).catch(function(){ window.location.href = '/api/heses-report-open-local-pdf'; })">${openWindowsPdfLabel}</button>
       <span class="print-hint">${printHint}</span>
-    </div>
+    </div>` : ''}
     ${reportHtml}
     ${autoPrint ? `
       <script>
-        window.addEventListener('load', function () {
+        (function () {
+          if (window.__hesaPrintStarted) return;
+          window.__hesaPrintStarted = true;
           var images = Array.prototype.slice.call(document.images || []);
-          var waits = images.map(function (image) {
+          var imageWaits = images.map(function (image) {
             if (image.complete) return Promise.resolve();
             return new Promise(function (resolve) {
               image.onload = resolve;
               image.onerror = resolve;
             });
           });
+          var fontWait = document.fonts && document.fonts.ready
+            ? document.fonts.ready.catch(function () {})
+            : Promise.resolve();
 
-          Promise.all(waits).finally(function () {
-            setTimeout(function () {
-              window.focus();
-              window.print();
-            }, 600);
+          Promise.all([Promise.all(imageWaits), fontWait]).then(function () {
+            window.addEventListener('afterprint', function () {
+              window.setTimeout(function () { window.close(); }, 0);
+            }, { once: true });
+            window.focus();
+            window.print();
           });
-        });
+        }());
       </script>
     ` : ''}
   </body>
