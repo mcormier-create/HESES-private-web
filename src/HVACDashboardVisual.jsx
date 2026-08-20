@@ -637,17 +637,17 @@ function HesesPrintableReportPage() {
   const generateBrowserPdf = () => {
     if (!reportHtml || isGeneratingBrowserPdf) return
     setIsGeneratingBrowserPdf(true)
-    setPdfReportStatus('Generation du PDF navigateur en cours...')
-    createVisualPdfBlobFromReportHtml(reportHtml)
+    setPdfReportStatus('Generation du PDF en cours...')
+    Promise.resolve(createPdfBlobFromReportHtml(reportHtml, 'HESA Report'))
       .then((blob) => {
         const clientPdfUrl = URL.createObjectURL(blob)
         setPdfReportUrl(clientPdfUrl)
         setPdfDownloadUrl(clientPdfUrl)
-        setPdfReportStatus('PDF navigateur pret au telechargement.')
+        setPdfReportStatus('PDF pret au telechargement.')
       })
       .catch((error) => {
-        console.error('Erreur PDF navigateur:', error)
-        setPdfReportStatus('Echec de generation PDF navigateur. Telechargez le rapport HTML.')
+        console.error('Erreur PDF:', error)
+        setPdfReportStatus('Echec de generation PDF. Telechargez le rapport HTML.')
       })
       .finally(() => {
         setIsGeneratingBrowserPdf(false)
@@ -664,69 +664,12 @@ function HesesPrintableReportPage() {
     if (!reportHtml) return undefined
 
     const htmlUrl = URL.createObjectURL(new Blob([reportHtml], { type: 'text/html;charset=utf-8' }))
-    let isCancelled = false
-    let clientPdfUrl = ''
-    const pdfRequestController = new AbortController()
-    const pdfRequestTimeout = window.setTimeout(() => pdfRequestController.abort(), 15000)
 
     setHtmlReportUrl(htmlUrl)
-    setPdfReportUrl('')
-    setPdfDownloadUrl('')
-    setLocalPdfPath('')
-    setCurrentReportId('')
-    setPdfReportStatus('Rapport original en préparation...')
-
-    fetch('/api/heses-report-pdf', {
-      method: 'POST',
-      signal: pdfRequestController.signal,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        html: reportHtml,
-        title: 'Rapport HESA',
-      }),
-    })
-      .then(async (response) => {
-        const payload = await response.json().catch(() => ({}))
-        if (!response.ok) throw new Error(payload.error || 'Erreur PDF serveur.')
-        return payload
-      })
-      .then((payload) => {
-        if (isCancelled) return
-        if (payload.id) setCurrentReportId(payload.id)
-        if (payload.htmlUrl) setHtmlReportUrl(payload.htmlUrl)
-        if (payload.localPdfPath) setLocalPdfPath(payload.localPdfPath)
-        if (payload.pdfReady && payload.pdfUrl) {
-          setPdfReportUrl(payload.pdfUrl)
-          setPdfDownloadUrl(payload.apiPdfUrl || payload.pdfUrl)
-          setPdfReportStatus('PDF Chrome au format original prêt au téléchargement.')
-          return null
-        }
-
-        setPdfReportStatus('PDF serveur indisponible. Utilisez Telecharger HTML ou Generer PDF navigateur.')
-        return null
-      })
-      .then((result) => {
-        if (isCancelled || !result) return
-        setPdfReportUrl(result.pdfUrl || '')
-        setPdfDownloadUrl(result.downloadUrl || result.pdfUrl || '')
-        if (result.localPdfPath) setLocalPdfPath(result.localPdfPath)
-        setPdfReportStatus(result.fallback
-          ? `PDF non disponible au format original. Utilisez le rapport HTML original. ${result.message || ''}`.trim()
-          : 'PDF au format visuel original prêt au téléchargement.')
-      })
-      .catch((error) => {
-        console.error('Erreur PDF serveur:', error)
-        if (!isCancelled) {
-          setPdfReportStatus('PDF serveur non disponible. Utilisez Telecharger HTML ou Generer PDF navigateur.')
-        }
-      })
+    setPdfReportStatus('Rapport pret pour impression.')
 
     return () => {
-      isCancelled = true
-      window.clearTimeout(pdfRequestTimeout)
-      pdfRequestController.abort()
       URL.revokeObjectURL(htmlUrl)
-      if (clientPdfUrl) URL.revokeObjectURL(clientPdfUrl)
     }
   }, [reportHtml])
 
@@ -810,7 +753,7 @@ function HesesPrintableReportPage() {
             isGeneratingBrowserPdf ? 'bg-slate-500' : 'bg-indigo-600 hover:bg-indigo-700'
           }`}
         >
-          {isGeneratingBrowserPdf ? 'Generation PDF navigateur...' : 'Generer PDF navigateur'}
+          {isGeneratingBrowserPdf ? 'Generation PDF...' : 'Generer PDF'}
         </button>
         <a
           href={pdfDownloadUrl || '#'}
