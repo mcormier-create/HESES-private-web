@@ -2952,7 +2952,6 @@ function HesesLandingPage({ language, setLanguage, onStartAnalysis }) {
 }
 
 function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartAnalysis: controlledStartAnalysis, onLanguageChange, systemSettings, onSettingsChange, onAnnualResults, onReportSnapshot, projectSystems, activeSystemName, activeSystemId }) {
-  const reportRef = useRef(null)
   const printWindowRef = useRef(null)
   const printInProgressRef = useRef(false)
   const hourlyWeatherFileInputRef = useRef(null)
@@ -6015,7 +6014,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       hvacSystemImageData,
     },
     pdfReport: {
-      available: Boolean(reportRef),
+      available: true,
       title: reportData.project.name,
       sections: [
         'Design conditions',
@@ -6279,13 +6278,6 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
           </div>
         )}
       </section>
-
-      <div className="heses-print-report" aria-hidden="true">
-        <div
-          ref={reportRef}
-          dangerouslySetInnerHTML={{ __html: buildPrintableReportMarkup() }}
-        />
-      </div>
 
       {reportPreviewVisible && (
         <section className="mx-auto mb-6 max-w-7xl rounded-3xl border border-slate-300 bg-white p-5 shadow-xl">
