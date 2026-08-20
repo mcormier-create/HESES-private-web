@@ -287,7 +287,9 @@ const server = http.createServer(async (request, response) => {
   try {
     if (await handleAuth(request, response)) return
     const url = new URL(request.url || '/', 'http://heses.local')
-    if (url.pathname.startsWith('/api/')) {
+    const isReportRequest = url.pathname.startsWith('/api/heses-report')
+      || url.pathname.startsWith('/generated/HESA_Energy_Analysis_Report.')
+    if (isReportRequest) {
       const store = url.pathname.startsWith('/api/heses-report') ? reportRequests : apiRequests
       if (rateLimited(store, clientIp(request), requestWindowMs, url.pathname.startsWith('/api/heses-report') ? reportLimit : apiLimit)) {
         console.warn(`[HESA security] API rate limit exceeded for ${clientIp(request)} on ${url.pathname}`)
@@ -297,7 +299,7 @@ const server = http.createServer(async (request, response) => {
     }
     if (await handleCalculation(request, response)) return
     if (await handleAssistant(request, response)) return
-    if (url.pathname.startsWith('/api/')) {
+    if (isReportRequest) {
       await new Promise((resolve) => reportMiddleware(request, response, resolve))
       if (!response.writableEnded) sendJson(response, 404, { error: 'Not found' })
       return

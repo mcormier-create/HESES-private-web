@@ -606,6 +606,7 @@ function HesesPrintableReportPage() {
   const [localPdfPath, setLocalPdfPath] = useState('')
   const [currentReportId, setCurrentReportId] = useState('')
   const [pdfReportStatus, setPdfReportStatus] = useState('')
+  const [isGeneratingBrowserPdf, setIsGeneratingBrowserPdf] = useState(false)
 
   const printCurrentReport = () => {
     if (typeof window === 'undefined') return
@@ -633,6 +634,26 @@ function HesesPrintableReportPage() {
       })
   }
 
+  const generateBrowserPdf = () => {
+    if (!reportHtml || isGeneratingBrowserPdf) return
+    setIsGeneratingBrowserPdf(true)
+    setPdfReportStatus('Generation du PDF navigateur en cours...')
+    createVisualPdfBlobFromReportHtml(reportHtml)
+      .then((blob) => {
+        const clientPdfUrl = URL.createObjectURL(blob)
+        setPdfReportUrl(clientPdfUrl)
+        setPdfDownloadUrl(clientPdfUrl)
+        setPdfReportStatus('PDF navigateur pret au telechargement.')
+      })
+      .catch((error) => {
+        console.error('Erreur PDF navigateur:', error)
+        setPdfReportStatus('Echec de generation PDF navigateur. Telechargez le rapport HTML.')
+      })
+      .finally(() => {
+        setIsGeneratingBrowserPdf(false)
+      })
+  }
+
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!window.location.search.includes('print=1')) return
@@ -644,6 +665,9 @@ function HesesPrintableReportPage() {
 
     const htmlUrl = URL.createObjectURL(new Blob([reportHtml], { type: 'text/html;charset=utf-8' }))
     let isCancelled = false
+    let clientPdfUrl = ''
+    const pdfRequestController = new AbortController()
+    const pdfRequestTimeout = window.setTimeout(() => pdfRequestController.abort(), 15000)
 
     setHtmlReportUrl(htmlUrl)
     setPdfReportUrl('')
@@ -654,6 +678,7 @@ function HesesPrintableReportPage() {
 
     fetch('/api/heses-report-pdf', {
       method: 'POST',
+      signal: pdfRequestController.signal,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         html: reportHtml,
@@ -677,35 +702,8 @@ function HesesPrintableReportPage() {
           return null
         }
 
-        setPdfReportStatus('PDF Chrome non disponible. Tentative de rendu visuel navigateur...')
-        return createVisualPdfBlobFromReportHtml(reportHtml)
-          .then(blobToBase64)
-          .then((pdfBase64) => fetch('/api/heses-report-pdf-upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: payload.id,
-              pdfBase64,
-            }),
-          }))
-          .then(async (uploadResponse) => {
-            const uploadPayload = await uploadResponse.json().catch(() => ({}))
-            if (!uploadResponse.ok) throw new Error(uploadPayload.error || 'Erreur PDF visuel.')
-            if (uploadPayload.id) setCurrentReportId(uploadPayload.id)
-            return {
-              pdfUrl: uploadPayload.pdfUrl || payload.pdfUrl || '',
-              downloadUrl: payload.apiPdfUrl || uploadPayload.pdfUrl || payload.pdfUrl || '',
-              localPdfPath: uploadPayload.localPdfPath || payload.localPdfPath || '',
-            }
-          })
-          .catch((error) => {
-            console.error('Erreur PDF visuel:', error)
-            return {
-              pdfUrl: '',
-              fallback: true,
-              message: payload.pdfError || error.message,
-            }
-          })
+        setPdfReportStatus('PDF serveur indisponible. Utilisez Telecharger HTML ou Generer PDF navigateur.')
+        return null
       })
       .then((result) => {
         if (isCancelled || !result) return
@@ -719,13 +717,16 @@ function HesesPrintableReportPage() {
       .catch((error) => {
         console.error('Erreur PDF serveur:', error)
         if (!isCancelled) {
-          setPdfReportStatus('PDF serveur non disponible. Téléchargez le rapport original HTML.')
+          setPdfReportStatus('PDF serveur non disponible. Utilisez Telecharger HTML ou Generer PDF navigateur.')
         }
       })
 
     return () => {
       isCancelled = true
+      window.clearTimeout(pdfRequestTimeout)
+      pdfRequestController.abort()
       URL.revokeObjectURL(htmlUrl)
+      if (clientPdfUrl) URL.revokeObjectURL(clientPdfUrl)
     }
   }, [reportHtml])
 
@@ -801,6 +802,34 @@ function HesesPrintableReportPage() {
         >
           Ouvrir PDF dans Windows
         </button>
+        <button
+          type="button"
+          onClick={generateBrowserPdf}
+          disabled={isGeneratingBrowserPdf || !reportHtml}
+          className={`rounded-xl px-5 py-3 font-bold text-white ${
+            isGeneratingBrowserPdf ? 'bg-slate-500' : 'bg-indigo-600 hover:bg-indigo-700'
+          }`}
+        >
+          {isGeneratingBrowserPdf ? 'Generation PDF navigateur...' : 'Generer PDF navigateur'}
+        </button>
+        <a
+          href={pdfDownloadUrl || '#'}
+          download="HESA_Energy_Analysis_Report.pdf"
+          aria-disabled={!pdfDownloadUrl}
+          onClick={(event) => { if (!pdfDownloadUrl) event.preventDefault() }}
+          className={`rounded-xl px-5 py-3 font-bold text-white ${
+            pdfDownloadUrl ? 'bg-cyan-700 hover:bg-cyan-800' : 'pointer-events-none bg-slate-500'
+          }`}
+        >
+          Télécharger PDF
+        </a>
+        <a
+          href={htmlReportUrl || '#'}
+          download="HESA_Energy_Analysis_Report.html"
+          className="rounded-xl bg-sky-700 px-5 py-3 font-bold text-white hover:bg-sky-800"
+        >
+          Télécharger HTML
+        </a>
         <span className="text-sm font-semibold text-slate-200">
           {pdfReportStatus || 'PDF disponible après génération.'}
         </span>
@@ -822,22 +851,6 @@ function HesesPrintableReportPage() {
             Cliquez sur Ouvrir PDF dans Windows, puis utilisez Ctrl+P dans le lecteur PDF externe. Le lecteur PDF intégré peut bloquer l’impression.
           </div>
           <div className="mt-4 flex flex-wrap gap-3">
-            <a
-              href={pdfDownloadUrl || '#'}
-              download="HESA_Energy_Analysis_Report.pdf"
-              className={`rounded-lg px-4 py-2 font-bold text-white ${
-                pdfDownloadUrl ? 'bg-cyan-700 hover:bg-cyan-800' : 'pointer-events-none bg-slate-500'
-              }`}
-            >
-              Télécharger PDF
-            </a>
-            <a
-              href={htmlReportUrl || '#'}
-              download="HESA_Energy_Analysis_Report.html"
-              className="rounded-lg bg-sky-700 px-4 py-2 font-bold text-white hover:bg-sky-800"
-            >
-              Télécharger HTML
-            </a>
           </div>
         </aside>
       )}
