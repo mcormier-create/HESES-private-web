@@ -4,7 +4,7 @@ function loadFreeCoolingEngine() {
   const psychrometricsSource = readFileSync('src/calculations/psychrometrics.js', 'utf8')
     .replace(/export /g, '')
   const serviceSource = readFileSync('src/services/freeCoolingHumifogService.js', 'utf8')
-    .replace(/import[\s\S]*?from '\.\.\/calculations\/psychrometrics'\s*/m, '')
+    .replace(/import[\s\S]*?from '\.\.\/calculations\/psychrometrics(?:\.js)?'\s*/m, '')
     .replace(/export /g, '')
 
   return Function(`

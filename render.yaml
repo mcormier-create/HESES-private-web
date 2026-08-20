@@ -3,13 +3,13 @@ services:
     name: heses-private
     env: node
     plan: starter
-    buildCommand: npm ci && npm run build
+    buildCommand: npm ci && npx playwright install chromium && npm run build
     startCommand: npm start
-    autoDeploy: false
+    autoDeploy: true
     envVars:
       - key: NODE_ENV
         value: production
-      - key: HESES_ACCESS_CODE
+      - key: HESA_ACCESS_PASSWORD
         sync: false
       - key: OPENAI_API_KEY
         sync: false

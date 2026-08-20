@@ -1,11 +1,12 @@
-﻿import { useState, useRef, useEffect } from 'react'
+﻿import { useState, useRef, useEffect, useMemo } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import HVACSystemImage from './components/HVACSystemImage'
 import PsychrometricChart from './components/PsychrometricChart'
 import HvacEnergyOptimizationReport from './reports/HvacEnergyOptimizationReport'
+import { BASELINE_TECHNOLOGIES, selectedHumifogTechnology } from './reports/projectEnergySummary'
 import { calculateFreeCoolingHumifogComparison } from './services/freeCoolingHumifogService'
-import { calculateHvacDashboardMetrics } from './services/hvacEngineeringService'
-import { dryBulbFromEnthalpyHumidityRatio, humidityRatioFromRH, mixAirStates, psychrometricState, sensibleHeatingKw, stateFromDbW } from './calculations/psychrometrics'
+import { calculateAutomaticPreHumifogTemperature, calculateHvacDashboardMetrics } from './services/hvacEngineeringService'
+import { dryBulbFromEnthalpyHumidityRatio, humidityRatioFromRH, mixAirStates, moistAirEnthalpyBtuLb, psychrometricState, sensibleHeatingKw, stateFromDbW } from './calculations/psychrometrics'
 import { getSystemSchematic, resolveSystemSchematicId, systemImages } from './utils/systemImages'
 import {
   ResponsiveContainer,
@@ -233,7 +234,7 @@ function localizeWeatherMetadataValue(label, value, language) {
 function getBuiltInHourlyFallbackMessage(cityName, translations) {
   const normalized = normalizeCityKey(cityName)
   if (normalized === normalizeCityKey('Ottawa')) {
-    return 'Le fichier météo horaire intégré pour Ottawa est introuvable. HESES continue avec la méthode des heures BIN.'
+    return 'Le fichier météo horaire intégré pour Ottawa est introuvable. HESA continue avec la méthode des heures BIN.'
   }
   return translations.noBuiltInWeatherAvailable
 }
@@ -285,6 +286,7 @@ const HESES_ASSISTANT_HEALTH_ENDPOINT = '/api/heses-assistant/health'
 const FREE_COOLING_ROUTE = '/'
 const HESES_PROJECT_PROFILE_STORAGE_KEY = 'heses-project-profile'
 const HESES_PROJECT_SETTINGS_STORAGE_KEY = 'heses-project-settings'
+const HESES_MULTI_SYSTEM_STORAGE_KEY = 'heses-multi-system-project'
 const HESES_PRINT_REPORT_STORAGE_KEY = 'heses-print-report-html'
 
 function returnToHesesApp() {
@@ -434,9 +436,10 @@ function calculateHourlySimulation(records, options) {
     activeFraction,
     roomTemperature,
     roomRelativeHumidity,
+    supplyAirTemperature,
     selectedRecoveries,
     wheelEfficiency,
-    supplyAirTemperature,
+    latentRecoveryEfficiency,
     selectedReheatSystem,
     heatPumpCOP,
     steamBoilerEfficiency,
@@ -445,10 +448,17 @@ function calculateHourlySimulation(records, options) {
     naturalGasRate,
   } = options
 
-  const indoorHumidityRatio = humidityRatioFromRH(roomTemperature, roomRelativeHumidity)
+  const indoorHumidityRatio = humidityRatioFromRH(supplyAirTemperature, roomRelativeHumidity)
   const selectedRecovery = selectedRecoveries[0]
-  const latentRecoveryEffect = getLatentRecoveryEffect(selectedRecovery)
   const isNoRecovery = Boolean(selectedRecovery?.noRecovery)
+  const latentRecoverySupported = supportsLatentRecovery(selectedRecovery)
+  const sensibleRecoveryEfficiency = isNoRecovery
+    ? 0
+    : clampValue(Number(wheelEfficiency), 0, 95)
+  const effectiveLatentRecoveryEfficiency = isNoRecovery || !latentRecoverySupported
+    ? 0
+    : clampValue(Number(latentRecoveryEfficiency), 0, 95)
+  const indoorEnthalpy = moistAirEnthalpyBtuLb(supplyAirTemperature, indoorHumidityRatio)
   const effectiveOutsideAirCFM = Math.round(outsideAirCFM * activeFraction)
   const reheatEnergySource = String(selectedReheatSystem?.energie || '')
     .normalize('NFD')
@@ -461,20 +471,39 @@ function calculateHourlySimulation(records, options) {
   const hourlyRows = filtered.map((record) => {
     const pressureKPa = record.pressurePa / 1000
     const outdoorHumidityRatio = humidityRatioFromRH(record.dryBulbC, record.relativeHumidity, pressureKPa)
-    const deltaW = Math.max(0.00001, indoorHumidityRatio - outdoorHumidityRatio)
+    const recoveredHumidityRatioRaw = outdoorHumidityRatio +
+      (effectiveLatentRecoveryEfficiency / 100) * (indoorHumidityRatio - outdoorHumidityRatio)
+    const recoveredHumidityRatio = clampValue(
+      recoveredHumidityRatioRaw,
+      Math.max(0, Math.min(outdoorHumidityRatio, indoorHumidityRatio)),
+      Math.max(outdoorHumidityRatio, indoorHumidityRatio)
+    )
+    const deltaW = Math.max(0.00001, indoorHumidityRatio - recoveredHumidityRatio)
     const steamHumidificationLoad = Math.max(0, Math.round(4.5 * effectiveOutsideAirCFM * deltaW))
-    const correctedHumidificationLoad = Math.max(0, Math.round(steamHumidificationLoad * (1 - Math.min(latentRecoveryEffect, 45) / 100)))
+    const correctedHumidificationLoad = steamHumidificationLoad
     const steamEnergyKW = Math.round(correctedHumidificationLoad * 0.345)
     const adiabaticLoad = correctedHumidificationLoad
     const adiabaticPumpKW = Math.max(1, Math.round(adiabaticLoad * 0.0009))
-    const grossReheatKW = Math.round(sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, supplyAirTemperature - (supplyAirTemperature - Math.max(0.3, Math.min(12, deltaW * 7000 * 0.22))))) )
-    const cassetteBoostFactor = isEnthalpyCassette(selectedRecovery) ? 1.18 : 1
-    const recoveryEnergyReductionKW = Math.round(grossReheatKW * (Math.min(selectedRecovery?.efficacite ?? 0, 95) / 100) * 0.18 * cassetteBoostFactor)
-    const netReheatKW = Math.max(0, grossReheatKW - recoveryEnergyReductionKW)
+    const adiabaticTemperatureDrop = Number(
+      Math.max(0.3, Math.min(12, deltaW * 7000 * 0.22)).toFixed(1)
+    )
+    const recoveredDryBulbC = record.dryBulbC + (sensibleRecoveryEfficiency / 100) * (roomTemperature - record.dryBulbC)
+    const enteringHumifogEnthalpy = moistAirEnthalpyBtuLb(recoveredDryBulbC, recoveredHumidityRatio)
+    const preheatBtuPerHr = Math.max(0, 4.5 * effectiveOutsideAirCFM * (indoorEnthalpy - enteringHumifogEnthalpy))
+    const grossHumifogPreheatKW = Math.round(preheatBtuPerHr / 3412)
+    const preheatTargetTempC = calculateAutomaticPreHumifogTemperature(indoorEnthalpy, recoveredHumidityRatio)
+    const baseHvacHeatingThermalKW = Math.round(
+      sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, preheatTargetTempC - recoveredDryBulbC))
+    )
+    const grossReheatKW = Math.max(0, grossHumifogPreheatKW - baseHvacHeatingThermalKW)
+    const recoveryEnergyReductionKW = isNoRecovery
+      ? 0
+      : Math.round(sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, recoveredDryBulbC - record.dryBulbC)))
+    const netReheatKW = grossReheatKW
     const reheatEnergyKW = usesHeatPumpReheat
-      ? Math.round(netReheatKW / Math.max(heatPumpCOP, 0.1))
-      : Math.round(netReheatKW * (selectedReheatSystem.facteur ?? 1))
-    const adiabaticEnergyKW = Math.max(2, adiabaticPumpKW + reheatEnergyKW)
+      ? Number((netReheatKW / Math.max(heatPumpCOP, 0.1)).toFixed(2))
+      : Number((netReheatKW * (selectedReheatSystem?.facteur ?? 1)).toFixed(2))
+    const adiabaticEnergyKW = Number(Math.max(0, adiabaticPumpKW + reheatEnergyKW).toFixed(2))
     const naturalGasSteamInputKW = Math.round(steamEnergyKW / Math.max(steamBoilerEfficiency / 100, 0.01))
     const atmosphericGasHumidifierInputKW = Math.round(steamEnergyKW / Math.max(atmosphericGasHumidifierEfficiency / 100, 0.01))
     const atmosphericGasHumidifierM3PerHour = Number((atmosphericGasHumidifierInputKW / 10.35).toFixed(1))
@@ -555,14 +584,6 @@ function calculateHourlySimulation(records, options) {
   }
 }
 
-function getLatentRecoveryEffect(recovery) {
-  const name = String(recovery?.nom || '').toLowerCase()
-  if (!recovery) return 0
-  if (name.includes('roue') || name.includes('thermal wheel')) return recovery.efficacite * 0.55
-  if (name.includes('cassette') && (name.includes('enthalpique') || name.includes('enthalpy'))) return 38
-  return 0
-}
-
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -579,18 +600,56 @@ function HesesPrintableReportPage() {
   const reportHtml = typeof window === 'undefined'
     ? ''
     : window.sessionStorage.getItem(HESES_PRINT_REPORT_STORAGE_KEY) || ''
+  const printInProgressRef = useRef(false)
   const [htmlReportUrl, setHtmlReportUrl] = useState('')
   const [pdfReportUrl, setPdfReportUrl] = useState('')
   const [pdfDownloadUrl, setPdfDownloadUrl] = useState('')
   const [localPdfPath, setLocalPdfPath] = useState('')
   const [currentReportId, setCurrentReportId] = useState('')
   const [pdfReportStatus, setPdfReportStatus] = useState('')
+  const [isGeneratingBrowserPdf, setIsGeneratingBrowserPdf] = useState(false)
 
   const printCurrentReport = () => {
-    if (typeof window === 'undefined') return
+    if (typeof window === 'undefined' || printInProgressRef.current) return
+    printInProgressRef.current = true
+    console.time('printCurrentReport-total')
+    console.time('printCurrentReport-build-html')
     setPdfReportStatus('Ouverture de la fenetre d impression du rapport original...')
-    window.focus()
-    window.print()
+
+    try {
+      const printWindow = window.open('', '_blank', 'popup,width=1200,height=900')
+      if (!printWindow) {
+        setPdfReportStatus('Autorisez les fenetres contextuelles pour imprimer le rapport.')
+        console.timeEnd('printCurrentReport-build-html')
+        console.timeEnd('printCurrentReport-total')
+        printInProgressRef.current = false
+        return
+      }
+
+      const html = reportHtml || ''
+      console.timeEnd('printCurrentReport-build-html')
+      console.time('printCurrentReport-write-doc')
+      printWindow.document.open()
+      printWindow.document.write(html)
+      printWindow.document.close()
+      console.timeEnd('printCurrentReport-write-doc')
+      console.time('printCurrentReport-print')
+      const onAfterPrint = () => {
+        console.timeEnd('printCurrentReport-print')
+        console.timeEnd('printCurrentReport-total')
+        printInProgressRef.current = false
+        try { printWindow.close() } catch { }
+      }
+      printWindow.addEventListener('afterprint', onAfterPrint, { once: true })
+      printWindow.focus()
+      printWindow.print()
+    } catch (error) {
+      console.error('Erreur impression rapport original:', error)
+      printInProgressRef.current = false
+      console.timeEnd('printCurrentReport-build-html')
+      console.timeEnd('printCurrentReport-total')
+      setPdfReportStatus('Impossible de preparer limpression du rapport original.')
+    }
   }
 
   const openLocalPdfInWindows = () => {
@@ -612,6 +671,26 @@ function HesesPrintableReportPage() {
       })
   }
 
+  const generateBrowserPdf = () => {
+    if (!reportHtml || isGeneratingBrowserPdf) return
+    setIsGeneratingBrowserPdf(true)
+    setPdfReportStatus('Generation du PDF en cours...')
+    Promise.resolve(createPdfBlobFromReportHtml(reportHtml, 'HESA Report'))
+      .then((blob) => {
+        const clientPdfUrl = URL.createObjectURL(blob)
+        setPdfReportUrl(clientPdfUrl)
+        setPdfDownloadUrl(clientPdfUrl)
+        setPdfReportStatus('PDF pret au telechargement.')
+      })
+      .catch((error) => {
+        console.error('Erreur PDF:', error)
+        setPdfReportStatus('Echec de generation PDF. Telechargez le rapport HTML.')
+      })
+      .finally(() => {
+        setIsGeneratingBrowserPdf(false)
+      })
+  }
+
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!window.location.search.includes('print=1')) return
@@ -622,88 +701,11 @@ function HesesPrintableReportPage() {
     if (!reportHtml) return undefined
 
     const htmlUrl = URL.createObjectURL(new Blob([reportHtml], { type: 'text/html;charset=utf-8' }))
-    let isCancelled = false
 
     setHtmlReportUrl(htmlUrl)
-    setPdfReportUrl('')
-    setPdfDownloadUrl('')
-    setLocalPdfPath('')
-    setCurrentReportId('')
-    setPdfReportStatus('Rapport original en préparation...')
-
-    fetch('/api/heses-report-pdf', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        html: reportHtml,
-        title: 'Rapport HESES',
-      }),
-    })
-      .then(async (response) => {
-        const payload = await response.json().catch(() => ({}))
-        if (!response.ok) throw new Error(payload.error || 'Erreur PDF serveur.')
-        return payload
-      })
-      .then((payload) => {
-        if (isCancelled) return
-        if (payload.id) setCurrentReportId(payload.id)
-        if (payload.htmlUrl) setHtmlReportUrl(payload.htmlUrl)
-        if (payload.localPdfPath) setLocalPdfPath(payload.localPdfPath)
-        if (payload.pdfReady && payload.pdfUrl) {
-          setPdfReportUrl(payload.pdfUrl)
-          setPdfDownloadUrl(payload.apiPdfUrl || payload.pdfUrl)
-          setPdfReportStatus('PDF Chrome au format original prêt au téléchargement.')
-          return null
-        }
-
-        setPdfReportStatus('PDF Chrome non disponible. Tentative de rendu visuel navigateur...')
-        return createVisualPdfBlobFromReportHtml(reportHtml)
-          .then(blobToBase64)
-          .then((pdfBase64) => fetch('/api/heses-report-pdf-upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: payload.id,
-              pdfBase64,
-            }),
-          }))
-          .then(async (uploadResponse) => {
-            const uploadPayload = await uploadResponse.json().catch(() => ({}))
-            if (!uploadResponse.ok) throw new Error(uploadPayload.error || 'Erreur PDF visuel.')
-            if (uploadPayload.id) setCurrentReportId(uploadPayload.id)
-            return {
-              pdfUrl: uploadPayload.pdfUrl || payload.pdfUrl || '',
-              downloadUrl: payload.apiPdfUrl || uploadPayload.pdfUrl || payload.pdfUrl || '',
-              localPdfPath: uploadPayload.localPdfPath || payload.localPdfPath || '',
-            }
-          })
-          .catch((error) => {
-            console.error('Erreur PDF visuel:', error)
-            return {
-              pdfUrl: '',
-              fallback: true,
-              message: payload.pdfError || error.message,
-            }
-          })
-      })
-      .then((result) => {
-        if (isCancelled || !result) return
-        setPdfReportUrl(result.pdfUrl || '')
-        setPdfDownloadUrl(result.downloadUrl || result.pdfUrl || '')
-        if (result.localPdfPath) setLocalPdfPath(result.localPdfPath)
-        setPdfReportStatus(result.fallback
-          ? `PDF non disponible au format original. Utilisez le rapport HTML original. ${result.message || ''}`.trim()
-          : 'PDF au format visuel original prêt au téléchargement.')
-      })
-      .catch((error) => {
-        console.error('Erreur PDF serveur:', error)
-        if (!isCancelled) {
-          setPdfReportStatus('PDF serveur non disponible. Téléchargez le rapport original HTML.')
-        }
-      })
+    setPdfReportStatus('Rapport pret pour impression.')
 
     return () => {
-      isCancelled = true
       URL.revokeObjectURL(htmlUrl)
     }
   }, [reportHtml])
@@ -712,16 +714,16 @@ function HesesPrintableReportPage() {
     return (
       <main className="min-h-screen bg-slate-100 p-6">
         <section className="mx-auto max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
-          <h1 className="text-2xl font-bold text-slate-900">Rapport HESES non disponible</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Rapport HESA non disponible</h1>
           <p className="mt-2 font-semibold text-slate-600">
-            Retournez dans HESES et cliquez de nouveau sur Générer rapport PDF.
+            Retournez dans HESA et cliquez de nouveau sur Générer rapport PDF.
           </p>
           <button
             type="button"
             onClick={returnToHesesApp}
             className="mt-5 rounded-xl bg-sky-700 px-5 py-3 font-bold text-white hover:bg-sky-800"
           >
-            Retour à HESES
+            Retour à HESA
           </button>
         </section>
       </main>
@@ -762,7 +764,7 @@ function HesesPrintableReportPage() {
           onClick={returnToHesesApp}
           className="rounded-xl bg-slate-700 px-5 py-3 font-bold text-white hover:bg-slate-600"
         >
-          Retour à HESES
+          Retour à HESA
         </button>
         <button
           type="button"
@@ -780,8 +782,36 @@ function HesesPrintableReportPage() {
         >
           Ouvrir PDF dans Windows
         </button>
+        <button
+          type="button"
+          onClick={generateBrowserPdf}
+          disabled={isGeneratingBrowserPdf || !reportHtml}
+          className={`rounded-xl px-5 py-3 font-bold text-white ${
+            isGeneratingBrowserPdf ? 'bg-slate-500' : 'bg-indigo-600 hover:bg-indigo-700'
+          }`}
+        >
+          {isGeneratingBrowserPdf ? 'Generation PDF...' : 'Generer PDF'}
+        </button>
+        <a
+          href={pdfDownloadUrl || '#'}
+          download="HESA_Energy_Analysis_Report.pdf"
+          aria-disabled={!pdfDownloadUrl}
+          onClick={(event) => { if (!pdfDownloadUrl) event.preventDefault() }}
+          className={`rounded-xl px-5 py-3 font-bold text-white ${
+            pdfDownloadUrl ? 'bg-cyan-700 hover:bg-cyan-800' : 'pointer-events-none bg-slate-500'
+          }`}
+        >
+          Télécharger PDF
+        </a>
+        <a
+          href={htmlReportUrl || '#'}
+          download="HESA_Energy_Analysis_Report.html"
+          className="rounded-xl bg-sky-700 px-5 py-3 font-bold text-white hover:bg-sky-800"
+        >
+          Télécharger HTML
+        </a>
         <span className="text-sm font-semibold text-slate-200">
-          {pdfReportStatus || 'PDF disponible à /generated/rapport-heses.pdf après génération.'}
+          {pdfReportStatus || 'PDF disponible après génération.'}
         </span>
         {localPdfPath && (
           <span className="w-full text-center text-xs font-semibold text-slate-300">
@@ -801,22 +831,6 @@ function HesesPrintableReportPage() {
             Cliquez sur Ouvrir PDF dans Windows, puis utilisez Ctrl+P dans le lecteur PDF externe. Le lecteur PDF intégré peut bloquer l’impression.
           </div>
           <div className="mt-4 flex flex-wrap gap-3">
-            <a
-              href={pdfDownloadUrl || '#'}
-              download="rapport-heses.pdf"
-              className={`rounded-lg px-4 py-2 font-bold text-white ${
-                pdfDownloadUrl ? 'bg-cyan-700 hover:bg-cyan-800' : 'pointer-events-none bg-slate-500'
-              }`}
-            >
-              Télécharger PDF
-            </a>
-            <a
-              href={htmlReportUrl || '#'}
-              download="rapport-heses-imprimable.html"
-              className="rounded-lg bg-sky-700 px-4 py-2 font-bold text-white hover:bg-sky-800"
-            >
-              Télécharger HTML
-            </a>
           </div>
         </aside>
       )}
@@ -829,7 +843,373 @@ export default function HVACDashboardVisual() {
     return <HesesPrintableReportPage />
   }
 
-  return <HvacDashboardApp />
+  return <HesaMultiSystemApp />
+}
+
+function HesaMultiSystemApp() {
+  const initialSettings = getInitialProjectSettings()
+  const initialLanguage = initialSettings.language || 'fr'
+  const [systemControlsLanguage, setSystemControlsLanguage] = useState(initialLanguage)
+  const [systems, setSystems] = useState(() => loadMultiSystemState(initialSettings, initialLanguage))
+  const [activeSystemId, setActiveSystemId] = useState(() => systems[0]?.id || 'system-1')
+  const [showBuildingSummary, setShowBuildingSummary] = useState(false)
+  const [analysisOpen, setAnalysisOpen] = useState(false)
+  const [isRenamingSystem, setIsRenamingSystem] = useState(false)
+  const [renameDraft, setRenameDraft] = useState('')
+
+  const activeSystem = systems.find((system) => system.id === activeSystemId) || systems[0]
+  const systemControlLabels = {
+    addSystem: systemControlsLanguage === 'en' ? '+ Add System' : '+ Ajouter un système',
+    rename: systemControlsLanguage === 'en' ? 'Rename' : 'Renommer',
+    duplicate: systemControlsLanguage === 'en' ? 'Duplicate' : 'Dupliquer',
+    delete: systemControlsLanguage === 'en' ? 'Delete' : 'Supprimer',
+    buildingSummary: systemControlsLanguage === 'en' ? 'Building Summary' : 'Bilan du bâtiment',
+    defaultSystemName: (index) => (systemControlsLanguage === 'en' ? `AHU-${index}` : `UTA-${index}`),
+    renamePrompt: systemControlsLanguage === 'en' ? 'AHU name' : 'Nom de l’UTA',
+  }
+
+  useEffect(() => {
+    if (!activeSystem) return
+    try {
+      window.localStorage.setItem(HESES_MULTI_SYSTEM_STORAGE_KEY, JSON.stringify(persistableSystems(systems)))
+    } catch (error) {
+      if (isQuotaExceededStorageError(error)) {
+        try {
+          // Emergency fallback keeps project settings usable while dropping heavy computed payloads.
+          window.localStorage.setItem(HESES_MULTI_SYSTEM_STORAGE_KEY, JSON.stringify(minimalPersistableSystems(systems)))
+        } catch {
+          // Ignore final failure to avoid blocking app rendering.
+        }
+      }
+    }
+  }, [systems, activeSystem])
+
+  const updateActiveSystem = (settings) => {
+    setSystems((current) => {
+      let changed = false
+      const next = current.map((system) => {
+      if (system.id !== activeSystem.id) return system
+      if (JSON.stringify(system.settings) === JSON.stringify(settings)) return system
+      changed = true
+      return { ...system, settings }
+      })
+      return changed ? next : current
+    })
+  }
+
+  const addSystem = () => {
+    if (systems.length >= 6) return
+    const id = `system-${Date.now()}`
+    const next = {
+      id,
+      name: systemControlLabels.defaultSystemName(systems.length + 1),
+      settings: getInitialProjectSettings(),
+    }
+    setSystems((current) => [...current, next])
+    setActiveSystemId(id)
+    setShowBuildingSummary(false)
+  }
+
+  const duplicateSystem = () => {
+    if (systems.length >= 6 || !activeSystem) return
+    const id = `system-${Date.now()}`
+    const next = {
+      id,
+      name: systemControlsLanguage === 'en' ? `${activeSystem.name} copy` : `${activeSystem.name} copie`,
+      settings: activeSystem.settings,
+    }
+    setSystems((current) => [...current, next])
+    setActiveSystemId(id)
+    setShowBuildingSummary(false)
+  }
+
+  const deleteSystem = () => {
+    if (systems.length <= 1 || !activeSystem) return
+    const remaining = systems.filter((system) => system.id !== activeSystem.id)
+    setSystems(remaining)
+    setActiveSystemId(remaining[0].id)
+    setShowBuildingSummary(false)
+  }
+
+  const startRenameSystem = () => {
+    if (!activeSystem) return
+    setRenameDraft(activeSystem.name)
+    setIsRenamingSystem(true)
+  }
+
+  const commitRenameSystem = () => {
+    if (!activeSystem) return
+    const nextName = renameDraft.trim()
+    if (!nextName) {
+      setIsRenamingSystem(false)
+      return
+    }
+    setSystems((current) => current.map((system) => system.id === activeSystem.id ? { ...system, name: nextName } : system))
+    setIsRenamingSystem(false)
+  }
+
+  const cancelRenameSystem = () => {
+    setIsRenamingSystem(false)
+    setRenameDraft(activeSystem?.name || '')
+  }
+
+  if (showBuildingSummary) {
+    return (
+      <BuildingSummary
+        systems={systems}
+        language={systemControlsLanguage}
+        onSelectSystem={(id) => { setActiveSystemId(id); setShowBuildingSummary(false) }}
+      />
+    )
+  }
+
+  if (!activeSystem) return null
+
+  if (!analysisOpen) {
+    return (
+      <HesesLandingPage
+        language={systemControlsLanguage}
+        setLanguage={setSystemControlsLanguage}
+        onStartAnalysis={() => setAnalysisOpen(true)}
+      />
+    )
+  }
+
+  return (
+    <>
+      <nav className="sticky top-0 z-50 flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white/95 px-6 py-3 shadow-sm backdrop-blur">
+        {systems.map((system) => (
+          <button
+            key={system.id}
+            type="button"
+            onClick={() => setActiveSystemId(system.id)}
+            className={`rounded-xl px-4 py-2 text-sm font-bold ${system.id === activeSystem.id ? 'bg-cyan-600 text-white' : 'bg-slate-100 text-slate-700'}`}
+          >
+            {system.name}
+          </button>
+        ))}
+        <button type="button" onClick={addSystem} disabled={systems.length >= 6} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">{systemControlLabels.addSystem}</button>
+        {isRenamingSystem ? (
+          <>
+            <input
+              value={renameDraft}
+              onChange={(event) => setRenameDraft(event.target.value)}
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm focus:border-cyan-500 focus:outline-none"
+              aria-label={systemControlLabels.renamePrompt}
+              autoFocus
+            />
+            <button type="button" onClick={commitRenameSystem} className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-bold text-white">OK</button>
+            <button type="button" onClick={cancelRenameSystem} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">{systemControlsLanguage === 'en' ? 'Cancel' : 'Annuler'}</button>
+          </>
+        ) : (
+          <button type="button" onClick={startRenameSystem} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">{systemControlLabels.rename}</button>
+        )}
+        <button type="button" onClick={duplicateSystem} disabled={systems.length >= 6} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">{systemControlLabels.duplicate}</button>
+        <button type="button" onClick={deleteSystem} disabled={systems.length <= 1} className="rounded-xl border border-red-200 px-4 py-2 text-sm font-bold text-red-700 disabled:opacity-40">{systemControlLabels.delete}</button>
+        <button type="button" onClick={() => setShowBuildingSummary(true)} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white">{systemControlLabels.buildingSummary}</button>
+      </nav>
+      <HvacDashboardApp
+        key={activeSystem.id}
+        showLandingPage={false}
+        onStartAnalysis={() => setAnalysisOpen(true)}
+        onLanguageChange={setSystemControlsLanguage}
+        systemSettings={activeSystem.settings}
+        onSettingsChange={updateActiveSystem}
+        onAnnualResults={(results) => {
+          setSystems((current) => {
+            const next = current.map((system) => system.id === activeSystem.id && JSON.stringify(system.results) !== JSON.stringify(results) ? { ...system, results } : system)
+            return next.some((system, index) => system !== current[index]) ? next : current
+          })
+        }}
+        onReportSnapshot={(snapshot) => {
+          setSystems((current) => {
+            const active = current.find((system) => system.id === activeSystem.id)
+            if (snapshotSignature(active?.reportSnapshot) === snapshotSignature(snapshot)) return current
+            return current.map((system) => system.id === activeSystem.id ? { ...system, reportSnapshot: snapshot } : system)
+          })
+        }}
+        projectSystems={systems}
+        activeSystemName={activeSystem.name}
+        activeSystemId={activeSystem.id}
+      />
+    </>
+  )
+}
+
+function persistableSystems(systems = []) {
+  return (systems || []).map((system) => ({
+    id: system.id,
+    name: system.name,
+    settings: system.settings,
+    results: system.results,
+  }))
+}
+
+function minimalPersistableSystems(systems = []) {
+  return (systems || []).map((system) => ({
+    id: system.id,
+    name: system.name,
+    settings: system.settings,
+  }))
+}
+
+function snapshotSignature(snapshot) {
+  if (!snapshot) return ''
+  const settings = snapshot.settings || {}
+  const metrics = snapshot.metrics || {}
+  return [
+    snapshot.id,
+    snapshot.name,
+    settings.calculationMethod,
+    settings.scheduleMode,
+    settings.hourlyWeatherFileName,
+    metrics.annualHumidificationHours,
+    metrics.correctedHumidificationLoadRaw,
+    snapshot.annualComparison?.savingsKwh,
+  ].map((value) => String(value ?? '')).join('|')
+}
+
+function isQuotaExceededStorageError(error) {
+  if (!error) return false
+  return error.name === 'QuotaExceededError' || String(error.message || '').toLowerCase().includes('quota')
+}
+
+function compactWeatherBins(records = [], targetCount = 96) {
+  if (records.length <= targetCount) return records
+  const chunkSize = Math.ceil(records.length / targetCount)
+  const compacted = []
+  for (let start = 0; start < records.length; start += chunkSize) {
+    const chunk = records.slice(start, start + chunkSize)
+    const hours = chunk.reduce((total, record) => total + Number(record.hours || 1), 0)
+    compacted.push({
+      tempC: chunk.reduce((total, record) => total + Number(record.tempC || 0), 0) / chunk.length,
+      rh: chunk.reduce((total, record) => total + Number(record.rh || 0), 0) / chunk.length,
+      hours,
+    })
+  }
+  return compacted
+}
+
+function aggregateFreeCoolingComparisonRows(humifogRows = [], steamRows = [], binSizeC = 5) {
+  const groups = new Map()
+  humifogRows.forEach((humifogRow, index) => {
+    const steamRow = steamRows[index] || {}
+    const key = Math.floor(Number(humifogRow.tempC || 0) / binSizeC) * binSizeC
+    const group = groups.get(key) || { weight: 0, humifog: [], steam: [] }
+    const weight = Math.max(0, Number(humifogRow.hours || 0))
+    group.weight += weight
+    group.humifog.push({ row: humifogRow, weight })
+    group.steam.push({ row: steamRow, weight })
+    groups.set(key, group)
+  })
+
+  const weighted = (entries, selector, weight) => {
+    if (!weight) return 0
+    return entries.reduce((total, entry) => total + Number(selector(entry.row) || 0) * entry.weight, 0) / weight
+  }
+  const stateAverage = (entries, selector, weight) => {
+    const source = entries.find((entry) => selector(entry.row))?.row
+    const state = source ? selector(source) : null
+    if (!state || !weight) return null
+    return Object.fromEntries(Object.keys(state).map((key) => [
+      key,
+      weighted(entries, (row) => selector(row)?.[key], weight),
+    ]))
+  }
+  const rowAverage = (entries, weight, tempC) => ({
+    tempC,
+    hours: weight,
+    outdoorAirPercent: weighted(entries, (row) => row.outdoorAirPercent, weight),
+    appliedOutdoorAirPercent: weighted(entries, (row) => row.appliedOutdoorAirPercent, weight),
+    mixed: stateAverage(entries, (row) => row.mixed, weight),
+    inletToHumifog: stateAverage(entries, (row) => row.inletToHumifog, weight),
+    afterHumifog: stateAverage(entries, (row) => row.afterHumifog, weight),
+  })
+
+  return [...groups.entries()].sort(([left], [right]) => left - right).map(([tempC, group]) => ({
+    humifogRow: rowAverage(group.humifog, group.weight, tempC),
+    steamRow: rowAverage(group.steam, group.weight, tempC),
+  }))
+}
+
+function loadMultiSystemState(initialSettings, language = 'fr') {
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(HESES_MULTI_SYSTEM_STORAGE_KEY) || 'null')
+      if (Array.isArray(saved) && saved.length > 0) {
+        return saved.slice(0, 6).map((system, index) => ({
+          id: system.id || `system-${index + 1}`,
+          name: system.name || (language === 'en' ? `AHU-${index + 1}` : `UTA-${index + 1}`),
+          settings: system.settings || initialSettings,
+          results: system.results,
+        }))
+      }
+    } catch {
+      // Fall back to the legacy single-system settings.
+    }
+  }
+  return [{ id: 'system-1', name: language === 'en' ? 'AHU-1' : 'UTA-1', settings: initialSettings }]
+}
+
+function BuildingSummary({ systems, onSelectSystem, language = 'fr' }) {
+  const technologyKeys = [...BASELINE_TECHNOLOGIES, 'humifogSelected']
+  const technologyLabels = {
+    electricSteam: language === 'en' ? 'Electric steam' : 'Vapeur électrique',
+    naturalGasSteam: language === 'en' ? 'Natural gas steam' : 'Vapeur gaz naturel',
+    atmosphericGas: language === 'en' ? 'Atmospheric gas' : 'Gaz atmosphérique',
+    humifogSelected: language === 'en' ? 'Humifog - Selected Solution' : 'Humifog - solution sélectionnée',
+  }
+  const humifogLabels = {
+    humifogElectric: language === 'en' ? 'Humifog + Electric Reheat' : 'Humifog + réchauffage électrique',
+    humifogHeatPump: language === 'en' ? 'Humifog + Air/Water Heat Pump' : 'Humifog + thermopompe Air/Eau',
+    humifogFreeCooling: 'Humifog + Free Cooling',
+  }
+  const resultForTechnology = (system, key) => {
+    const results = system.results || {}
+    return key === 'humifogSelected'
+      ? results[selectedHumifogTechnology(system.reportSnapshot || system)]
+      : results[key]
+  }
+  const buildingTotals = technologyKeys.reduce((totals, key) => {
+    totals[key] = systems.reduce((sum, system) => sum + Number(resultForTechnology(system, key)?.annualEnergyKWh || 0), 0)
+    return totals
+  }, {})
+
+  return (
+    <main className="min-h-screen bg-slate-100 p-6 text-slate-900">
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-3xl font-black">{language === 'en' ? 'Building Summary' : 'Bilan du bâtiment'}</h1>
+          <button type="button" onClick={() => onSelectSystem(systems[0].id)} className="rounded-xl bg-slate-900 px-4 py-2 font-bold text-white">{language === 'en' ? 'Back to AHU' : 'Retour aux UTA'}</button>
+        </div>
+        <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="text-sm font-bold text-slate-500">{language === 'en' ? 'HVAC systems' : 'Systèmes HVAC'}</div>
+          <div className="mt-2 text-4xl font-black">{systems.length} / 6</div>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          {systems.map((system) => (
+            <button key={system.id} type="button" onClick={() => onSelectSystem(system.id)} className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm hover:border-cyan-400">
+              <div className="text-xl font-black">{system.name}</div>
+              <div className="mt-2 text-sm text-slate-600">{system.settings?.scheduleMode === '24-7' ? (language === 'en' ? 'BIN / 24-7 hours' : 'Heures BIN / 24-7') : (language === 'en' ? 'Custom hours' : 'Heures personnalisées')}</div>
+              <div className="text-sm text-slate-600">{system.settings?.outsideAirCFM || 0} CFM</div>
+            </button>
+          ))}
+        </div>
+        <section className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-xl font-black">{language === 'en' ? 'Building energy comparison' : 'Comparaison énergétique du bâtiment'}</h2>
+          <table className="w-full min-w-[720px] text-sm">
+            <thead><tr className="border-b border-slate-200 text-left"><th className="p-3">{language === 'en' ? 'System' : 'Système'}</th><th className="p-3">{language === 'en' ? 'Selected Humifog' : 'Humifog sélectionné'}</th>{technologyKeys.map((key) => <th key={key} className="p-3 text-right">{technologyLabels[key]}</th>)}</tr></thead>
+            <tbody>
+              {systems.map((system) => (
+                <tr key={system.id} className="border-b border-slate-100"><td className="p-3 font-bold">{system.name}</td><td className="p-3">{humifogLabels[selectedHumifogTechnology(system.reportSnapshot || system)]}</td>{technologyKeys.map((key) => { const result = resultForTechnology(system, key); return <td key={key} className="p-3 text-right">{result ? `${Math.round(result.annualEnergyKWh).toLocaleString()} kWh` : (language === 'en' ? 'Pending' : 'En attente')}</td> })}</tr>
+              ))}
+              <tr className="bg-slate-50 font-black"><td className="p-3">{language === 'en' ? 'TOTAL BUILDING' : 'TOTAL BÂTIMENT'}</td><td className="p-3">-</td>{technologyKeys.map((key) => <td key={key} className="p-3 text-right">{buildingTotals[key].toLocaleString()} kWh</td>)}</tr>
+            </tbody>
+          </table>
+        </section>
+      </div>
+    </main>
+  )
 }
 
 function getInitialProjectProfile() {
@@ -1173,7 +1553,7 @@ const REPORT_FR_REPLACEMENTS = [
   ['Enthalpy: h = 1.006 x T + W x (2501 + 1.86 x T)', 'Enthalpie : h = 1.006 x T + W x (2501 + 1.86 x T)'],
   ['Wet bulb and dew point are calculated from psychrometric correlations.', 'Le bulbe humide et le point de rosée sont calculés avec des corrélations psychrométriques.'],
   ['Specific volume: v = Rda x Tdb,K x (1 + 1.6078W) / P', 'Volume spécifique : v = Rda x Tdb,K x (1 + 1.6078W) / P'],
-  ['This audit lists the HESES software inputs and calculated values used directly by this PDF report.', 'Cet audit liste les intrants du logiciel HESES et les valeurs calculées utilisées directement par ce rapport PDF.'],
+  ['This audit lists the HESA software inputs and calculated values used directly by this PDF report.', 'Cet audit liste les intrants du logiciel HESA et les valeurs calculées utilisées directement par ce rapport PDF.'],
   ['Project location', 'Emplacement du projet'],
   ['Report mode', 'Mode du rapport'],
   ['100% Outdoor Air', '100 % air extérieur'],
@@ -1213,13 +1593,13 @@ const REPORT_FR_REPLACEMENTS = [
   ['Reheat', 'Réchauffage'],
   ['Measured value used', 'Valeur mesurée utilisée'],
   ['Calculated value used', 'Valeur calculée utilisée'],
-  ['HESES Energy Engineering Platform', 'Plateforme HESES d’analyse énergétique HVAC'],
+  ['HESA Energy Engineering Platform', 'Plateforme HESA d’analyse énergétique HVAC'],
   ['Prepared for technical review, energy comparison and preliminary decision support', 'Préparé pour revue technique, comparaison énergétique et aide à la décision préliminaire'],
   ['Document status: Preliminary engineering report', 'Statut du document : rapport d’ingénierie préliminaire'],
-  ['Revision: HESES generated', 'Révision : générée par HESES'],
+  ['Revision: HESA generated', 'Révision : générée par HESA'],
   ['Units:', 'Unités :'],
   ['Engineering Use Notice', 'Avis d’utilisation en ingénierie'],
-  ['Results are generated from the displayed HESES inputs and are intended for preliminary HVAC comparison.', 'Les résultats sont générés à partir des données HESES affichées et servent à une comparaison HVAC préliminaire.'],
+  ['Results are generated from the displayed HESA inputs and are intended for preliminary HVAC comparison.', 'Les résultats sont générés à partir des données HESA affichées et servent à une comparaison HVAC préliminaire.'],
   ['Final equipment sizing, code compliance and stamped design remain by the engineer of record.', 'Le dimensionnement final des équipements, la conformité au code et les plans scellés demeurent sous la responsabilité de l’ingénieur responsable.'],
   ['Recommended annual cost basis', 'Base recommandée selon le coût annuel'],
   ['Modeled airflow', 'Débit d’air modélisé'],
@@ -1228,7 +1608,7 @@ const REPORT_FR_REPLACEMENTS = [
   ['100% OA comparison', 'Comparaison 100 % air extérieur'],
   ['Lowest Annual Cost', 'Coût annuel le plus bas'],
   ['Lowest Annual Cost Option', 'Option au coût annuel le plus bas'],
-  ['The comparison is based only on values available in the HESES project dataset.', 'La comparaison utilise seulement les valeurs disponibles dans les données du projet HESES.'],
+  ['The comparison is based only on values available in the HESA project dataset.', 'La comparaison utilise seulement les valeurs disponibles dans les données du projet HESA.'],
   ['Missing project-specific values are intentionally shown as project inputs or engineering assumptions rather than inferred values.', 'Les valeurs propres au projet qui sont manquantes sont indiquées comme intrants ou hypothèses d’ingénierie plutôt que d’être inventées.'],
   ['Steam + economizer', 'Vapeur + économiseur'],
   ['Electric Steam', 'Vapeur électrique'],
@@ -1267,7 +1647,7 @@ const REPORT_FR_REPLACEMENTS = [
   ['Prepared by', 'Préparé par'],
   ['Reviewed by', 'Révisé par'],
   ['Engineer of record', 'Ingénieur responsable'],
-  ['HESES - HVAC Energy and Humidification Analysis Platform', 'HESES - Plateforme d’analyse énergétique HVAC et humidification'],
+  ['HESA - Humidification Energy System Analysis', 'HESA - Analyse énergétique des systèmes d’humidification'],
   ['Project report', 'Rapport de projet'],
   ['Auto', 'Auto'],
 ]
@@ -1284,6 +1664,9 @@ function localizeReportHtml(html, language) {
   )
 
   const frenchFinalCleanup = [
+    ['Nonnm', 'Nom'],
+    ['Nonnn', 'Non'],
+    ['Nonntes', 'Notes'],
     ['Comparaison Free Cooling', 'Comparaison en mode refroidissement gratuit'],
     ['This report compares steam humidification with Humifog adiabatique humidification for an HVAC air handling unit using the room condition as the design target.', 'Ce rapport compare l’humidification à vapeur avec l’humidification adiabatique Humifog pour une unité de traitement d’air, en utilisant les conditions de la pièce comme cible de conception.'],
     ['This report compares steam humidification with Humifog adiabatic humidification for an HVAC air handling unit using the room condition as the design target.', 'Ce rapport compare l’humidification à vapeur avec l’humidification adiabatique Humifog pour une unité de traitement d’air, en utilisant les conditions de la pièce comme cible de conception.'],
@@ -1496,7 +1879,7 @@ function stringToUtf16BeHex(text) {
   return hex
 }
 
-function createPdfBlobFromReportHtml(reportHtml, title = 'HESES Report') {
+function createPdfBlobFromReportHtml(reportHtml, title = 'HESA Report') {
   const encoder = new TextEncoder()
   const sourceLines = collectReportPdfLines(reportHtml)
   const pages = []
@@ -1537,7 +1920,7 @@ function createPdfBlobFromReportHtml(reportHtml, title = 'HESES Report') {
   pages.forEach((pageLines, pageIndex) => {
     const content = [
       '0.2 w',
-      'BT /F2 8 Tf 54 28 Td <' + stringToUtf16BeHex(`HESES - ${pageIndex + 1}/${pages.length}`) + '> Tj ET',
+      'BT /F2 8 Tf 54 28 Td <' + stringToUtf16BeHex(`HESA - ${pageIndex + 1}/${pages.length}`) + '> Tj ET',
       ...pageLines.map((line) => {
         const font = line.bold ? 'F2' : 'F1'
         return `BT /${font} ${line.size} Tf 54 ${line.y.toFixed(1)} Td <${stringToUtf16BeHex(line.text)}> Tj ET`
@@ -1783,7 +2166,7 @@ const translations = {
     climateDescription: 'Sélection ASHRAE des conditions climatiques',
     hvacRegions: 'Régions HVAC',
     heatRecovery: 'Systèmes de récupération de chaleur',
-    heatRecoveryDescription: 'Sélection d’un seul système de récupération énergétique HVAC',
+    heatRecoveryDescription: 'Sélection d\'un système de récupération d\'énergie CVAC',
     combinedRecovery: 'Une seule récupération',
     hvacParameters: 'Paramètres HVAC',
     reheatSystem: 'Mode préchauffage / chauffage',
@@ -1792,7 +2175,9 @@ const translations = {
     naturalGasBoiler: 'Bouilloire vapeur gaz naturel',
     roomTemperature: 'Température pièce',
     relativeHumidity: 'Humidité relative',
-    supplyAirTemperature: 'Température air d\'alimentation',
+    supplyAirTemperature: 'Température d\'air d\'alimentation',
+    beforeHumifogTemperature: 'Température avant Humifog',
+    afterHumifogTemperature: 'Température après Humifog',
     outsideAirFlow: 'Débit air extérieur',
     heatPumpCOP: 'COP thermopompe',
     thermalWheel: 'Roue thermique',
@@ -1843,8 +2228,8 @@ const translations = {
     designTemperature: 'Température de conception',
     binTemperature: 'Température BIN',
     annualHours: 'Heures annuelles',
-    correctedRecoveryLoad: 'Charge corrigée récupération',
-    adiabaticLoad: 'Charge adiabatique',
+    correctedRecoveryLoad: 'Énergie vapeur après récupération',
+    adiabaticLoad: 'Énergie électrique adiabatique',
     annualHeatingHours: 'Heures chauffage annuel',
     dominantTemperature: 'Température dominante',
     energyReduction: 'Réduction énergétique',
@@ -1853,6 +2238,9 @@ const translations = {
     summer: 'été',
     summerHumidity: 'Humidité été',
     efficiency: 'Efficacité',
+    sensibleEfficiency: 'Efficacité sensible',
+    latentEfficiency: 'Efficacité latente',
+    designRecoveryEfficiency: 'Efficacité de récupération de conception',
     systemTotal: 'Total système',
     airBeforeReheat: 'Air avant réchauffe',
     reportNotFound: 'Rapport introuvable',
@@ -1920,11 +2308,11 @@ const translations = {
     weatherSource: 'Source météo',
     customUploadedWeatherFile: 'Fichier météo téléchargé personnalisé',
     builtInWeatherFile: 'Fichier météo intégré',
-    noBuiltInWeatherAvailable: 'Le fichier météo horaire intégré pour cette ville est introuvable. HESES continue avec la méthode des heures BIN.',
-    builtInWeatherLoadFailed: 'Le fichier météo horaire intégré pour cette ville est introuvable. HESES continue avec la méthode des heures BIN.',
+    noBuiltInWeatherAvailable: 'Le fichier météo horaire intégré pour cette ville est introuvable. HESA continue avec la méthode des heures BIN.',
+    builtInWeatherLoadFailed: 'Le fichier météo horaire intégré pour cette ville est introuvable. HESA continue avec la méthode des heures BIN.',
     hourlyWeatherFileLabel: 'Fichier météo horaire',
     loadedFile: 'Fichier chargé',
-    scheduleNote: 'HESES utilise les heures BIN annuelles. En mode BIN complet, les heures BIN originales sont utilisées. En mode horaire personnalisé, les heures BIN sont ajustées selon l horaire sélectionné. Le filtrage exact heure par heure nécessite un fichier météo horaire 8760.',
+    scheduleNote: 'HESA utilise les heures BIN annuelles. En mode BIN complet, les heures BIN originales sont utilisées. En mode horaire personnalisé, les heures BIN sont ajustées selon l horaire sélectionné. Le filtrage exact heure par heure nécessite un fichier météo horaire 8760.',
     mon: 'Lun',
     tue: 'Mar',
     wed: 'Mer',
@@ -1944,8 +2332,8 @@ const translations = {
     schFan: 'Fan',
   },
   en: {
-    title: 'HVAC Humidification Analyzer',
-    subtitle: 'Realistic ASHRAE calculations - atmospheric electric steam',
+    title: 'HESA',
+    subtitle: 'Humidification Energy System Analysis',
     generatePDF: 'Generate PDF Report',
     climateConditions: 'Regional Climate Conditions',
     climateDescription: 'ASHRAE climate conditions selection',
@@ -1961,6 +2349,8 @@ const translations = {
     roomTemperature: 'Room Temperature',
     relativeHumidity: 'Relative Humidity',
     supplyAirTemperature: 'Supply Air Temperature',
+    beforeHumifogTemperature: 'Temperature Before Humifog',
+    afterHumifogTemperature: 'Temperature After Humifog',
     outsideAirFlow: 'Outside Air Flow',
     heatPumpCOP: 'Heat Pump COP',
     thermalWheel: 'Thermal Wheel',
@@ -2011,8 +2401,8 @@ const translations = {
     designTemperature: 'Design Temperature',
     binTemperature: 'BIN Temperature',
     annualHours: 'Annual Hours',
-    correctedRecoveryLoad: 'Corrected Recovery Load',
-    adiabaticLoad: 'Adiabatic Load',
+    correctedRecoveryLoad: 'Steam Energy After Recovery',
+    adiabaticLoad: 'Adiabatic Electric Energy',
     annualHeatingHours: 'Annual Heating Hours',
     dominantTemperature: 'Dominant Temperature',
     energyReduction: 'Energy Reduction',
@@ -2021,6 +2411,9 @@ const translations = {
     summer: 'summer',
     summerHumidity: 'Summer humidity',
     efficiency: 'Efficiency',
+    sensibleEfficiency: 'Sensible efficiency',
+    latentEfficiency: 'Latent efficiency',
+    designRecoveryEfficiency: 'Design recovery efficiency',
     systemTotal: 'System total',
     airBeforeReheat: 'Air before reheat',
     reportNotFound: 'Report not found',
@@ -2074,7 +2467,7 @@ const translations = {
     annualOperatingHours: 'Annual operating hours',
     scheduleFactor: 'Operating factor',
     actualAnnualPercentage: 'Actual annual percentage',
-    scheduleNote: 'HESES uses annual BIN hours. In full BIN mode, original BIN hours are used. In custom schedule mode, BIN hours are adjusted to the selected schedule. Exact hour-by-hour filtering requires an 8760 hourly weather file.',
+    scheduleNote: 'HESA uses annual BIN hours. In full BIN mode, original BIN hours are used. In custom schedule mode, BIN hours are adjusted to the selected schedule. Exact hour-by-hour filtering requires an 8760 hourly weather file.',
     mon: 'Mon',
     tue: 'Tue',
     wed: 'Wed',
@@ -2093,8 +2486,8 @@ const translations = {
     weatherSource: 'Weather source',
     customUploadedWeatherFile: 'Custom uploaded weather file',
     builtInWeatherFile: 'Built-in weather file',
-    noBuiltInWeatherAvailable: 'Built-in hourly weather file for this city was not found. HESES is continuing with the BIN hours method.',
-    builtInWeatherLoadFailed: 'Built-in hourly weather file for this city was not found. HESES is continuing with the BIN hours method.',
+    noBuiltInWeatherAvailable: 'Built-in hourly weather file for this city was not found. HESA is continuing with the BIN hours method.',
+    builtInWeatherLoadFailed: 'Built-in hourly weather file for this city was not found. HESA is continuing with the BIN hours method.',
     hourlyWeatherFileLabel: 'Hourly weather file',
     loadedFile: 'Loaded file',
     schOA: 'Volet OA',
@@ -2111,20 +2504,20 @@ const translations = {
 
 const heatRecoverySystems = {
   fr: [
-    { nom: 'Aucun', efficacite: 0, type: 'Sans récupération de chaleur', couleur: 'slate', noRecovery: true },
-    { nom: 'Roue thermique', efficacite: 78, type: 'Sensible + latent', couleur: 'cyan' },
-    { nom: 'Échangeur à débit croisé', efficacite: 62, type: 'Sensible seulement', couleur: 'sky' },
-    { nom: 'Échangeur à cassette sensible', efficacite: 88, type: 'Cassette modulaire sensible', couleur: 'indigo' },
-    { nom: 'Échangeur à cassette enthalpique', efficacite: 92, type: 'Cassette sensible + latent', couleur: 'violet' },
-    { nom: 'Boucle glycolée', efficacite: 48, type: 'Boucle run-around', couleur: 'slate' },
+    { nom: 'Aucun', efficacite: 0, efficaciteSensible: 0, efficaciteLatente: 0, type: 'Aucune récupération de chaleur', couleur: 'slate', noRecovery: true, latentCapable: false },
+    { nom: 'Roue thermique', efficacite: 78, efficaciteSensible: 78, efficaciteLatente: 70, type: 'Efficacité de récupération de conception', couleur: 'cyan', latentCapable: true },
+    { nom: 'Échangeur à débit croisé', efficacite: 62, efficaciteSensible: 62, efficaciteLatente: 0, type: 'Efficacité de récupération de conception', couleur: 'sky', latentCapable: false },
+    { nom: 'Échangeur à cassettes sensible', efficacite: 88, efficaciteSensible: 88, efficaciteLatente: 0, type: 'Efficacité de récupération de conception', couleur: 'indigo', latentCapable: false },
+    { nom: 'Échangeur à cassettes enthalpique', efficacite: 92, efficaciteSensible: 92, efficaciteLatente: 75, type: 'Efficacité de récupération de conception', couleur: 'violet', latentCapable: true },
+    { nom: 'Boucle glycolée', efficacite: 48, efficaciteSensible: 48, efficaciteLatente: 0, type: 'Efficacité de récupération de conception', couleur: 'slate', latentCapable: false },
   ],
   en: [
-    { nom: 'None', efficacite: 0, type: 'No heat recovery', couleur: 'slate', noRecovery: true },
-    { nom: 'Thermal Wheel', efficacite: 78, type: 'Sensible + latent', couleur: 'cyan' },
-    { nom: 'Cross-flow Exchanger', efficacite: 62, type: 'Sensible only', couleur: 'sky' },
-    { nom: 'Sensible Cassette Exchanger', efficacite: 88, type: 'Modular sensible cassette', couleur: 'indigo' },
-    { nom: 'Enthalpy Cassette Exchanger', efficacite: 92, type: 'Sensible + latent cassette', couleur: 'violet' },
-    { nom: 'Glycol Loop', efficacite: 48, type: 'Run-around loop', couleur: 'slate' },
+    { nom: 'None', efficacite: 0, efficaciteSensible: 0, efficaciteLatente: 0, type: 'No heat recovery', couleur: 'slate', noRecovery: true, latentCapable: false },
+    { nom: 'Thermal Wheel', efficacite: 78, efficaciteSensible: 78, efficaciteLatente: 70, type: 'Design recovery efficiency', couleur: 'cyan', latentCapable: true },
+    { nom: 'Cross-flow Exchanger', efficacite: 62, efficaciteSensible: 62, efficaciteLatente: 0, type: 'Design recovery efficiency', couleur: 'sky', latentCapable: false },
+    { nom: 'Sensible Cassette Exchanger', efficacite: 88, efficaciteSensible: 88, efficaciteLatente: 0, type: 'Design recovery efficiency', couleur: 'indigo', latentCapable: false },
+    { nom: 'Enthalpy Cassette Exchanger', efficacite: 92, efficaciteSensible: 92, efficaciteLatente: 75, type: 'Design recovery efficiency', couleur: 'violet', latentCapable: true },
+    { nom: 'Glycol Loop', efficacite: 48, efficaciteSensible: 48, efficaciteLatente: 0, type: 'Design recovery efficiency', couleur: 'slate', latentCapable: false },
   ]
 }
 
@@ -2158,6 +2551,14 @@ function clampValue(value, min, max) {
   return Math.min(Math.max(value, min), max)
 }
 
+function joinLocalizedList(items, language) {
+  const values = items.filter(Boolean)
+  if (values.length <= 1) return values[0] || ''
+  const conjunction = language === 'fr' ? ' et ' : ' and '
+  if (values.length === 2) return values.join(conjunction)
+  return `${values.slice(0, -1).join(', ')}${conjunction}${values.at(-1)}`
+}
+
 function normalizeLabel(value) {
   return String(value || '')
     .normalize('NFD')
@@ -2168,6 +2569,31 @@ function normalizeLabel(value) {
 function isThermalWheelRecovery(recovery) {
   const label = normalizeLabel(`${recovery?.nom || ''} ${recovery?.type || ''}`)
   return label.includes('roue thermique') || label.includes('thermal wheel')
+}
+
+function isEnthalpyCassetteRecovery(recovery) {
+  const label = normalizeLabel(`${recovery?.nom || ''} ${recovery?.type || ''}`)
+  return label.includes('cassette') && (label.includes('enthalpique') || label.includes('enthalpy'))
+}
+
+function supportsLatentRecovery(recovery) {
+  if (!recovery) return false
+  if (recovery.noRecovery) return false
+  if (typeof recovery.latentCapable === 'boolean') return recovery.latentCapable
+  return isThermalWheelRecovery(recovery) || isEnthalpyCassetteRecovery(recovery)
+}
+
+function defaultSensibleRecoveryEfficiency(recovery) {
+  if (!recovery) return 0
+  if (Number.isFinite(Number(recovery.efficaciteSensible))) return Number(recovery.efficaciteSensible)
+  if (Number.isFinite(Number(recovery.efficacite))) return Number(recovery.efficacite)
+  return 0
+}
+
+function defaultLatentRecoveryEfficiency(recovery) {
+  if (!supportsLatentRecovery(recovery)) return 0
+  if (Number.isFinite(Number(recovery.efficaciteLatente))) return Number(recovery.efficaciteLatente)
+  return isEnthalpyCassetteRecovery(recovery) ? 75 : 70
 }
 
 function heatRecoveryImageFor(recovery) {
@@ -2181,21 +2607,51 @@ function heatRecoveryImageFor(recovery) {
   return systemImages.basic
 }
 
+function localizeRecoveryDisplayName(recovery, language) {
+  const label = normalizeLabel(`${recovery?.nom || ''} ${recovery?.type || ''}`)
+  if (label.includes('none') || label.includes('aucun')) {
+    return language === 'fr' ? 'Aucun' : 'None'
+  }
+  if (label.includes('thermal wheel') || label.includes('roue thermique')) {
+    return language === 'fr' ? 'Roue thermique' : 'Thermal Wheel'
+  }
+  if (label.includes('cross') || label.includes('crois')) {
+    return language === 'fr' ? 'Échangeur à débit croisé' : 'Cross-flow Exchanger'
+  }
+  if (label.includes('cassette') && (label.includes('enthalpique') || label.includes('enthalpy'))) {
+    return language === 'fr' ? 'Échangeur à cassettes enthalpique' : 'Enthalpy Cassette Exchanger'
+  }
+  if (label.includes('cassette')) {
+    return language === 'fr' ? 'Échangeur à cassettes sensible' : 'Sensible Cassette Exchanger'
+  }
+  if (label.includes('glycol') || label.includes('boucle')) {
+    return language === 'fr' ? 'Boucle glycolée' : 'Glycol Loop'
+  }
+  return recovery?.nom || '-'
+}
+
 function calculateRecoveryChartState(inletState, returnAirState, {
-  recoveryGroup,
-  recoveryEfficiency,
+  sensibleRecoveryEfficiency,
+  latentRecoveryEfficiency,
+  latentRecoverySupported,
   isNoRecovery,
 }) {
-  if (isNoRecovery || recoveryEfficiency <= 0) return inletState
+  if (isNoRecovery || sensibleRecoveryEfficiency <= 0) return inletState
 
-  const sensibleEffectiveness = clampValue(recoveryEfficiency / 100, 0, 0.95)
-  const latentEffectiveness = recoveryGroup === 'WHEEL'
-    ? Math.min(sensibleEffectiveness * 0.82, 0.88)
+  const sensibleEffectiveness = clampValue(sensibleRecoveryEfficiency / 100, 0, 0.95)
+  const latentEffectiveness = latentRecoverySupported
+    ? clampValue(latentRecoveryEfficiency / 100, 0, 0.95)
     : 0
+  const recoveredHumidityRatio = inletState.w + latentEffectiveness * (returnAirState.w - inletState.w)
+  const boundedHumidityRatio = clampValue(
+    recoveredHumidityRatio,
+    Math.max(0, Math.min(inletState.w, returnAirState.w)),
+    Math.max(inletState.w, returnAirState.w)
+  )
 
   return stateFromDbW({
     dryBulbC: inletState.db + sensibleEffectiveness * (returnAirState.db - inletState.db),
-    humidityRatio: inletState.w + latentEffectiveness * (returnAirState.w - inletState.w),
+    humidityRatio: boundedHumidityRatio,
   })
 }
 
@@ -2284,10 +2740,223 @@ function solvePreHumifogHeatingState(inletState, targetAfterHumifogDb, effective
   return stateAt(highDb)
 }
 
-function HvacDashboardApp() {
+function HesesLandingPage({ language, setLanguage, onStartAnalysis }) {
+  const isFrench = language === 'fr'
+  const copy = isFrench ? {
+    heroKicker: 'Plateforme d\'analyse HVAC et humidification',
+    heroTitle: 'Analyse énergétique avancée de l\'humidification CVAC',
+    heroLead: 'Comparez différentes technologies d\'humidification et stratégies de traitement d\'air à partir des conditions réelles de votre projet.',
+    heroBody: 'HESA analyse les charges d\'humidification, la récupération de chaleur, le Free Cooling, les besoins de chauffage et de réchauffage, ainsi que la consommation énergétique annuelle afin de comparer objectivement différentes solutions.',
+    slogan: 'Analysez. Comparez. Optimisez.',
+    cta: 'DÉMARRER UNE ANALYSE',
+    capabilitiesTitle: 'Capacités principales',
+    engineeringTitle: 'Comparaison énergétique basée sur l\'ingénierie',
+    engineeringBody: 'HESA évalue les technologies d\'humidification selon la configuration réelle du système CVAC plutôt que de présumer qu\'une technologie est toujours plus efficace.',
+    engineeringDetail: 'L\'analyse tient compte du débit d\'air, du climat extérieur, des conditions intérieures, de la récupération de chaleur, des horaires d\'exploitation et de la technologie de réchauffage.',
+    disclaimer: 'Les résultats produits par HESA sont fournis à des fins d\'analyse préliminaire et de comparaison énergétique. Les résultats dépendent des données saisies, des hypothèses de calcul et des conditions d\'exploitation sélectionnées. Ils ne remplacent pas la conception détaillée, la sélection d\'équipement ni la validation d\'un ingénieur qualifié.',
+    languageLabel: 'Langue',
+    detailsLabel: 'HESA | Version 1.1 | Enersol inc. | Carel Group | hesahvac.com',
+    workflowTitle: 'Workflow d\'analyse',
+    workflowBody: 'Lancez le tableau de bord existant pour comparer les charges, les coûts, les gains énergétiques et le rapport PDF sans modifier les calculs de base.',
+    featureCards: [
+      ['100 % air extérieur', 'Comparaison des scénarios 100 % OA'],
+      ['Free Cooling', 'Analyse du mode Free Cooling'],
+      ['Humidification vapeur', 'Référence de consommation vapeur'],
+      ['Humidification adiabatique haute pression', 'Performance Humifog'],
+      ['Récupération de chaleur', 'Effet de la récupération thermique'],
+      ['Réchauffage thermopompe', 'Impact du réchauffage HP'],
+      ['Analyse météo BIN', 'Base horaire climatique BIN'],
+      ['Énergie et coût annuels', 'Résultats annuels consolidés'],
+      ['Réduction des GES', 'Comparaison des émissions'],
+      ['Rapport PDF d\'ingénierie', 'Sortie de rapport professionnelle'],
+    ],
+  } : {
+    heroKicker: 'HVAC humidification analysis platform',
+    heroTitle: 'Advanced HVAC Humidification Energy Analysis',
+    heroLead: 'Compare humidification technologies and air-handling strategies using the actual operating conditions of your project.',
+    heroBody: 'HESA evaluates humidification loads, heat recovery, free cooling, heating and reheat requirements, and annual energy consumption to provide an objective comparison of different HVAC solutions.',
+    slogan: 'Analyze. Compare. Optimize.',
+    cta: 'START ANALYSIS',
+    capabilitiesTitle: 'Main capabilities',
+    engineeringTitle: 'Engineering-Based Energy Comparison',
+    engineeringBody: 'HESA evaluates humidification technologies based on the actual HVAC system configuration rather than assuming that one technology is always more efficient.',
+    engineeringDetail: 'The analysis considers airflow, outdoor climate, indoor conditions, heat recovery, operating schedules and reheat technology.',
+    disclaimer: 'HESA results are provided for preliminary engineering analysis and energy comparison purposes. Results depend on user inputs, calculation assumptions and selected operating conditions. They do not replace detailed engineering design, equipment selection or validation by a qualified engineer.',
+    languageLabel: 'Language',
+    detailsLabel: 'HESA | Version 1.1 | Enersol inc. | Carel Group | hesahvac.com',
+    workflowTitle: 'Analysis workflow',
+    workflowBody: 'Open the existing dashboard to compare loads, costs, energy savings and the PDF report without changing the core calculations.',
+    featureCards: [
+      ['100% Outdoor Air', 'Baseline outdoor-air comparison'],
+      ['Free Cooling', 'Free Cooling analysis mode'],
+      ['Steam Humidification', 'Steam energy reference'],
+      ['High-Pressure Adiabatic Humidification', 'Humifog performance'],
+      ['Heat Recovery', 'Thermal recovery impact'],
+      ['Heat Pump Reheat', 'HP reheat impact'],
+      ['BIN Weather Analysis', 'Hourly climate BIN foundation'],
+      ['Annual Energy & Cost', 'Annual energy and cost results'],
+      ['GHG Reduction', 'Emissions comparison'],
+      ['Engineering PDF Report', 'Professional report output'],
+    ],
+  }
+
+  return (
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(20,184,166,0.22),_transparent_34%),radial-gradient(circle_at_top_right,_rgba(14,165,233,0.16),_transparent_28%),linear-gradient(180deg,#eef5fb_0%,#dbe5ef_100%)] text-slate-900">
+      <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-6 py-6 lg:px-10">
+        <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="logo-card" role="img" aria-label="HESA Humidification Energy System Analysis">
+              <div className="logo-title">HESA</div>
+              <div className="logo-accent" aria-hidden="true" />
+              <div className="logo-subtitle">{isFrench ? 'Analyse énergétique des systèmes d’humidification' : 'Humidification Energy System Analysis'}</div>
+            </div>
+            <div>
+              <div className="text-xs font-black uppercase tracking-[0.4em] text-cyan-700">HESA</div>
+              <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">
+                {isFrench ? 'Analyse énergétique des systèmes d’humidification' : 'Humidification Energy System Analysis'}
+              </h1>
+              <div className="mt-3 flex flex-wrap gap-3 text-sm font-semibold text-slate-600">
+                <span className="rounded-full border border-slate-300 bg-white px-3 py-1 shadow-sm">Version 1.1</span>
+                <span className="rounded-full border border-slate-300 bg-white px-3 py-1 shadow-sm">Enersol inc. | Carel Group</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-300 bg-white/90 p-2 shadow-sm backdrop-blur">
+            <span className="px-2 text-xs font-black uppercase tracking-[0.28em] text-slate-500">{copy.languageLabel}</span>
+            <button
+              type="button"
+              onClick={() => setLanguage('fr')}
+              className={`rounded-xl px-4 py-2 font-semibold transition ${isFrench ? 'bg-cyan-600 text-white shadow' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+            >
+              Français
+            </button>
+            <button
+              type="button"
+              onClick={() => setLanguage('en')}
+              className={`rounded-xl px-4 py-2 font-semibold transition ${!isFrench ? 'bg-cyan-600 text-white shadow' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+            >
+              English
+            </button>
+          </div>
+        </header>
+
+        <section className="grid flex-1 gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+          <div className="rounded-[30px] border border-slate-200 bg-white p-8 shadow-[0_28px_70px_rgba(15,23,42,0.14)] lg:p-10">
+            <div className="inline-flex rounded-full border border-cyan-200 bg-cyan-50 px-4 py-2 text-xs font-black uppercase tracking-[0.3em] text-cyan-700">
+              {copy.heroKicker}
+            </div>
+            <h2 className="mt-6 max-w-3xl text-4xl font-black tracking-tight text-slate-900 sm:text-5xl lg:text-6xl">
+              {copy.heroTitle}
+            </h2>
+            <p className="mt-6 max-w-3xl text-lg leading-8 text-slate-600 sm:text-xl">
+              {copy.heroLead}
+            </p>
+            <p className="mt-5 max-w-3xl text-base leading-8 text-slate-700 sm:text-lg">
+              {copy.heroBody}
+            </p>
+
+            <div className="mt-8 flex flex-wrap items-center gap-4">
+              <button
+                type="button"
+                onClick={() => {
+                  onStartAnalysis()
+                  if (typeof window !== 'undefined') {
+                    window.scrollTo({ top: 0, behavior: 'smooth' })
+                  }
+                }}
+                className="rounded-2xl bg-cyan-600 px-6 py-3 text-sm font-black uppercase tracking-[0.22em] text-white shadow-[0_18px_30px_rgba(6,182,212,0.22)] transition hover:bg-cyan-700"
+              >
+                {copy.cta}
+              </button>
+              <div className="text-sm font-semibold text-slate-500 sm:text-base">{copy.slogan}</div>
+            </div>
+
+            <div className="mt-8 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-black uppercase tracking-[0.24em] text-cyan-700">01</div>
+                <div className="mt-2 font-black text-slate-900">{copy.workflowTitle}</div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">{copy.workflowBody}</div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-black uppercase tracking-[0.24em] text-cyan-700">02</div>
+                <div className="mt-2 font-black text-slate-900">{isFrench ? 'Langue bilingue' : 'Bilingual interface'}</div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">{isFrench ? 'Passez instantanément entre le français et l\'anglais.' : 'Switch instantly between English and French.'}</div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-black uppercase tracking-[0.24em] text-cyan-700">03</div>
+                <div className="mt-2 font-black text-slate-900">{isFrench ? 'Rapport d\'ingénierie' : 'Engineering report'}</div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">{isFrench ? 'Les résultats alimentent le rapport PDF existant.' : 'Results feed the existing PDF report.'}</div>
+              </div>
+            </div>
+          </div>
+
+          <aside className="rounded-[30px] border border-slate-800 bg-slate-950 p-6 text-slate-100 shadow-[0_28px_70px_rgba(15,23,42,0.24)] lg:p-7">
+            <div className="text-xs font-black uppercase tracking-[0.35em] text-cyan-300">{copy.capabilitiesTitle}</div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+              {copy.featureCards.map(([title, description]) => (
+                <article key={title} className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/5 p-4 shadow-[0_10px_20px_rgba(15,23,42,0.15)]">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-400/15 text-sm font-black text-cyan-200">
+                    {title.split(' ').slice(0, 2).map((word) => word[0]).join('').toUpperCase()}
+                  </div>
+                  <div>
+                    <div className="font-bold text-white">{title}</div>
+                    <div className="mt-1 text-sm leading-6 text-slate-300">{description}</div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </aside>
+        </section>
+
+        <section className="mt-6 grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+          <div className="rounded-[28px] border border-slate-200 bg-slate-900 p-8 text-slate-100 shadow-[0_20px_50px_rgba(15,23,42,0.18)]">
+            <div className="text-xs font-black uppercase tracking-[0.35em] text-cyan-300">{isFrench ? 'Message d\'ingénierie' : 'Engineering message'}</div>
+            <h3 className="mt-4 text-3xl font-black tracking-tight text-white">{copy.engineeringTitle}</h3>
+            <p className="mt-4 text-base leading-8 text-slate-300">{copy.engineeringBody}</p>
+            <p className="mt-4 text-sm leading-7 font-semibold text-cyan-200">{copy.engineeringDetail}</p>
+          </div>
+
+          <div className="rounded-[28px] border border-slate-200 bg-white p-8 shadow-[0_20px_50px_rgba(15,23,42,0.10)]">
+            <div className="text-xs font-black uppercase tracking-[0.35em] text-slate-500">HESA</div>
+            <h3 className="mt-4 text-3xl font-black tracking-tight text-slate-900">{copy.detailsLabel}</h3>
+            <p className="mt-4 text-base leading-8 text-slate-600">{copy.heroBody}</p>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <div className="text-sm font-black text-slate-900">{isFrench ? 'Conditions réelles' : 'Actual operating conditions'}</div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">{isFrench ? 'Les analyses reposent sur le climat, les horaires et les paramètres fournis.' : 'Analyses follow project climate, schedules and user inputs.'}</div>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <div className="text-sm font-black text-slate-900">{isFrench ? 'Comparaison objective' : 'Objective comparison'}</div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">{isFrench ? 'Les technologies sont évaluées sur une base commune et traçable.' : 'Technologies are evaluated on a consistent, traceable basis.'}</div>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <div className="text-sm font-black text-slate-900">{isFrench ? 'Rapport PDF' : 'PDF report'}</div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">{isFrench ? 'Le rapport d\'ingénierie existant demeure disponible.' : 'The existing engineering report remains available.'}</div>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <div className="text-sm font-black text-slate-900">{isFrench ? 'Interface bilingue' : 'Bilingual interface'}</div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">{isFrench ? 'Les libellés et le contenu suivent le mode de langue actuel.' : 'Labels and content follow the current language mode.'}</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <footer className="mt-8 border-t border-slate-300/80 pt-5 text-xs leading-6 text-slate-500">
+          {copy.disclaimer}
+          <div className="mt-2">© 2026 Enersol inc. / Carel Group. HESA - Humidification Energy System Analysis. All rights reserved.</div>
+        </footer>
+      </div>
+    </main>
+  )
+}
+
+function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartAnalysis: controlledStartAnalysis, onLanguageChange, systemSettings, onSettingsChange, onAnnualResults, onReportSnapshot, projectSystems, activeSystemName, activeSystemId }) {
   const reportRef = useRef(null)
+  const printWindowRef = useRef(null)
+  const printInProgressRef = useRef(false)
   const hourlyWeatherFileInputRef = useRef(null)
-  const initialProjectSettings = getInitialProjectSettings()
+  const initialProjectSettings = systemSettings || getInitialProjectSettings()
   const [language, setLanguage] = useState(initialProjectSettings.language || 'fr')
   const [units, setUnits] = useState(initialProjectSettings.units || 'metric')
   const [assistantQuestion, setAssistantQuestion] = useState('')
@@ -2298,6 +2967,14 @@ function HvacDashboardApp() {
   const [reportStatus, setReportStatus] = useState('')
   const [projectProfile, setProjectProfile] = useState(getInitialProjectProfile)
   const [projectSaveStatus, setProjectSaveStatus] = useState('')
+  const [internalShowLandingPage, setInternalShowLandingPage] = useState(true)
+  const showLandingPage = controlledShowLandingPage ?? internalShowLandingPage
+  const setShowLandingPage = controlledStartAnalysis || setInternalShowLandingPage
+  useEffect(() => {
+    if (typeof onLanguageChange === 'function') {
+      onLanguageChange(language)
+    }
+  }, [language, onLanguageChange])
   const [assistantHealth, setAssistantHealth] = useState({
     checked: false,
     online: false,
@@ -2323,14 +3000,50 @@ function HvacDashboardApp() {
     setProjectSaveStatus('')
   }
 
-  const saveProjectProfile = () => {
+  const saveProjectProfile = async () => {
     try {
       window.localStorage.setItem(HESES_PROJECT_PROFILE_STORAGE_KEY, JSON.stringify(projectProfile))
-      setProjectSaveStatus(language === 'fr' ? 'Projet sauvegardé localement.' : 'Project saved locally.')
-    } catch {
+      const settings = buildProjectSettingsSnapshot()
+      if (!onSettingsChange) {
+        window.localStorage.setItem(HESES_PROJECT_SETTINGS_STORAGE_KEY, JSON.stringify(settings))
+      }
+
+      const savedSystems = (() => {
+        try {
+          return JSON.parse(window.localStorage.getItem(HESES_MULTI_SYSTEM_STORAGE_KEY) || '[]')
+        } catch {
+          return []
+        }
+      })()
+      const projectFile = {
+        format: 'HESA project',
+        version: 1,
+        savedAt: new Date().toISOString(),
+        profile: projectProfile,
+        settings,
+        systems: Array.isArray(savedSystems) ? savedSystems : [],
+      }
+      const projectBlob = new Blob([JSON.stringify(projectFile, null, 2)], { type: 'application/json' })
+      const suggestedName = `${(projectProfile.name || 'HESA-project').trim().replace(/[^a-z0-9_-]+/gi, '-') || 'HESA-project'}.heses.json`
+      const showSaveFilePicker = globalThis.showSaveFilePicker
+
+      if (typeof showSaveFilePicker === 'function') {
+        const fileHandle = await showSaveFilePicker({
+          suggestedName,
+          types: [{ description: 'HESA project', accept: { 'application/json': ['.heses.json', '.json'] } }],
+        })
+        const writable = await fileHandle.createWritable()
+        await writable.write(projectBlob)
+        await writable.close()
+      } else {
+        downloadBlob(projectBlob, suggestedName)
+      }
+      setProjectSaveStatus(language === 'fr' ? 'Projet sauvegardé dans le fichier choisi.' : 'Project saved to the selected file.')
+    } catch (error) {
+      if (error?.name === 'AbortError') return
       setProjectSaveStatus(language === 'fr'
-        ? 'Impossible de sauvegarder le projet localement.'
-        : 'Unable to save the project locally.')
+        ? 'Impossible de sauvegarder le fichier du projet.'
+        : 'Unable to save the project file.')
     }
   }
 
@@ -2385,9 +3098,23 @@ function HvacDashboardApp() {
 
   const openPrintableReportPage = () => {
     persistProjectLocally()
-    const html = buildPrintableReportHtml({ autoPrint: false })
-    window.sessionStorage.setItem(HESES_PRINT_REPORT_STORAGE_KEY, html)
-    window.location.href = '/heses-report-print'
+    setReportStatus(language === 'fr'
+      ? 'Préparation du rapport...'
+      : 'Preparing report...')
+
+    const reportHtml = buildPrintableReportMarkup()
+    const popup = window.open('', '_blank', 'popup,width=1200,height=900')
+    if (!popup) {
+      setReportStatus(language === 'fr'
+        ? 'Autorisez les fenêtres contextuelles pour imprimer le rapport.'
+        : 'Allow pop-up windows to print the report.')
+      return
+    }
+
+    popup.document.open()
+    popup.document.write(buildPrintableReportHtml({ autoPrint: false, bodyHtml: reportHtml }))
+    popup.document.close()
+    popup.focus()
   }
 
   const generatePDF = () => {
@@ -2403,27 +3130,168 @@ function HvacDashboardApp() {
     }
   }
 
-  const printReportPreview = () => {
+  const convertCanvasToImagesInHtml = (htmlString) => {
+    if (typeof window === 'undefined') return htmlString
+
     try {
-      setReportPreviewVisible(true)
-      openPrintableReportPage()
-    } catch (error) {
-      console.error('Erreur impression rapport:', error)
-      alert(t.pdfError)
+      const parser = new DOMParser()
+      const doc = parser.parseFromString(htmlString, 'text/html')
+      const canvases = Array.from(doc.querySelectorAll('canvas'))
+
+      canvases.forEach((canvas) => {
+        try {
+          const dataUrl = canvas.toDataURL('image/png')
+          const image = doc.createElement('img')
+          image.src = dataUrl
+          image.alt = 'HESA report chart'
+          image.style.maxWidth = '100%'
+          image.style.height = 'auto'
+          image.style.display = 'block'
+          canvas.replaceWith(image)
+        } catch {
+          // Keep the canvas if it cannot be serialized safely.
+        }
+      })
+
+      return doc.body.innerHTML
+    } catch {
+      return htmlString
     }
   }
+
+  const waitForReportDocumentReady = (printWindow, timeoutMs = 15000) => new Promise((resolve, reject) => {
+    const start = Date.now()
+    const tick = () => {
+      try {
+        if (printWindow.closed) {
+          reject(new Error('Print window closed'))
+          return
+        }
+
+        const doc = printWindow.document
+        if (!doc || doc.readyState !== 'complete') {
+          if (Date.now() - start > timeoutMs) {
+            reject(new Error('Timed out waiting for the print document to finish loading.'))
+            return
+          }
+          setTimeout(tick, 100)
+          return
+        }
+
+        const images = Array.from(doc.images || [])
+        const imagesReady = images.every((image) => !image.src || image.complete)
+        const fontsReady = !doc.fonts || typeof doc.fonts.ready?.then === 'function'
+          ? true
+          : true
+
+        if (imagesReady && fontsReady) {
+          resolve()
+          return
+        }
+
+        if (Date.now() - start > timeoutMs) {
+          resolve()
+          return
+        }
+
+        setTimeout(tick, 100)
+      } catch {
+        if (Date.now() - start > timeoutMs) {
+          resolve()
+          return
+        }
+        setTimeout(tick, 100)
+      }
+    }
+
+    tick()
+  })
+
+  const printStaticReport = async () => {
+    if (printInProgressRef.current) {
+      return
+    }
+
+    printInProgressRef.current = true
+    console.time('printStaticReport-total')
+    try {
+      const reportContent = convertCanvasToImagesInHtml(buildPrintableReportMarkup())
+      const staticPrintWindow = window.open('', '_blank', 'popup,width=1200,height=900')
+      if (!staticPrintWindow) {
+        setReportStatus(language === 'fr'
+          ? 'Autorisez les fenêtres contextuelles pour imprimer le rapport.'
+          : 'Allow pop-up windows to print the report.')
+        printInProgressRef.current = false
+        console.timeEnd('printStaticReport-total')
+        return
+      }
+
+      const staticHtml = `<!doctype html>
+<html lang="${language === 'fr' ? 'fr-CA' : 'en-CA'}">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${language === 'fr' ? 'Rapport HESA' : 'HESA Report'}</title>
+    <style>
+      @page { size: letter; margin: 12mm; }
+      html, body { margin: 0; background: #ffffff; }
+      body {
+        font-family: Arial, Helvetica, sans-serif;
+        color: #0f172a;
+        background: #ffffff;
+      }
+      img, svg { max-width: 100%; height: auto; display: block; }
+      .engineering-report {
+        max-width: 1060px;
+        margin: 0 auto;
+        background: #ffffff;
+      }
+      @media print {
+        body { background: #ffffff; }
+        .print-actions { display: none !important; }
+      }
+    </style>
+  </head>
+  <body>
+    ${reportContent}
+  </body>
+</html>`
+
+      staticPrintWindow.document.open()
+      staticPrintWindow.document.write(staticHtml)
+      staticPrintWindow.document.close()
+      printWindowRef.current = staticPrintWindow
+      setReportStatus(language === 'fr' ? 'Ouverture du rapport imprimable...' : 'Opening print-ready report...')
+
+      await waitForReportDocumentReady(staticPrintWindow)
+      staticPrintWindow.focus()
+      staticPrintWindow.print()
+    } catch (error) {
+      console.error('Erreur impression du rapport statique:', error)
+      setReportStatus(language === 'fr' ? 'Impossible d’imprimer ce rapport.' : 'Unable to print this report.')
+    } finally {
+      printInProgressRef.current = false
+      console.timeEnd('printStaticReport-total')
+      if (printWindowRef.current && !printWindowRef.current.closed) {
+        printWindowRef.current.focus()
+      }
+    }
+  }
+
+  const printReportPreview = () => {
+    void printStaticReport()
+  }
   const buildPrintableReportMarkup = () => (
-    localizeReportHtml(
-      renderToStaticMarkup(<HvacEnergyOptimizationReport data={reportData} />),
-      language
-    )
+    renderToStaticMarkup(<HvacEnergyOptimizationReport data={reportData} />)
       .replaceAll('src="/', `src="${window.location.origin}/`)
   )
 
-  const buildPrintableReportHtml = ({ autoPrint = false } = {}) => {
+  const buildPrintableReportHtml = ({ autoPrint = false, includeActions = true, bodyHtml } = {}) => {
+    console.time('buildPrintableReportHtml-total')
     const reportTitle = language === 'fr' ? 'Rapport HVAC Enersol' : t.reportTitle
-    const reportHtml = buildPrintableReportMarkup()
+    const reportHtml = bodyHtml || buildPrintableReportMarkup()
     const printLabel = language === 'fr' ? 'Imprimer / Enregistrer en PDF' : 'Print / Save as PDF'
+    console.timeEnd('buildPrintableReportHtml-total')
     const openWindowsPdfLabel = language === 'fr' ? 'Ouvrir PDF dans Windows' : 'Open PDF in Windows'
     const printHint = language === 'fr'
       ? 'Si l impression ne s ouvre pas ici, ouvrez le PDF dans Windows et utilisez Ctrl+P.'
@@ -2595,31 +3463,37 @@ function HvacDashboardApp() {
     </style>
   </head>
   <body>
-    <div class="print-actions">
+    ${includeActions ? `<div class="print-actions">
       <button type="button" onclick="window.print()">${printLabel}</button>
       <button type="button" onclick="fetch('/api/heses-report-open-local-pdf', { method: 'POST' }).catch(function(){ window.location.href = '/api/heses-report-open-local-pdf'; })">${openWindowsPdfLabel}</button>
       <span class="print-hint">${printHint}</span>
-    </div>
+    </div>` : ''}
     ${reportHtml}
     ${autoPrint ? `
       <script>
-        window.addEventListener('load', function () {
+        (function () {
+          if (window.__hesaPrintStarted) return;
+          window.__hesaPrintStarted = true;
           var images = Array.prototype.slice.call(document.images || []);
-          var waits = images.map(function (image) {
+          var imageWaits = images.map(function (image) {
             if (image.complete) return Promise.resolve();
             return new Promise(function (resolve) {
               image.onload = resolve;
               image.onerror = resolve;
             });
           });
+          var fontWait = document.fonts && document.fonts.ready
+            ? document.fonts.ready.catch(function () {})
+            : Promise.resolve();
 
-          Promise.all(waits).finally(function () {
-            setTimeout(function () {
-              window.focus();
-              window.print();
-            }, 600);
+          Promise.all([Promise.all(imageWaits), fontWait]).then(function () {
+            window.addEventListener('afterprint', function () {
+              window.setTimeout(function () { window.close(); }, 0);
+            }, { once: true });
+            window.focus();
+            window.print();
           });
-        });
+        }());
       </script>
     ` : ''}
   </body>
@@ -2651,7 +3525,7 @@ function HvacDashboardApp() {
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = language === 'fr' ? 'rapport-heses-imprimable.html' : 'heses-printable-report.html'
+      link.download = 'HESA_Energy_Analysis_Report.html'
       document.body.appendChild(link)
       link.click()
       link.remove()
@@ -2665,16 +3539,33 @@ function HvacDashboardApp() {
   const [outsideAirCFM, setOutsideAirCFM] = useState(() => finiteSetting(initialProjectSettings, 'outsideAirCFM', 12500))
   const [roomTemperature, setRoomTemperature] = useState(() => finiteSetting(initialProjectSettings, 'roomTemperature', 22))
   const [roomRelativeHumidity, setRoomRelativeHumidity] = useState(() => finiteSetting(initialProjectSettings, 'roomRelativeHumidity', 35))
-  const [supplyAirTemperature, setSupplyAirTemperature] = useState(() => finiteSetting(initialProjectSettings, 'supplyAirTemperature', 30))
+  const [supplyAirTemperature, setSupplyAirTemperature] = useState(() => finiteSetting(initialProjectSettings, 'supplyAirTemperature', 22))
   const [heatPumpCOP, setHeatPumpCOP] = useState(() => finiteSetting(initialProjectSettings, 'heatPumpCOP', 3.8))
 
-  const initialRecoverySelection = heatRecoverySystems[language].find((item) =>
-    item.type === initialProjectSettings.selectedRecoveryType ||
-    item.nom === initialProjectSettings.selectedRecoveryName
-  ) || heatRecoverySystems[language][1]
+  const savedRecoveryName = normalizeLabel(initialProjectSettings.selectedRecoveryName)
+  const savedRecoveryType = normalizeLabel(initialProjectSettings.selectedRecoveryType)
+  const initialRecoverySelection = heatRecoverySystems[language].find((item) => {
+    const itemName = normalizeLabel(item.nom)
+    const itemType = normalizeLabel(item.type)
+    return (
+      itemType === savedRecoveryType ||
+      itemName === savedRecoveryName ||
+      (savedRecoveryName.includes('cassette sensible') && itemName.includes('cassettes sensible')) ||
+      (savedRecoveryName.includes('cassette enthalpique') && itemName.includes('cassettes enthalpique'))
+    )
+  }) || heatRecoverySystems[language][1]
   const [selectedRecoveries, setSelectedRecoveries] = useState([initialRecoverySelection])
 
-  const [wheelEfficiency, setWheelEfficiency] = useState(() => finiteSetting(initialProjectSettings, 'wheelEfficiency', 78))
+  const [wheelEfficiency, setWheelEfficiency] = useState(() => finiteSetting(
+    initialProjectSettings,
+    'recoverySensibleEfficiency',
+    finiteSetting(initialProjectSettings, 'wheelEfficiency', defaultSensibleRecoveryEfficiency(initialRecoverySelection))
+  ))
+  const [latentRecoveryEfficiency, setLatentRecoveryEfficiency] = useState(() => {
+    const savedLatentEfficiency = Number(initialProjectSettings?.recoveryLatentEfficiency)
+    if (Number.isFinite(savedLatentEfficiency)) return savedLatentEfficiency
+    return defaultLatentRecoveryEfficiency(initialRecoverySelection)
+  })
 
   const climateCities = [
     { nom: 'Montr\u00E9al', hiver: -23, ete: 30, humidite: 65, zone: 'Zone 6' },
@@ -2711,6 +3602,11 @@ function HvacDashboardApp() {
   }
   const [economizerTargetTemp, setEconomizerTargetTemp] = useState(() => finiteSetting(initialProjectSettings, 'economizerTargetTemp', 18))
   const [minimumOutsideAirPercent, setMinimumOutsideAirPercent] = useState(() => finiteSetting(initialProjectSettings, 'minimumOutsideAirPercent', 20))
+  const [annualComparisonReference, setAnnualComparisonReference] = useState(() => (
+    BASELINE_TECHNOLOGIES.includes(initialProjectSettings.annualComparisonReference)
+      ? initialProjectSettings.annualComparisonReference
+      : 'electricSteam'
+  ))
   const [scheduleMode, setScheduleMode] = useState(() => {
     const saved = initialProjectSettings.scheduleMode
     return saved === '24-7' ? '24-7' : 'custom'
@@ -2776,6 +3672,8 @@ function HvacDashboardApp() {
     selectedRecoveryName: selectedRecoveries[0]?.nom || '',
     selectedRecoveryType: selectedRecoveries[0]?.type || '',
     wheelEfficiency,
+    recoverySensibleEfficiency: wheelEfficiency,
+    recoveryLatentEfficiency: latentRecoveryEfficiency,
     selectedCityName: selectedCity.nom,
     electricityRate,
     naturalGasRate,
@@ -2792,6 +3690,7 @@ function HvacDashboardApp() {
     ventilationModeType: ventilationMode.type,
     economizerTargetTemp,
     minimumOutsideAirPercent,
+    annualComparisonReference,
     scheduleMode,
     calculationMethod,
     hourlyWeatherFileName,
@@ -2801,7 +3700,7 @@ function HvacDashboardApp() {
     scheduleCustomDays,
     useMeasuredMixedAirTemperature,
     measuredMixedAirTemperature,
-    savedAt: new Date().toISOString(),
+    savedAt: initialProjectSettings.savedAt || '',
   })
 
   const persistProjectLocally = () => {
@@ -2809,7 +3708,12 @@ function HvacDashboardApp() {
 
     try {
       window.localStorage.setItem(HESES_PROJECT_PROFILE_STORAGE_KEY, JSON.stringify(projectProfile))
-      window.localStorage.setItem(HESES_PROJECT_SETTINGS_STORAGE_KEY, JSON.stringify(buildProjectSettingsSnapshot()))
+      const snapshot = buildProjectSettingsSnapshot()
+      if (onSettingsChange) {
+        onSettingsChange(snapshot)
+      } else {
+        window.localStorage.setItem(HESES_PROJECT_SETTINGS_STORAGE_KEY, JSON.stringify(snapshot))
+      }
     } catch {
       // Local storage can be unavailable in restricted browser modes.
     }
@@ -2818,6 +3722,7 @@ function HvacDashboardApp() {
   useEffect(() => {
     persistProjectLocally()
   }, [
+    onSettingsChange,
     language,
     units,
     projectProfile,
@@ -2828,6 +3733,7 @@ function HvacDashboardApp() {
     heatPumpCOP,
     selectedRecoveries,
     wheelEfficiency,
+    latentRecoveryEfficiency,
     selectedCity,
     electricityRate,
     naturalGasRate,
@@ -2843,6 +3749,7 @@ function HvacDashboardApp() {
     ventilationMode,
     economizerTargetTemp,
     minimumOutsideAirPercent,
+    annualComparisonReference,
     scheduleMode,
     calculationMethod,
     hourlyWeatherFileName,
@@ -2915,6 +3822,7 @@ function HvacDashboardApp() {
         }
 
         setHourlyWeatherSourceType('custom')
+        setCalculationMethod('hourly')
         setHourlyWeatherFileLocation(weatherLocation || '')
         setHourlyWeatherRecords(records)
         setHourlyWeatherMetadata(customMetadata)
@@ -2946,6 +3854,7 @@ function HvacDashboardApp() {
   // Free Cooling is only available with the evaporative/atomization mode.
   const isFreeCoolingMode = ventilationMode.type === 'free-cooling-evaporative'
   const showFreeCoolingTables = isFreeCoolingMode && ventilationMode.type !== 'outside-air'
+  const is100OA = ventilationMode.type === 'outside-air'
   const economizerActive = isFreeCoolingMode && outsideWinterTemp < economizerTargetTemp
   const activeFraction = isFreeCoolingMode ? minimumOutsideAirPercent / 100 : ventilationMode.fraction
   const effectiveOutsideAirCFM = Math.round(outsideAirCFM * activeFraction)
@@ -2957,7 +3866,6 @@ function HvacDashboardApp() {
   const activeSelectedRecoveries = isFreeCoolingMode
     ? [noRecoverySelection]
     : selectedRecoveries
-  const is100OA = ventilationMode.type === 'outside-air'
   const selectedReheatEnergySource = String(selectedReheatSystem?.energie || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -2973,9 +3881,9 @@ function HvacDashboardApp() {
     hourlyWeatherRecords.length >= 8750
   const scheduleStartHour = Number(String(scheduleStartTime || '00:00').split(':')[0] || 0)
   const scheduleEndHour = Number(String(scheduleEndTime || '00:00').split(':')[0] || 0)
-  const filteredHourlyRecords = calculationMethod === 'hourly'
+  const filteredHourlyRecords = useMemo(() => calculationMethod === 'hourly'
     ? hourlyWeatherRecords.filter((record) => isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays))
-    : []
+    : [], [calculationMethod, hourlyWeatherRecords, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays])
   const hasFilteredHourlyRecords =
     hasLoadedHourlyEpw &&
     Array.isArray(filteredHourlyRecords) &&
@@ -3013,7 +3921,6 @@ function HvacDashboardApp() {
       ? thermalKw / Math.max(heatPumpCOP, 0.1)
       : thermalKw * (selectedReheatSystem?.facteur ?? 1)
   )
-  const effectiveSupplyAirTemperature = is100OA ? roomTemperature : supplyAirTemperature
   const weatherSourceCalculationLabel = calculationMethod === 'hourly'
     ? (hourlyWeatherSourceType === 'custom'
       ? (language === 'fr' ? 'EPW horaire personnalisé' : 'Custom hourly EPW')
@@ -3155,9 +4062,10 @@ function HvacDashboardApp() {
           activeFraction,
           roomTemperature,
           roomRelativeHumidity,
+          supplyAirTemperature,
           selectedRecoveries: activeSelectedRecoveries,
           wheelEfficiency,
-          supplyAirTemperature: effectiveSupplyAirTemperature,
+          latentRecoveryEfficiency,
           selectedReheatSystem,
           heatPumpCOP,
           steamBoilerEfficiency,
@@ -3215,7 +4123,6 @@ function HvacDashboardApp() {
     scheduleEndTime,
     scheduleDaysOption,
     JSON.stringify(scheduleCustomDays),
-    hourlyWeatherSourceType,
     t.noBuiltInWeatherAvailable,
     t.builtInWeatherLoadFailed,
   ])
@@ -3240,9 +4147,10 @@ function HvacDashboardApp() {
         activeFraction,
         roomTemperature,
         roomRelativeHumidity,
+        supplyAirTemperature,
         selectedRecoveries: activeSelectedRecoveries,
         wheelEfficiency,
-        supplyAirTemperature: effectiveSupplyAirTemperature,
+        latentRecoveryEfficiency,
         selectedReheatSystem,
         heatPumpCOP,
         steamBoilerEfficiency,
@@ -3272,9 +4180,10 @@ function HvacDashboardApp() {
     activeFraction,
     roomTemperature,
     roomRelativeHumidity,
+    supplyAirTemperature,
     activeSelectedRecoveries,
     wheelEfficiency,
-    effectiveSupplyAirTemperature,
+    latentRecoveryEfficiency,
     selectedReheatSystem,
     heatPumpCOP,
     steamBoilerEfficiency,
@@ -3288,10 +4197,12 @@ function HvacDashboardApp() {
     : getScheduleDaysPerWeek(scheduleDaysOption, scheduleCustomDays)
   const dailyOperatingHours = computeScheduleDailyHours(scheduleStartTime, scheduleEndTime, scheduleMode)
   const weeklyOperatingHours = dailyOperatingHours * operatingDaysPerWeek
+  const isCustomOperatingHoursMode = scheduleMode === 'custom'
   const baseScheduleFactor = scheduleMode === '24-7'
     ? 1
     : Number((weeklyOperatingHours / 168).toFixed(4))
-  const isHourlySimulationActive = calculationMethod === 'hourly' && hasLoadedHourlyEpw
+  const hasHourlySimulationSummary = Boolean(hourlyWeatherSummary) && Number.isFinite(Number(hourlyWeatherSummary?.recordsLoaded))
+  const isHourlySimulationActive = calculationMethod === 'hourly' && hasLoadedHourlyEpw && hasHourlySimulationSummary
   const scheduleFactor = isHourlySimulationActive ? 1 : baseScheduleFactor
 
   const metrics = calculateHvacDashboardMetrics({
@@ -3299,10 +4210,11 @@ function HvacDashboardApp() {
     effectiveOutsideAirCFM,
     roomTemperature,
     roomRelativeHumidity,
+    supplyAirTemperature: is100OA ? supplyAirTemperature : roomTemperature,
     outsideWinterTemp,
     selectedRecoveries: activeSelectedRecoveries,
     wheelEfficiency,
-    supplyAirTemperature: effectiveSupplyAirTemperature,
+    latentRecoveryEfficiency,
     selectedReheatSystem,
     heatPumpCOP,
     steamBoilerEfficiency,
@@ -3312,6 +4224,7 @@ function HvacDashboardApp() {
     selectedCity,
     economizerTargetTemp,
     is100OA,
+    outsideRelativeHumidity: 90,
     scheduleFactor,
   })
 
@@ -3326,7 +4239,13 @@ function HvacDashboardApp() {
     cappedRecoveryEfficiency,
     oaTempCalc,
     adiabaticTemperatureDrop,
+    preHumifogTemp,
+    preHumifogRh,
+    afterHumifogTemp,
+    afterHumifogRh,
     grossReheatKW,
+    grossHumifogPreheatKW,
+    baseHvacHeatingThermalKW,
     reheatEnergyKW,
     recoveryEnergyReductionKW,
     steamEnergyKW,
@@ -3343,20 +4262,40 @@ function HvacDashboardApp() {
     annualSteamCost,
     annualNaturalGasCost,
     annualAtmosphericGasHumidifierCost,
-    annualAdiabaticPumpCost,
-    annualAdiabaticReheatCost,
     annualAdiabaticCost,
     savings,
-    naturalGasGES,
-    atmosphericGasHumidifierGES,
-    adiabaticGES,
-    eliminatedGES,
+    steamEnergyKWRaw,
+    adiabaticEnergyKWRaw,
+    commonHvacHeatingThermalKW,
+    commonHvacHeatingThermalKWRaw,
+    naturalGasSteamInputKWRaw,
+    atmosphericGasHumidifierInputKWRaw,
+    adiabaticHumidificationKWRaw,
+    reheatEnergyKWRaw,
+    grossReheatKWRaw,
+    annualHumidificationHoursRaw,
+    annualSteamCostRaw,
+    annualNaturalGasCostRaw,
+    annualAtmosphericGasHumidifierCostRaw,
+    annualAdiabaticCostRaw,
+    annualAdiabaticPumpCostRaw,
+    annualAdiabaticReheatCostRaw,
+    naturalGasGESRaw,
+    atmosphericGasHumidifierGESRaw,
+    adiabaticGESRaw,
+    eliminatedGESRaw,
   } = metrics
 
   const selectedRecovery = activeSelectedRecoveries[0]
+  const selectedRecoveryDisplayName = localizeRecoveryDisplayName(selectedRecovery, language)
   const selectedRecoveryName = selectedRecovery?.nom ?? ''
   const selectedRecoveryNameLower = selectedRecoveryName.toLowerCase()
   const isNoRecovery = Boolean(selectedRecovery?.noRecovery)
+  const selectedRecoverySupportsLatent = supportsLatentRecovery(selectedRecovery)
+  const effectiveSensibleRecoveryEfficiency = isNoRecovery ? 0 : clampValue(Number(wheelEfficiency), 0, 95)
+  const effectiveLatentRecoveryEfficiency = isNoRecovery || !selectedRecoverySupportsLatent
+    ? 0
+    : clampValue(Number(latentRecoveryEfficiency), 0, 95)
   const humidifierType = 'HUMIFOG'
 
   const recoveryGroup = isNoRecovery
@@ -3393,6 +4332,12 @@ function HvacDashboardApp() {
           selectedReheatEnergySource.includes('passive')
         ? (language === 'fr' ? 'Boucle récupération chaleur' : 'Heat Recovery Loop')
         : (language === 'fr' ? 'Électrique' : 'Electric')
+  const electricityEquipmentLabels = [
+    Number(steamEnergyKW) > 0 ? (language === 'fr' ? 'Vapeur électrique' : 'Electric steam') : '',
+    humidifierType === 'HUMIFOG' ? 'Humifog' : '',
+    usesHeatPumpReheat ? (language === 'fr' ? 'thermopompe' : 'heat pump') : '',
+  ].filter(Boolean)
+  const electricityEquipmentLabel = joinLocalizedList(electricityEquipmentLabels, language)
   const freeCoolingRecoveryType = {
     WHEEL: 'enthalpyWheel',
     CROSSFLOW: 'crossflowPlate',
@@ -3503,18 +4448,227 @@ function HvacDashboardApp() {
   const weatherChartData = calculationMethod === 'hourly'
     ? hourlyWeatherHistogramData
     : displayedBinData
-  const showOriginalBinHoursInChart = calculationMethod === 'bin' && scheduleMode === 'custom'
+  const showOriginalBinHoursInChart = calculationMethod === 'bin' && !isCustomOperatingHoursMode
   const isWeatherChartEmpty = calculationMethod === 'hourly'
     ? (!hourlyWeatherRecords.length || !hasFilteredHourlyRecords || hourlyWeatherHistogramData.length === 0)
     : weatherChartData.length === 0
-  const selectedBinWeatherData = effectiveBinData.map(([tempC, hours]) => ({
+  const selectedBinWeatherData = useMemo(() => effectiveBinData.map(([tempC, hours]) => ({
     tempC,
     hours,
     rh: Math.round(Math.max(35, Math.min(90, selectedCity.humidite + (10 - tempC) * 0.45))),
-  }))
+  })), [effectiveBinData, selectedCity.humidite])
+  const freeCoolingWeatherData = useMemo(() => isHourlySimulationActive
+    ? filteredHourlyRecords.map((record) => ({
+      tempC: Number(record.dryBulbC),
+      hours: 1,
+      rh: Number(record.relativeHumidity),
+    }))
+    : selectedBinWeatherData, [isHourlySimulationActive, filteredHourlyRecords, selectedBinWeatherData])
+  const freeCoolingOptimizationWeatherData = useMemo(() => isHourlySimulationActive
+    ? compactWeatherBins(freeCoolingWeatherData, 96)
+    : freeCoolingWeatherData, [isHourlySimulationActive, freeCoolingWeatherData])
+  const binEnergyRows = selectedBinWeatherData.map((bin) => {
+    const binMetrics = calculateHvacDashboardMetrics({
+      outsideAirCFM,
+      effectiveOutsideAirCFM,
+      roomTemperature,
+      roomRelativeHumidity,
+      supplyAirTemperature: is100OA ? supplyAirTemperature : roomTemperature,
+      outsideWinterTemp: bin.tempC,
+      selectedRecoveries: activeSelectedRecoveries,
+      wheelEfficiency,
+      latentRecoveryEfficiency,
+      selectedReheatSystem,
+      heatPumpCOP,
+      steamBoilerEfficiency,
+      atmosphericGasHumidifierEfficiency,
+      electricityRate,
+      naturalGasRate,
+      selectedCity: { ...selectedCity, hiver: bin.tempC },
+      economizerTargetTemp,
+      is100OA,
+      outsideRelativeHumidity: bin.rh,
+      scheduleFactor: 1,
+    })
 
-  const freeCoolingHumifogAnalysis = calculateFreeCoolingHumifogComparison({
-    bins: selectedBinWeatherData,
+    const steamPowerKW = Number(binMetrics.steamEnergyKWRaw || binMetrics.steamEnergyKW || 0)
+    const adiabaticPumpPowerKW = Number(binMetrics.adiabaticPumpKWRaw || binMetrics.adiabaticPumpKW || 0)
+    const additionalSelectedPreheatInputKW = Number(binMetrics.reheatEnergyKWRaw || binMetrics.reheatEnergyKW || 0)
+    const additionalThermalPreheatKW = Number(binMetrics.grossReheatKWRaw || binMetrics.grossReheatKW || 0)
+    const additionalElectricPreheatKW = additionalThermalPreheatKW
+    const additionalHeatPumpPowerKW = additionalThermalPreheatKW / Math.max(heatPumpCOP, 0.1)
+    const adiabaticTotalPowerKW = Number(binMetrics.adiabaticEnergyKWRaw || binMetrics.adiabaticEnergyKW || 0)
+    const naturalGasSteamInputKWBin = Number(binMetrics.naturalGasSteamInputKWRaw || binMetrics.naturalGasSteamInputKW || 0)
+    const atmosphericGasInputKWBin = Number(binMetrics.atmosphericGasHumidifierInputKWRaw || binMetrics.atmosphericGasHumidifierInputKW || 0)
+    const steamBinEnergyKwh = steamPowerKW * bin.hours
+    const adiabaticBinEnergyKwh = adiabaticTotalPowerKW * bin.hours
+    const commonHeatingBinEnergyKwh = Number(binMetrics.commonHvacHeatingThermalKWRaw || 0) * bin.hours
+    const naturalGasSteamEnergyKwhBin = naturalGasSteamInputKWBin * bin.hours
+    const atmosphericGasEnergyKwhBin = atmosphericGasInputKWBin * bin.hours
+    const adiabaticPumpEnergyKwhBin = adiabaticPumpPowerKW * bin.hours
+    const selectedPreheatEnergyKwhBin = additionalSelectedPreheatInputKW * bin.hours
+    const electricPreheatEnergyKwhBin = additionalElectricPreheatKW * bin.hours
+    const heatPumpPreheatEnergyKwhBin = additionalHeatPumpPowerKW * bin.hours
+    const adiabaticElectricTotalEnergyKwhBin = (adiabaticPumpPowerKW + additionalElectricPreheatKW) * bin.hours
+    const adiabaticHeatPumpTotalEnergyKwhBin = (adiabaticPumpPowerKW + additionalHeatPumpPowerKW) * bin.hours
+
+    return {
+      tempC: bin.tempC,
+      rh: bin.rh,
+      hours: bin.hours,
+      steamPowerKW,
+      steamBinEnergyKwh,
+      adiabaticPumpPowerKW,
+      additionalThermalPreheatKW,
+      additionalSelectedPreheatInputKW,
+      additionalElectricPreheatKW,
+      additionalHeatPumpPowerKW,
+      adiabaticTotalPowerKW,
+      adiabaticBinEnergyKwh,
+      naturalGasSteamInputKWBin,
+      atmosphericGasInputKWBin,
+      naturalGasSteamEnergyKwhBin,
+      atmosphericGasEnergyKwhBin,
+      adiabaticPumpEnergyKwhBin,
+      selectedPreheatEnergyKwhBin,
+      electricPreheatEnergyKwhBin,
+      heatPumpPreheatEnergyKwhBin,
+      adiabaticElectricTotalEnergyKwhBin,
+      adiabaticHeatPumpTotalEnergyKwhBin,
+      baseHvacHeatingKwhBin: commonHeatingBinEnergyKwh,
+      steamTotalBinEnergyKwh: steamBinEnergyKwh + commonHeatingBinEnergyKwh,
+      adiabaticTotalBinEnergyKwh: adiabaticBinEnergyKwh + commonHeatingBinEnergyKwh,
+      recoveryPowerKW: Number(binMetrics.recoveryEnergyReductionKW || 0),
+      afterRecoveryTempC: Number(binMetrics.afterWheelTemp || 0),
+      enteringHumidityRatio: Number(binMetrics.enteringHumidityRatio || 0),
+    }
+  })
+  const binAnnualSteamEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.steamTotalBinEnergyKwh, 0)
+  const binAnnualAdiabaticEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.adiabaticTotalBinEnergyKwh, 0)
+  const binAnnualNaturalGasSteamEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.naturalGasSteamEnergyKwhBin, 0)
+  const binAnnualAtmosphericGasEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.atmosphericGasEnergyKwhBin, 0)
+  const binAnnualHumifogPumpEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.adiabaticPumpEnergyKwhBin, 0)
+  const binAnnualHumifogSelectedPreheatEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.selectedPreheatEnergyKwhBin, 0)
+  const binAnnualHumifogElectricPreheatEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.electricPreheatEnergyKwhBin, 0)
+  const binAnnualHumifogHeatPumpPreheatEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.heatPumpPreheatEnergyKwhBin, 0)
+  const binAnnualHumifogElectricTotalEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.adiabaticElectricTotalEnergyKwhBin, 0)
+  const binAnnualHumifogHeatPumpTotalEnergyKwh = binEnergyRows.reduce((sum, row) => sum + row.adiabaticHeatPumpTotalEnergyKwhBin, 0)
+  const binAnnualCommonHvacHeatingKwh = binEnergyRows.reduce((sum, row) => sum + row.baseHvacHeatingKwhBin, 0)
+  const binEnergyReductionPercent = binAnnualSteamEnergyKwh > 0
+    ? Math.round((1 - binAnnualAdiabaticEnergyKwh / binAnnualSteamEnergyKwh) * 100)
+    : 0
+  const usesBinAnnualTotals = calculationMethod === 'bin' && !isFreeCoolingMode
+  const usesHourlyAnnualTotals = isHourlySimulationActive && !isFreeCoolingMode
+  const hourlyAnnualSteamEnergyKwh = Number(hourlyWeatherSummary?.annualSteamKwh || 0)
+  const hourlyAnnualHumifogEnergyKwh = Number(hourlyWeatherSummary?.annualHumifogKwh || 0)
+  const hourlyAnnualGasEnergyKwh = Number(hourlyWeatherSummary?.annualGasKwh || 0)
+  const selectedReheatEnergySourceNormalized = String(selectedReheatSystem?.energie || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+  const selectedReheatUsesNaturalGas = selectedReheatEnergySourceNormalized.includes('gaz naturel') ||
+    selectedReheatEnergySourceNormalized.includes('natural gas')
+  const annualSteamEnergyKwhResolved = usesHourlyAnnualTotals
+    ? hourlyAnnualSteamEnergyKwh
+    : usesBinAnnualTotals
+      ? binAnnualSteamEnergyKwh
+      : steamEnergyKWRaw * annualHumidificationHoursRaw
+  const annualAdiabaticEnergyKwhResolved = usesHourlyAnnualTotals
+    ? hourlyAnnualHumifogEnergyKwh
+    : usesBinAnnualTotals
+      ? binAnnualAdiabaticEnergyKwh
+      : adiabaticEnergyKWRaw * annualHumidificationHoursRaw
+  const annualNaturalGasSteamEnergyKwhResolved = usesHourlyAnnualTotals
+    ? hourlyAnnualGasEnergyKwh
+    : usesBinAnnualTotals
+      ? binAnnualNaturalGasSteamEnergyKwh
+      : naturalGasSteamInputKWRaw * annualHumidificationHoursRaw
+  const annualAtmosphericGasHumidifierEnergyKwhResolved = usesHourlyAnnualTotals
+    ? hourlyAnnualGasEnergyKwh
+    : usesBinAnnualTotals
+      ? binAnnualAtmosphericGasEnergyKwh
+      : atmosphericGasHumidifierInputKWRaw * annualHumidificationHoursRaw
+  const annualHumifogPumpEnergyKwhResolved = usesHourlyAnnualTotals
+    ? hourlyAnnualHumifogEnergyKwh
+    : usesBinAnnualTotals
+      ? binAnnualHumifogPumpEnergyKwh
+      : adiabaticHumidificationKWRaw * annualHumidificationHoursRaw
+  const annualHumifogSelectedPreheatEnergyKwhResolved = usesHourlyAnnualTotals
+    ? hourlyAnnualHumifogEnergyKwh
+    : usesBinAnnualTotals
+      ? binAnnualHumifogSelectedPreheatEnergyKwh
+      : reheatEnergyKWRaw * annualHumidificationHoursRaw
+  const annualHumifogElectricPreheatEnergyKwhResolved = usesBinAnnualTotals
+    ? binAnnualHumifogElectricPreheatEnergyKwh
+    : grossReheatKWRaw * annualHumidificationHoursRaw
+  const annualHumifogHeatPumpPreheatEnergyKwhResolved = usesBinAnnualTotals
+    ? binAnnualHumifogHeatPumpPreheatEnergyKwh
+    : (grossReheatKWRaw / Math.max(heatPumpCOP, 0.1)) * annualHumidificationHoursRaw
+  const annualHumifogElectricTotalEnergyKwhResolved = usesBinAnnualTotals
+    ? binAnnualHumifogElectricTotalEnergyKwh
+    : (adiabaticHumidificationKWRaw + grossReheatKWRaw) * annualHumidificationHoursRaw
+  const annualHumifogHeatPumpTotalEnergyKwhResolved = usesBinAnnualTotals
+    ? binAnnualHumifogHeatPumpTotalEnergyKwh
+    : (adiabaticHumidificationKWRaw + grossReheatKWRaw / Math.max(heatPumpCOP, 0.1)) * annualHumidificationHoursRaw
+  const annualCommonHvacHeatingKwhResolved = usesBinAnnualTotals
+    ? binAnnualCommonHvacHeatingKwh
+    : commonHvacHeatingThermalKWRaw * annualHumidificationHoursRaw
+  const annualSteamCostResolved = usesBinAnnualTotals
+    ? (annualCommonHvacHeatingKwhResolved + annualSteamEnergyKwhResolved) * electricityRate
+    : usesHourlyAnnualTotals
+      ? annualSteamEnergyKwhResolved * electricityRate
+      : (commonHvacHeatingThermalKWRaw + steamEnergyKWRaw) * electricityRate * annualHumidificationHoursRaw
+  const annualHumifogPumpCostResolved = usesBinAnnualTotals
+    ? annualHumifogPumpEnergyKwhResolved * electricityRate
+    : annualAdiabaticPumpCostRaw
+  const annualHumifogSelectedPreheatCostResolved = usesBinAnnualTotals
+    ? (selectedReheatUsesNaturalGas
+      ? (annualHumifogSelectedPreheatEnergyKwhResolved / 10.35) * naturalGasRate
+      : annualHumifogSelectedPreheatEnergyKwhResolved * electricityRate)
+    : annualAdiabaticReheatCostRaw
+  const annualAdiabaticCostResolved = usesBinAnnualTotals
+    ? annualHumifogPumpCostResolved + annualHumifogSelectedPreheatCostResolved
+    : usesHourlyAnnualTotals
+      ? Number(hourlyWeatherSummary?.annualCost || 0)
+      : annualAdiabaticCostRaw
+  const annualNaturalGasCostResolved = usesBinAnnualTotals
+    ? annualCommonHvacHeatingKwhResolved * electricityRate + (annualNaturalGasSteamEnergyKwhResolved / 10.35) * naturalGasRate
+    : commonHvacHeatingThermalKWRaw * electricityRate * annualHumidificationHoursRaw + annualNaturalGasCostRaw
+  const annualAtmosphericGasHumidifierCostResolved = usesBinAnnualTotals
+    ? annualCommonHvacHeatingKwhResolved * electricityRate + (annualAtmosphericGasHumidifierEnergyKwhResolved / 10.35) * naturalGasRate
+    : commonHvacHeatingThermalKWRaw * electricityRate * annualHumidificationHoursRaw + annualAtmosphericGasHumidifierCostRaw
+  const annualHumifogElectricCostResolved = usesBinAnnualTotals
+    ? (annualCommonHvacHeatingKwhResolved + annualHumifogElectricTotalEnergyKwhResolved) * electricityRate
+    : usesHourlyAnnualTotals
+      ? Number(hourlyWeatherSummary?.annualCost || 0)
+      : (commonHvacHeatingThermalKWRaw + adiabaticHumidificationKWRaw + grossReheatKWRaw) * annualHumidificationHoursRaw * electricityRate
+  const annualHumifogHeatPumpCostResolved = usesBinAnnualTotals
+    ? (annualCommonHvacHeatingKwhResolved + annualHumifogHeatPumpTotalEnergyKwhResolved) * electricityRate
+    : (commonHvacHeatingThermalKWRaw + adiabaticHumidificationKWRaw + grossReheatKWRaw / Math.max(heatPumpCOP, 0.1)) * annualHumidificationHoursRaw * electricityRate
+  const annualSavingsPercentResolved = annualSteamEnergyKwhResolved > 0
+    ? Math.round((1 - annualAdiabaticEnergyKwhResolved / annualSteamEnergyKwhResolved) * 100)
+    : 0
+  const annualHumidificationHoursResolved = usesHourlyAnnualTotals
+    ? Number(hourlyWeatherSummary?.operatingHoursUsed || 0)
+    : usesBinAnnualTotals
+      ? totalBinHours
+      : annualHumidificationHoursRaw
+  const annualNaturalGasGESResolved = usesBinAnnualTotals
+    ? (annualNaturalGasSteamEnergyKwhResolved * 0.182) / 1000
+    : naturalGasGESRaw
+  const annualAtmosphericGasGESResolved = usesBinAnnualTotals
+    ? (annualAtmosphericGasHumidifierEnergyKwhResolved * 0.182) / 1000
+    : atmosphericGasHumidifierGESRaw
+  const annualAdiabaticGESResolved = usesBinAnnualTotals
+    ? (selectedReheatUsesNaturalGas
+      ? (annualHumifogSelectedPreheatEnergyKwhResolved * 0.182) / 1000
+      : 0)
+    : adiabaticGESRaw
+  const annualEliminatedGESResolved = annualNaturalGasGESResolved - annualAdiabaticGESResolved
+
+  const freeCoolingHumifogAnalysis = useMemo(() => calculateFreeCoolingHumifogComparison({
+    bins: freeCoolingWeatherData,
+    optimizationBins: freeCoolingOptimizationWeatherData,
     roomDb: roomTemperature,
     roomRh: roomRelativeHumidity,
     minimumOutdoorAirPercent: minimumOutsideAirPercent,
@@ -3529,7 +4683,35 @@ function HvacDashboardApp() {
     heatPumpCOP,
     useMeasuredMixedAirTemperature,
     measuredMixedAirTemperatureC: measuredMixedAirTemperature,
-  })
+  }), [
+    freeCoolingWeatherData,
+    freeCoolingOptimizationWeatherData,
+    roomTemperature,
+    roomRelativeHumidity,
+    minimumOutsideAirPercent,
+    isNoRecovery,
+    freeCoolingRecoveryType,
+    cappedRecoveryEfficiency,
+    ventilationMode.evaporativeEffectiveness,
+    outsideAirCFM,
+    electricityRate,
+    naturalGasRate,
+    economizerTargetTemp,
+    selectedReheatSystem,
+    heatPumpCOP,
+    useMeasuredMixedAirTemperature,
+    measuredMixedAirTemperature,
+  ])
+  const displayedFreeCoolingRows = isHourlySimulationActive
+    ? aggregateFreeCoolingComparisonRows(
+      freeCoolingHumifogAnalysis.binRows,
+      freeCoolingHumifogAnalysis.conventionalRows,
+      5
+    )
+    : freeCoolingHumifogAnalysis.binRows.map((humifogRow, index) => ({
+      humifogRow,
+      steamRow: freeCoolingHumifogAnalysis.conventionalRows[index] || {},
+    }))
   const freeCoolingCalculationComplete = Boolean(freeCoolingHumifogAnalysis.isComplete)
   const freeCoolingSummaryRows = freeCoolingHumifogAnalysis.binRows || []
   const isFreeCoolingSummaryRowActive = (row) => (
@@ -3560,6 +4742,7 @@ function HvacDashboardApp() {
   const freeCoolingChartReferenceRow = freeCoolingHumifogAnalysis.conventionalRows?.[freeCoolingChartRowIndex]
   const hasFreeCoolingChartComparison = Boolean(
     showFreeCoolingTables &&
+    !isCustomOperatingHoursMode &&
     freeCoolingCalculationComplete &&
     freeCoolingChartHumifogRow &&
     freeCoolingChartReferenceRow
@@ -3619,8 +4802,9 @@ function HvacDashboardApp() {
   const fallbackRecoveryInletState = is100OA ? fallbackOutdoorState : fallbackMixedState
   const hasChartRecovery = !isFreeCoolingMode && !isNoRecovery && cappedRecoveryEfficiency > 0
   const fallbackRecoveredState = calculateRecoveryChartState(fallbackRecoveryInletState, fallbackReturnState, {
-    recoveryGroup,
-    recoveryEfficiency: cappedRecoveryEfficiency,
+    sensibleRecoveryEfficiency: effectiveSensibleRecoveryEfficiency,
+    latentRecoveryEfficiency: effectiveLatentRecoveryEfficiency,
+    latentRecoverySupported: selectedRecoverySupportsLatent,
     isNoRecovery,
   })
   const fallbackConditionedInletState = hasChartRecovery ? fallbackRecoveredState : fallbackRecoveryInletState
@@ -3629,6 +4813,11 @@ function HvacDashboardApp() {
   const fallbackPreHumifogHeatingState = chartHumifogProcess.preheatState
   const fallbackAfterHumifogState = chartHumifogProcess.afterHumifogState
   const fallbackAfterHeatingState = fallbackPreHumifogHeatingState
+  const displayedPreHumifogTemp = isFreeCoolingMode ? fallbackAfterHeatingState.db : preHumifogTemp
+  const displayedPreHumifogRh = isFreeCoolingMode ? fallbackAfterHeatingState.rh : preHumifogRh
+  const displayedAfterHumifogTemp = isFreeCoolingMode ? fallbackAfterHumifogState.db : afterHumifogTemp
+  const displayedAfterHumifogRh = isFreeCoolingMode ? fallbackAfterHumifogState.rh : afterHumifogRh
+  const adiabaticDisplayDropC = Math.max(0, fallbackPreHumifogHeatingState.db - fallbackAfterHumifogState.db)
   const recoveryPointLabel = recoveryGroup === 'WHEEL' ? 'After thermal wheel' : 'After recovery'
   const chartHeatingInletState = fallbackConditionedInletState
   const chartHeatingOutletState = fallbackAfterHeatingState
@@ -3709,50 +4898,111 @@ function HvacDashboardApp() {
     ? humifogInstalledCost + freeCoolingControlsInstalledCost
     : humifogInstalledCost + (hasChartRecovery ? heatRecoveryInstalledCost : 0)
   const installedCostInputs = {
-    electricSteam: electricSteamInstalledCost,
-    naturalGasSteam: naturalGasSteamInstalledCost,
-    atmosphericGasHumidifier: atmosphericGasHumidifierInstalledCost,
-    humifog: humifogInstalledCost,
+    electricSteam: baseSystemInstalledCost,
+    naturalGasSteam: isFreeCoolingMode ? naturalGasSteamInstalledCost + freeCoolingControlsInstalledCost : naturalGasSteamInstalledCost,
+    atmosphericGasHumidifier: isFreeCoolingMode ? atmosphericGasHumidifierInstalledCost + freeCoolingControlsInstalledCost : atmosphericGasHumidifierInstalledCost,
+    humifog: selectedHumifogInstalledCost,
     freeCoolingControls: freeCoolingControlsInstalledCost,
     heatRecovery: heatRecoveryInstalledCost,
     baseline: baseSystemInstalledCost,
     selectedHumifog: selectedHumifogInstalledCost,
   }
+  const installedCostBreakdown = {
+    electricSteam: {
+      base: electricSteamInstalledCost,
+      heatRecoveryAdder: 0,
+      freeCoolingControlsAdder: isFreeCoolingMode ? freeCoolingControlsInstalledCost : 0,
+      total: installedCostInputs.electricSteam,
+    },
+    naturalGasSteam: {
+      base: naturalGasSteamInstalledCost,
+      heatRecoveryAdder: 0,
+      freeCoolingControlsAdder: isFreeCoolingMode ? freeCoolingControlsInstalledCost : 0,
+      total: installedCostInputs.naturalGasSteam,
+    },
+    atmosphericGasHumidifier: {
+      base: atmosphericGasHumidifierInstalledCost,
+      heatRecoveryAdder: 0,
+      freeCoolingControlsAdder: isFreeCoolingMode ? freeCoolingControlsInstalledCost : 0,
+      total: installedCostInputs.atmosphericGasHumidifier,
+    },
+    humifog: {
+      base: humifogInstalledCost,
+      heatRecoveryAdder: !isFreeCoolingMode && hasChartRecovery ? heatRecoveryInstalledCost : 0,
+      freeCoolingControlsAdder: isFreeCoolingMode ? freeCoolingControlsInstalledCost : 0,
+      total: installedCostInputs.humifog,
+    },
+  }
+  const freeCoolingSteamAnnual = freeCoolingHumifogAnalysis.annualComparison.freeCooling || {}
+  const freeCoolingHumifogAnnual = freeCoolingHumifogAnalysis.annualComparison.humifog || {}
+  const freeCoolingSteamHumidificationKwh = freeCoolingSteamAnnual.humidificationEnergyKwh || 0
+  const freeCoolingCommonElectricKwh = Math.max(
+    0,
+    (freeCoolingSteamAnnual.totalEnergyKwh || 0) - freeCoolingSteamHumidificationKwh
+  )
+  const freeCoolingNaturalGasHumidificationKwh =
+    freeCoolingSteamHumidificationKwh / Math.max(steamBoilerEfficiency / 100, 0.01)
+  const freeCoolingAtmosphericGasHumidificationKwh =
+    freeCoolingSteamHumidificationKwh / Math.max(atmosphericGasHumidifierEfficiency / 100, 0.01)
+  const freeCoolingNaturalGasAnnualCost =
+    freeCoolingCommonElectricKwh * electricityRate +
+    (freeCoolingNaturalGasHumidificationKwh / 10.35) * naturalGasRate
+  const freeCoolingAtmosphericGasAnnualCost =
+    freeCoolingCommonElectricKwh * electricityRate +
+    (freeCoolingAtmosphericGasHumidificationKwh / 10.35) * naturalGasRate
+  const referenceRoiKey = annualComparisonReference === 'atmosphericGas'
+    ? 'atmosphericGasHumidifier'
+    : annualComparisonReference
   const referenceAnnualCost = isFreeCoolingMode
-    ? freeCoolingHumifogAnalysis.annualComparison.freeCooling.annualCost
-    : annualSteamCost
+    ? referenceRoiKey === 'naturalGasSteam'
+      ? freeCoolingNaturalGasAnnualCost
+      : referenceRoiKey === 'atmosphericGasHumidifier'
+        ? freeCoolingAtmosphericGasAnnualCost
+        : freeCoolingHumifogAnalysis.annualComparison.freeCooling.annualCost
+    : referenceRoiKey === 'naturalGasSteam'
+      ? annualNaturalGasCostResolved
+      : referenceRoiKey === 'atmosphericGasHumidifier'
+        ? annualAtmosphericGasHumidifierCostResolved
+        : annualSteamCostResolved
+  const referenceInstalledCost = referenceRoiKey === 'naturalGasSteam'
+    ? installedCostInputs.naturalGasSteam
+    : referenceRoiKey === 'atmosphericGasHumidifier'
+      ? installedCostInputs.atmosphericGasHumidifier
+      : installedCostInputs.electricSteam
   const roiOptions = [
     {
       key: 'electricSteam',
       label: language === 'fr' ? 'Humidificateur électrique vapeur' : 'Electric steam humidifier',
-      installedCost: electricSteamInstalledCost,
-      annualCost: isFreeCoolingMode ? freeCoolingHumifogAnalysis.annualComparison.freeCooling.annualCost : annualSteamCost,
-      reference: true,
+      installedCost: installedCostInputs.electricSteam,
+      annualCost: isFreeCoolingMode ? freeCoolingHumifogAnalysis.annualComparison.freeCooling.annualCost : annualSteamCostResolved,
+      reference: referenceRoiKey === 'electricSteam',
     },
     {
       key: 'naturalGasSteam',
       label: language === 'fr' ? 'Bouilloire vapeur gaz naturel' : 'Natural gas steam boiler',
-      installedCost: naturalGasSteamInstalledCost,
-      annualCost: annualNaturalGasCost,
+      installedCost: installedCostInputs.naturalGasSteam,
+      annualCost: isFreeCoolingMode ? freeCoolingNaturalGasAnnualCost : annualNaturalGasCostResolved,
+      reference: referenceRoiKey === 'naturalGasSteam',
     },
     {
       key: 'atmosphericGasHumidifier',
       label: language === 'fr' ? 'Humidificateur gaz atmosphérique' : 'Atmospheric gas humidifier',
-      installedCost: atmosphericGasHumidifierInstalledCost,
-      annualCost: annualAtmosphericGasHumidifierCost,
+      installedCost: installedCostInputs.atmosphericGasHumidifier,
+      annualCost: isFreeCoolingMode ? freeCoolingAtmosphericGasAnnualCost : annualAtmosphericGasHumidifierCostResolved,
+      reference: referenceRoiKey === 'atmosphericGasHumidifier',
     },
     {
       key: 'humifog',
       label: isFreeCoolingMode
         ? (language === 'fr' ? 'Humifog optimisé + Free Cooling' : 'Humifog optimized + Free Cooling')
         : (language === 'fr' ? 'Humifog adiabatique' : 'Humifog adiabatic'),
-      installedCost: selectedHumifogInstalledCost,
-      annualCost: isFreeCoolingMode ? freeCoolingHumifogAnalysis.annualComparison.humifog.annualCost : annualAdiabaticCost,
+      installedCost: installedCostInputs.humifog,
+      annualCost: isFreeCoolingMode ? freeCoolingHumifogAnalysis.annualComparison.humifog.annualCost : annualAdiabaticCostResolved,
     },
   ]
   const roiRows = roiOptions.map((option) => {
     const annualSavings = Math.round(referenceAnnualCost - option.annualCost)
-    const incrementalCost = Math.round(option.installedCost - baseSystemInstalledCost)
+    const incrementalCost = Math.round(option.installedCost - referenceInstalledCost)
     const paybackYears = annualSavings > 0
       ? Math.max(0, incrementalCost) / annualSavings
       : null
@@ -3822,6 +5072,9 @@ function HvacDashboardApp() {
   const reportDesignTemperatures = [
     { label: language === 'fr' ? 'Température sèche extérieure de conception' : 'Outdoor design dry bulb', value: outdoorDesignState.db },
     { label: language === 'fr' ? 'Température sèche de la pièce' : 'Room dry bulb', value: roomTemperature },
+    ...(is100OA ? [{ label: language === 'fr' ? 'Température d\'air d\'alimentation' : 'Supply Air Temperature', value: supplyAirTemperature }] : []),
+    { label: language === 'fr' ? 'Température avant Humifog' : 'Temperature Before Humifog', value: displayedPreHumifogTemp },
+    { label: language === 'fr' ? 'Température après Humifog' : 'Temperature After Humifog', value: displayedAfterHumifogTemp },
     ...(!is100OA
       ? [
         { label: language === 'fr' ? 'Air mélangé calculé' : 'Calculated mixed air', value: freeCoolingHumifogAnalysis.validation.calculatedMixedDb },
@@ -3829,9 +5082,29 @@ function HvacDashboardApp() {
       ]
       : []),
   ]
+  const reportPsychrometricStates = [
+    ...(!is100OA ? [{
+      label: language === 'fr' ? 'Température de mélange' : 'Mixed Air Temperature',
+      temperature: freeCoolingHumifogAnalysis.validation.activeMixedDb,
+      relativeHumidity: fallbackMixedState.rh,
+    }] : []),
+    {
+      label: language === 'fr' ? 'Température avant Humifog' : 'Temperature Before Humifog',
+      temperature: displayedPreHumifogTemp,
+      relativeHumidity: displayedPreHumifogRh,
+    },
+    {
+      label: language === 'fr' ? 'Température après Humifog' : 'Temperature After Humifog',
+      temperature: displayedAfterHumifogTemp,
+      relativeHumidity: displayedAfterHumifogRh,
+    },
+  ]
+  const scheduleDaysLabel = scheduleDaysOption === 'mon-fri' ? t.mondayToFriday : scheduleDaysOption === 'mon-sat' ? t.mondayToSaturday : scheduleDaysOption === 'seven-days' ? t.sevenDaysWeek : Object.entries(scheduleCustomDays).filter(([, value]) => value).map(([day]) => t[day]).join(', ')
   const scheduleDescriptionText = scheduleMode === '24-7'
     ? t.operationMode24_7
-    : `${scheduleStartTime} to ${scheduleEndTime}, ${scheduleDaysOption === 'mon-fri' ? t.mondayToFriday : scheduleDaysOption === 'mon-sat' ? t.mondayToSaturday : scheduleDaysOption === 'seven-days' ? t.sevenDaysWeek : Object.entries(scheduleCustomDays).filter(([, value]) => value).map(([day]) => t[day]).join(', ')}`
+    : language === 'fr'
+      ? `${scheduleStartTime} à ${scheduleEndTime}, ${scheduleDaysLabel.charAt(0).toLowerCase()}${scheduleDaysLabel.slice(1)}`
+      : `${scheduleStartTime} to ${scheduleEndTime}, ${scheduleDaysLabel}`
 
   const reportData = {
     language,
@@ -3842,14 +5115,30 @@ function HvacDashboardApp() {
       showFreeCoolingTables,
       includesFreeCoolingAnalysis: showFreeCoolingTables && !is100OA,
       ventilationModeName: ventilationMode.nom,
-      selectedCalculationMethod: calculationMethod === 'hourly' ? t.hourlyWeatherMethod : t.binHoursMethod,
+      selectedCalculationMethod: calculationMethod === 'hourly'
+        ? t.hourlyWeatherMethod
+        : isCustomOperatingHoursMode
+          ? (language === 'fr' ? 'Heures d’exploitation personnalisées' : 'Custom operating hours')
+          : t.binHoursMethod,
+      calculationMethod,
+      scheduleMode,
+      operatingHourBasis: calculationMethod === 'hourly'
+        ? (scheduleMode === 'custom'
+          ? (language === 'fr' ? 'Horaire personnalisé - simulation EPW horaire' : 'Custom operating hours - EPW hourly simulation')
+          : (language === 'fr' ? 'Simulation EPW horaire 8760' : 'EPW hourly simulation 8760'))
+        : (scheduleMode === 'custom'
+          ? (language === 'fr' ? 'Heures BIN ajustées selon l’horaire personnalisé' : 'BIN hours adjusted to custom schedule')
+          : (language === 'fr' ? 'Heures BIN' : 'BIN hours')),
+      isCustomOperatingHours: isCustomOperatingHoursMode,
       hourlyWeatherSourceType,
       hourlyWeatherFileName,
       hourlyWeatherFileLocation,
       hourlyWeatherRecordsLoaded,
       hourlyWeatherOperatingHoursUsed,
       hourlyWeatherParseError,
-      weatherDataSource: calculationMethod === 'hourly'
+      weatherDataSource: isCustomOperatingHoursMode
+        ? (language === 'fr' ? 'Horaire personnalisé' : 'Custom operating schedule')
+        : calculationMethod === 'hourly'
         ? (hourlyWeatherSourceType === 'custom'
           ? (language === 'fr' ? 'Fichier météo téléchargé personnalisé' : 'Custom uploaded weather file')
           : `${t.builtInWeatherFile} — ${selectedCity.nom}`)
@@ -3874,27 +5163,27 @@ function HvacDashboardApp() {
           climateFileType: localizeWeatherMetadataValue('climateFileType', hourlyWeatherMetadata?.climateFileType || '', language),
           loadedFile: hourlyWeatherFileName || builtInHourlyWeatherFileName,
           validation: formatWeatherValidationStatus(effectiveWeatherValidationStatus, language),
-          recordsLoaded: hourlyWeatherSummary.recordsLoaded,
-          operatingHoursUsed: hourlyWeatherSummary.operatingHoursUsed,
-          averageOutdoorTemp: hourlyWeatherSummary.averageOutdoorTemp,
-          minOutdoorTemp: hourlyWeatherSummary.minOutdoorTemp,
-          maxOutdoorTemp: hourlyWeatherSummary.maxOutdoorTemp,
-          averageOutdoorRh: hourlyWeatherSummary.averageOutdoorRh,
-          hoursBelowZero: hourlyWeatherSummary.hoursBelowZero,
-          hoursBelowMinusTen: hourlyWeatherSummary.hoursBelowMinusTen,
-          hoursBelowMinusTwenty: hourlyWeatherSummary.hoursBelowMinusTwenty,
-          hoursWithHumidificationRequired: hourlyWeatherSummary.hoursWithHumidificationRequired,
+          recordsLoaded: hourlyWeatherSummary?.recordsLoaded ?? 0,
+          operatingHoursUsed: hourlyWeatherSummary?.operatingHoursUsed ?? 0,
+          averageOutdoorTemp: hourlyWeatherSummary?.averageOutdoorTemp ?? 0,
+          minOutdoorTemp: hourlyWeatherSummary?.minOutdoorTemp ?? 0,
+          maxOutdoorTemp: hourlyWeatherSummary?.maxOutdoorTemp ?? 0,
+          averageOutdoorRh: hourlyWeatherSummary?.averageOutdoorRh ?? 0,
+          hoursBelowZero: hourlyWeatherSummary?.hoursBelowZero ?? 0,
+          hoursBelowMinusTen: hourlyWeatherSummary?.hoursBelowMinusTen ?? 0,
+          hoursBelowMinusTwenty: hourlyWeatherSummary?.hoursBelowMinusTwenty ?? 0,
+          hoursWithHumidificationRequired: hourlyWeatherSummary?.hoursWithHumidificationRequired ?? 0,
         }
         : null,
       hourlyAnnualResults: isHourlySimulationActive
         ? {
-          annualSteamKwh: hourlyWeatherSummary.annualSteamKwh,
-          annualGasKwh: hourlyWeatherSummary.annualGasKwh,
-          annualHumifogKwh: hourlyWeatherSummary.annualHumifogKwh,
-          annualCost: hourlyWeatherSummary.annualCost,
-          annualSavings: hourlyWeatherSummary.annualSavings,
-          annualGhgReduction: hourlyWeatherSummary.annualGhgReduction,
-          annualWaterConsumptionKg: hourlyWeatherSummary.annualWaterConsumptionKg,
+          annualSteamKwh: hourlyWeatherSummary?.annualSteamKwh ?? 0,
+          annualGasKwh: hourlyWeatherSummary?.annualGasKwh ?? 0,
+          annualHumifogKwh: hourlyWeatherSummary?.annualHumifogKwh ?? 0,
+          annualCost: hourlyWeatherSummary?.annualCost ?? 0,
+          annualSavings: hourlyWeatherSummary?.annualSavings ?? 0,
+          annualGhgReduction: hourlyWeatherSummary?.annualGhgReduction ?? 0,
+          annualWaterConsumptionKg: hourlyWeatherSummary?.annualWaterConsumptionKg ?? 0,
         }
         : null,
     },
@@ -3916,8 +5205,12 @@ function HvacDashboardApp() {
       calculatedAverageOaPercent: activeOaPercent,
       raPercent: is100OA ? 0 : 100 - activeOaPercent,
       selectedRaPercent: is100OA ? 0 : 100 - minimumOutsideAirPercent,
-      recoveryType: isNoRecovery ? 'None' : selectedSystemDiagramLabel,
-      recoveryEfficiency: isNoRecovery ? 0 : cappedRecoveryEfficiency,
+      recoveryType: selectedRecoveryDisplayName || (language === 'fr' ? 'Aucun' : 'None'),
+      recoveryTypeDisplay: selectedRecoveryDisplayName,
+      recoveryEfficiency: isNoRecovery ? 0 : effectiveSensibleRecoveryEfficiency,
+      recoverySensibleEfficiency: isNoRecovery ? 0 : effectiveSensibleRecoveryEfficiency,
+      recoveryLatentEfficiency: isNoRecovery ? 0 : effectiveLatentRecoveryEfficiency,
+      hasLatentRecovery: Boolean(!isNoRecovery && selectedRecoverySupportsLatent),
       heatingType: selectedReheatSystem?.nom || '',
       reheatMethodLabel: selectedReheatSystemDisplayName,
       reheatEnergySource: selectedReheatSystem?.energie || '',
@@ -3928,6 +5221,7 @@ function HvacDashboardApp() {
       airflowPaths: reportAirflowPaths,
       componentSequence: reportComponentSequence,
       designTemperatures: reportDesignTemperatures,
+      psychrometricStates: reportPsychrometricStates,
     },
     design: {
       outdoorState: outdoorDesignState,
@@ -3947,51 +5241,69 @@ function HvacDashboardApp() {
     message: freeCoolingHumifogAnalysis.message,
     metrics: {
       ...freeCoolingHumifogAnalysis.metrics,
+      correctedHumidificationLoad,
+      correctedHumidificationLoadRaw: Number(metrics.correctedHumidificationLoadRaw ?? correctedHumidificationLoad),
+      steamEnergyKW,
+      steamEnergyKWRaw,
+      humifogPumpKW: adiabaticHumidificationKW,
+      humifogPumpKWRaw: adiabaticHumidificationKWRaw,
+      commonHvacHeatingThermalKW,
+      commonHvacHeatingThermalKWRaw,
       scheduleFactor,
       scheduleDescription: scheduleDescriptionText,
       recoveryEnergyReductionKW,
-      annualHumidificationHours,
-      naturalGasGES,
-      atmosphericGasHumidifierGES,
-      adiabaticGES,
-      eliminatedGES,
-      savings,
+      annualHumidificationHours: annualHumidificationHoursResolved,
+      naturalGasGES: Number(annualNaturalGasGESResolved.toFixed(1)),
+      atmosphericGasHumidifierGES: Number(annualAtmosphericGasGESResolved.toFixed(1)),
+      adiabaticGES: Number(annualAdiabaticGESResolved.toFixed(1)),
+      eliminatedGES: Number(annualEliminatedGESResolved.toFixed(1)),
+      savings: annualSavingsPercentResolved,
     },
     psychrometricPoints: psychrometricChartPoints,
     energySummary: {
-      annualHumidificationHours,
+      annualHumidificationHours: annualHumidificationHoursResolved,
       steam: {
         powerKw: steamEnergyKW,
-        annualEnergyKwh: steamEnergyKW * annualHumidificationHours,
-        annualCost: annualSteamCost,
+        annualEnergyKwh: annualSteamEnergyKwhResolved,
+        annualCost: annualSteamCostResolved,
       },
       naturalGasSteam: {
         powerKw: naturalGasSteamInputKW,
-        annualEnergyKwh: naturalGasSteamInputKW * annualHumidificationHours,
-        annualCost: annualNaturalGasCost,
+        annualEnergyKwh: annualNaturalGasSteamEnergyKwhResolved,
+        annualCost: annualNaturalGasCostResolved,
       },
       atmosphericGasHumidifier: {
         powerKw: atmosphericGasHumidifierInputKW,
-        annualEnergyKwh: atmosphericGasHumidifierInputKW * annualHumidificationHours,
-        annualCost: annualAtmosphericGasHumidifierCost,
+        annualEnergyKwh: annualAtmosphericGasHumidifierEnergyKwhResolved,
+        annualCost: annualAtmosphericGasHumidifierCostResolved,
       },
       humifog: {
         powerKw: adiabaticEnergyKW,
-        annualEnergyKwh: adiabaticEnergyKW * annualHumidificationHours,
-        annualCost: annualAdiabaticCost,
+        annualEnergyKwh: annualAdiabaticEnergyKwhResolved,
+        annualCost: annualAdiabaticCostResolved,
         pumpPowerKw: adiabaticHumidificationKW,
         reheatPowerKw: reheatEnergyKW,
-        annualPumpCost: annualAdiabaticPumpCost,
-        annualReheatCost: annualAdiabaticReheatCost,
+        annualPumpEnergyKwh: annualHumifogPumpEnergyKwhResolved,
+        annualReheatEnergyKwh: annualHumifogSelectedPreheatEnergyKwhResolved,
+        annualPumpCost: annualHumifogPumpCostResolved,
+        annualReheatCost: annualHumifogSelectedPreheatCostResolved,
+        annualElectricPreheatEnergyKwh: annualHumifogElectricPreheatEnergyKwhResolved,
+        annualHeatPumpPreheatEnergyKwh: annualHumifogHeatPumpPreheatEnergyKwhResolved,
+        annualElectricTotalEnergyKwh: annualHumifogElectricTotalEnergyKwhResolved,
+        annualHeatPumpTotalEnergyKwh: annualHumifogHeatPumpTotalEnergyKwhResolved,
+        annualElectricCost: annualHumifogElectricCostResolved,
+        annualHeatPumpCost: annualHumifogHeatPumpCostResolved,
       },
-      annualSavingsVsSteam: annualSteamCost - annualAdiabaticCost,
+      annualSavingsVsSteam: annualSteamCostResolved - annualAdiabaticCostResolved,
     },
     economics: {
       electricityRate,
       naturalGasRate,
+      annualComparisonReference,
       steamBoilerEfficiency,
       atmosphericGasHumidifierEfficiency,
       installedCosts: installedCostInputs,
+      installedCostBreakdown,
       roiRows,
       selectedRoi: selectedRoiRow,
       estimatedPayback,
@@ -4019,6 +5331,14 @@ function HvacDashboardApp() {
     const formatted = Math.abs(rounded).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')
     return rounded < 0 ? `-${formatted}` : formatted
   }
+  const annualSteamCostDisplay = isHourlySimulationActive && hourlyWeatherSummary
+    ? Math.round((hourlyWeatherSummary.annualSteamKwh || 0) * electricityRate)
+    : Math.round(annualSteamCostResolved)
+  const annualNaturalGasCostDisplay = Math.round(annualNaturalGasCostResolved)
+  const annualAtmosphericGasHumidifierCostDisplay = Math.round(annualAtmosphericGasHumidifierCostResolved)
+  const annualAdiabaticCostDisplay = isHourlySimulationActive && hourlyWeatherSummary
+    ? Math.round(hourlyWeatherSummary.annualCost || 0)
+    : Math.round(annualAdiabaticCostResolved)
   const formatAnnualEnergy = (value) => `${formatEnergy(value)} kWh/year`
   const formatAnnualCost = (value) => `${formatCost(value)} $/year`
   const formatInstalledCost = (value) => `${formatCost(value)} $`
@@ -4093,101 +5413,350 @@ function HvacDashboardApp() {
   const annualHumifogHeatKwh =
     (freeCoolingHumifogAnalysis.annualComparison.humifog?.heatingEnergyKwh || 0) +
     (freeCoolingHumifogAnalysis.annualComparison.humifog?.reheatEnergyKwh || 0)
-  const freeCoolingSteamAnnual = freeCoolingHumifogAnalysis.annualComparison.freeCooling || {}
-  const freeCoolingHumifogAnnual = freeCoolingHumifogAnalysis.annualComparison.humifog || {}
-  const freeCoolingSteamHumidificationKwh = freeCoolingSteamAnnual.humidificationEnergyKwh || 0
-  const freeCoolingCommonElectricKwh = Math.max(
-    0,
-    (freeCoolingSteamAnnual.totalEnergyKwh || 0) - freeCoolingSteamHumidificationKwh
-  )
-  const freeCoolingNaturalGasHumidificationKwh =
-    freeCoolingSteamHumidificationKwh / Math.max(steamBoilerEfficiency / 100, 0.01)
-  const freeCoolingAtmosphericGasHumidificationKwh =
-    freeCoolingSteamHumidificationKwh / Math.max(atmosphericGasHumidifierEfficiency / 100, 0.01)
-  const freeCoolingNaturalGasAnnualCost =
-    freeCoolingCommonElectricKwh * electricityRate +
-    (freeCoolingNaturalGasHumidificationKwh / 10.35) * naturalGasRate
-  const freeCoolingAtmosphericGasAnnualCost =
-    freeCoolingCommonElectricKwh * electricityRate +
-    (freeCoolingAtmosphericGasHumidificationKwh / 10.35) * naturalGasRate
+  const annualHoursBasis = isCustomOperatingHoursMode
+    ? (language === 'fr' ? 'Heures personnalisées' : 'Custom Operating Hours')
+    : calculationMethod === 'bin'
+      ? (language === 'fr' ? 'Heures BIN' : 'BIN Hours')
+      : (language === 'fr' ? 'Météo horaire' : 'Hourly Weather')
+  const annualTechnologyResults = {
+    electricSteam: {
+      annualEnergyKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.totalEnergyKwh || 0 : energySummary.steam.annualEnergyKwh || 0,
+      annualOperatingCost: isFreeCoolingMode ? freeCoolingSteamAnnual.annualCost || 0 : annualSteamCostResolved,
+      heatingKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.heatingEnergyKwh || 0 : annualCommonHvacHeatingKwhResolved,
+      humidificationKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.humidificationEnergyKwh || 0 : energySummary.steam.annualEnergyKwh || 0,
+      reheatKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.reheatEnergyKwh || 0 : 0,
+      pumpKWh: 0,
+      installedInvestmentCost: installedCostInputs.electricSteam,
+      hoursBasis: annualHoursBasis,
+    },
+    naturalGasSteam: {
+      annualEnergyKWh: isFreeCoolingMode ? freeCoolingCommonElectricKwh + freeCoolingNaturalGasHumidificationKwh : annualCommonHvacHeatingKwhResolved + (energySummary.naturalGasSteam.annualEnergyKwh || 0),
+      annualOperatingCost: isFreeCoolingMode ? freeCoolingNaturalGasAnnualCost : annualNaturalGasCostResolved,
+      heatingKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.heatingEnergyKwh || 0 : annualCommonHvacHeatingKwhResolved,
+      humidificationKWh: isFreeCoolingMode ? freeCoolingNaturalGasHumidificationKwh : energySummary.naturalGasSteam.annualEnergyKwh || 0,
+      reheatKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.reheatEnergyKwh || 0 : 0,
+      pumpKWh: 0,
+      installedInvestmentCost: installedCostInputs.naturalGasSteam,
+      hoursBasis: annualHoursBasis,
+    },
+    atmosphericGas: {
+      annualEnergyKWh: isFreeCoolingMode ? freeCoolingCommonElectricKwh + freeCoolingAtmosphericGasHumidificationKwh : annualCommonHvacHeatingKwhResolved + (energySummary.atmosphericGasHumidifier.annualEnergyKwh || 0),
+      annualOperatingCost: isFreeCoolingMode ? freeCoolingAtmosphericGasAnnualCost : annualAtmosphericGasHumidifierCostResolved,
+      heatingKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.heatingEnergyKwh || 0 : annualCommonHvacHeatingKwhResolved,
+      humidificationKWh: isFreeCoolingMode ? freeCoolingAtmosphericGasHumidificationKwh : energySummary.atmosphericGasHumidifier.annualEnergyKwh || 0,
+      reheatKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.reheatEnergyKwh || 0 : 0,
+      pumpKWh: 0,
+      installedInvestmentCost: installedCostInputs.atmosphericGasHumidifier,
+      hoursBasis: annualHoursBasis,
+    },
+    humifogElectric: {
+      annualEnergyKWh: isFreeCoolingMode
+        ? freeCoolingHumifogAnnual.totalEnergyKwh || 0
+        : energySummary.humifog.annualEnergyKwh || 0,
+      annualOperatingCost: isFreeCoolingMode
+        ? freeCoolingHumifogAnnual.annualCost || 0
+        : annualHumifogElectricCostResolved,
+      heatingKWh: isFreeCoolingMode ? freeCoolingHumifogAnnual.heatingEnergyKwh || 0 : annualCommonHvacHeatingKwhResolved,
+      humidificationKWh: isFreeCoolingMode
+        ? freeCoolingHumifogAnnual.humidificationEnergyKwh || 0
+        : annualHumifogPumpEnergyKwhResolved,
+      reheatKWh: isFreeCoolingMode
+        ? freeCoolingHumifogAnnual.reheatEnergyKwh || 0
+        : annualHumifogElectricPreheatEnergyKwhResolved,
+      pumpKWh: isFreeCoolingMode
+        ? freeCoolingHumifogAnnual.humidificationEnergyKwh || 0
+        : annualHumifogPumpEnergyKwhResolved,
+      thermalReheatKWh: isFreeCoolingMode
+        ? freeCoolingHumifogAnnual.thermalReheatEnergyKwh || 0
+        : grossReheatKWRaw * (usesBinAnnualTotals ? totalBinHours : annualHumidificationHoursRaw),
+      reheatInputKWh: isFreeCoolingMode
+        ? freeCoolingHumifogAnnual.reheatEnergyKwh || 0
+        : annualHumifogSelectedPreheatEnergyKwhResolved,
+      installedInvestmentCost: selectedHumifogInstalledCost,
+      hoursBasis: annualHoursBasis,
+    },
+    humifogHeatPump: {
+      annualEnergyKWh: annualCommonHvacHeatingKwhResolved + annualHumifogHeatPumpTotalEnergyKwhResolved,
+      annualOperatingCost: annualHumifogHeatPumpCostResolved,
+      heatingKWh: annualCommonHvacHeatingKwhResolved,
+      humidificationKWh: annualHumifogPumpEnergyKwhResolved,
+      reheatKWh: annualHumifogHeatPumpPreheatEnergyKwhResolved,
+      pumpKWh: annualHumifogPumpEnergyKwhResolved,
+      thermalReheatKWh: grossReheatKWRaw * (usesBinAnnualTotals ? totalBinHours : annualHumidificationHoursRaw),
+      reheatInputKWh: annualHumifogHeatPumpPreheatEnergyKwhResolved,
+      installedInvestmentCost: selectedHumifogInstalledCost,
+      hoursBasis: annualHoursBasis,
+    },
+    humifogFreeCooling: {
+      annualEnergyKWh: freeCoolingHumifogAnnual.totalEnergyKwh || 0,
+      annualOperatingCost: freeCoolingHumifogAnnual.annualCost || 0,
+      heatingKWh: freeCoolingHumifogAnnual.heatingEnergyKwh || 0,
+      humidificationKWh: freeCoolingHumifogAnnual.humidificationEnergyKwh || 0,
+      reheatKWh: freeCoolingHumifogAnnual.reheatEnergyKwh || 0,
+      thermalReheatKWh: freeCoolingHumifogAnnual.thermalReheatEnergyKwh || 0,
+      pumpKWh: freeCoolingHumifogAnnual.humidificationEnergyKwh || 0,
+      freeCoolingObtainedKWh: freeCoolingHumifogAnnual.freeCoolingObtainedKwh,
+      installedInvestmentCost: selectedHumifogInstalledCost,
+      hoursBasis: annualHoursBasis,
+    },
+  }
+  Object.values(annualTechnologyResults).forEach((result) => {
+    result.humidificationLoadLbHr = Number(metrics.correctedHumidificationLoadRaw ?? correctedHumidificationLoad ?? 0)
+  })
+  const annualTechnologyResultsSerialized = JSON.stringify(annualTechnologyResults)
+  useEffect(() => {
+    onAnnualResults?.(annualTechnologyResults)
+  }, [annualTechnologyResultsSerialized])
+  reportData.annualTechnologyResults = annualTechnologyResults
+  Object.assign(reportData.energySummary.steam, {
+    annualEnergyKwh: annualTechnologyResults.electricSteam.annualEnergyKWh,
+    annualCost: annualTechnologyResults.electricSteam.annualOperatingCost,
+  })
+  Object.assign(reportData.energySummary.naturalGasSteam, {
+    annualEnergyKwh: annualTechnologyResults.naturalGasSteam.annualEnergyKWh,
+    annualCost: annualTechnologyResults.naturalGasSteam.annualOperatingCost,
+  })
+  Object.assign(reportData.energySummary.atmosphericGasHumidifier, {
+    annualEnergyKwh: annualTechnologyResults.atmosphericGas.annualEnergyKWh,
+    annualCost: annualTechnologyResults.atmosphericGas.annualOperatingCost,
+  })
+  Object.assign(reportData.energySummary.humifog, {
+    annualEnergyKwh: annualTechnologyResults.humifogElectric.annualEnergyKWh,
+    annualCost: annualTechnologyResults.humifogElectric.annualOperatingCost,
+  })
+  const reportSnapshot = {
+    id: activeSystemId,
+    name: activeSystemName || reportData.system.type,
+    settings: {
+      selectedCityName: selectedCity.nom,
+      outsideAirCFM,
+      minimumOutsideAirPercent,
+      roomTemperature,
+      roomRelativeHumidity,
+      calculationMethod,
+      scheduleMode,
+      scheduleStartTime,
+      scheduleEndTime,
+      scheduleDaysOption,
+      scheduleCustomDays,
+      hourlyWeatherFileName,
+      hourlyWeatherFileLocation,
+      hourlyWeatherSourceType,
+      hourlyWeatherRecordsLoaded,
+      hourlyWeatherOperatingHoursUsed,
+      hourlyWeatherSummary,
+      hourlyWeatherMetadata,
+      heatPumpCOP,
+    },
+    mode: reportData.mode,
+    system: reportData.system,
+    design: reportData.design,
+    project: reportData.project,
+    metrics: reportData.metrics,
+    psychrometricPoints: reportData.psychrometricPoints,
+    binRows: reportData.binRows,
+    optimizationRows: reportData.optimizationRows,
+    optimal: reportData.optimal,
+    validation: reportData.validation,
+    economics: reportData.economics,
+    annualComparison: reportData.annualComparison,
+    annualTechnologyResults: {
+      ...annualTechnologyResults,
+      ...(reportData.mode.includesFreeCoolingAnalysis ? {} : { humifogFreeCooling: undefined }),
+    },
+  }
+  const reportSnapshotSerialized = JSON.stringify(reportSnapshot)
+  useEffect(() => {
+    onReportSnapshot?.(reportSnapshot)
+  }, [reportSnapshotSerialized])
+  reportData.projectSystems = (projectSystems || []).map((system) => {
+    if (system.id === activeSystemId) return reportSnapshot
+
+    const savedSettings = system.settings || {}
+    const savedInstalledCosts = {
+      electricSteam: finiteSetting(savedSettings, 'electricSteamInstalledCost', null),
+      naturalGasSteam: finiteSetting(savedSettings, 'naturalGasSteamInstalledCost', null),
+      atmosphericGasHumidifier: finiteSetting(savedSettings, 'atmosphericGasHumidifierInstalledCost', null),
+      humifog: finiteSetting(savedSettings, 'humifogInstalledCost', null),
+      freeCoolingControls: finiteSetting(savedSettings, 'freeCoolingControlsInstalledCost', null),
+      heatRecovery: finiteSetting(savedSettings, 'heatRecoveryInstalledCost', null),
+    }
+    const existingSnapshot = system.reportSnapshot
+    if (existingSnapshot) {
+      return {
+        ...existingSnapshot,
+        id: existingSnapshot.id || system.id,
+        name: existingSnapshot.name || system.name,
+        settings: {
+          ...(existingSnapshot.settings || {}),
+          ...savedSettings,
+        },
+        economics: {
+          ...(existingSnapshot.economics || {}),
+          installedCosts: {
+            ...(existingSnapshot.economics?.installedCosts || {}),
+            ...Object.fromEntries(Object.entries(savedInstalledCosts).filter(([, value]) => value !== null)),
+          },
+        },
+      }
+    }
+
+    return {
+        name: system.name,
+        mode: {
+          selectedCalculationMethod: system.settings?.calculationMethod === 'hourly'
+            ? (language === 'fr' ? 'Simulation météo horaire 8760' : 'Hourly weather simulation 8760')
+            : system.settings?.scheduleMode === '24-7'
+              ? (language === 'fr' ? 'Heures BIN' : 'BIN Hours')
+              : (language === 'fr' ? 'Heures personnalisées' : 'Custom Operating Hours'),
+        },
+        system: { supplyAirflowCfm: system.settings?.outsideAirCFM },
+        project: {},
+        metrics: {},
+        economics: {},
+        annualComparison: { freeCooling: {}, humifog: {} },
+        annualTechnologyResults: system.results || {},
+      }
+  })
   const freeCoolingAnnualTechnologyOptions = [
     {
       key: 'electricSteam',
       label: language === 'fr' ? 'Vapeur electrique' : 'Electric steam',
       color: 'red',
-      heatingKwh: freeCoolingSteamAnnual.heatingEnergyKwh || 0,
-      reheatKwh: freeCoolingSteamAnnual.reheatEnergyKwh || 0,
-      humidificationKwh: freeCoolingSteamHumidificationKwh,
-      pumpKwh: null,
-      totalKwh: freeCoolingSteamAnnual.totalEnergyKwh || 0,
-      annualCost: freeCoolingSteamAnnual.annualCost || 0,
+      ...annualTechnologyResults.electricSteam,
+      totalKwh: annualTechnologyResults.electricSteam.annualEnergyKWh,
+      annualCost: annualTechnologyResults.electricSteam.annualOperatingCost,
     },
     {
       key: 'naturalGasSteam',
       label: language === 'fr' ? 'Vapeur gaz naturel' : 'Natural gas steam',
       color: 'yellow',
-      heatingKwh: freeCoolingSteamAnnual.heatingEnergyKwh || 0,
-      reheatKwh: freeCoolingSteamAnnual.reheatEnergyKwh || 0,
-      humidificationKwh: freeCoolingNaturalGasHumidificationKwh,
-      pumpKwh: null,
-      totalKwh: freeCoolingCommonElectricKwh + freeCoolingNaturalGasHumidificationKwh,
-      annualCost: freeCoolingNaturalGasAnnualCost,
+      ...annualTechnologyResults.naturalGasSteam,
+      totalKwh: annualTechnologyResults.naturalGasSteam.annualEnergyKWh,
+      annualCost: annualTechnologyResults.naturalGasSteam.annualOperatingCost,
     },
     {
-      key: 'atmosphericGasHumidifier',
+      key: 'atmosphericGas',
       label: language === 'fr' ? 'Humidificateur gaz atmosph.' : 'Atmospheric gas humidifier',
       color: 'amber',
-      heatingKwh: freeCoolingSteamAnnual.heatingEnergyKwh || 0,
-      reheatKwh: freeCoolingSteamAnnual.reheatEnergyKwh || 0,
-      humidificationKwh: freeCoolingAtmosphericGasHumidificationKwh,
-      pumpKwh: null,
-      totalKwh: freeCoolingCommonElectricKwh + freeCoolingAtmosphericGasHumidificationKwh,
-      annualCost: freeCoolingAtmosphericGasAnnualCost,
+      ...annualTechnologyResults.atmosphericGas,
+      totalKwh: annualTechnologyResults.atmosphericGas.annualEnergyKWh,
+      annualCost: annualTechnologyResults.atmosphericGas.annualOperatingCost,
     },
     {
-      key: 'humifog',
+      key: 'humifogFreeCooling',
       label: language === 'fr' ? 'Humifog + Free Cooling' : 'Humifog + Free Cooling',
       color: 'cyan',
-      heatingKwh: freeCoolingHumifogAnnual.heatingEnergyKwh || 0,
-      reheatKwh: freeCoolingHumifogAnnual.reheatEnergyKwh || 0,
-      humidificationKwh: null,
-      pumpKwh: freeCoolingHumifogAnnual.humidificationEnergyKwh || 0,
-      totalKwh: freeCoolingHumifogAnnual.totalEnergyKwh || 0,
-      annualCost: freeCoolingHumifogAnnual.annualCost || 0,
+      ...annualTechnologyResults.humifogFreeCooling,
+      totalKwh: annualTechnologyResults.humifogFreeCooling.annualEnergyKWh,
+      annualCost: annualTechnologyResults.humifogFreeCooling.annualOperatingCost,
+    },
+    {
+      key: 'humifogElectric',
+      label: language === 'fr' ? 'Humifog + réchauffage électrique' : 'Humifog + Electric Reheat',
+      color: 'sky',
+      ...annualTechnologyResults.humifogElectric,
+      pumpKwh: annualTechnologyResults.humifogElectric.pumpKWh,
+      totalKwh: annualTechnologyResults.humifogElectric.annualEnergyKWh,
+      annualCost: annualTechnologyResults.humifogElectric.annualOperatingCost,
+    },
+    {
+      key: 'humifogHeatPump',
+      label: language === 'fr' ? 'Humifog + thermopompe Air/Eau' : 'Humifog + Air/Water Heat Pump',
+      color: 'violet',
+      ...annualTechnologyResults.humifogHeatPump,
+      pumpKwh: annualTechnologyResults.humifogHeatPump.pumpKWh,
+      totalKwh: annualTechnologyResults.humifogHeatPump.annualEnergyKWh,
+      annualCost: annualTechnologyResults.humifogHeatPump.annualOperatingCost,
     },
   ]
   const freeCoolingAnnualTechnologyRows = [
     {
+      key: 'heating',
       label: language === 'fr' ? 'Energie annuelle chauffage' : 'Annual heating energy',
-      value: (option) => option.heatingKwh,
+      value: (option) => option.heatingKWh,
       format: formatAnnualEnergyIfComplete,
     },
     {
+      key: 'reheat',
       label: language === 'fr' ? 'Energie annuelle rechauffage' : 'Annual reheat energy',
-      value: (option) => option.reheatKwh,
+      value: (option) => option.reheatKWh,
       format: formatAnnualEnergyIfComplete,
     },
     {
+      key: 'humidification',
       label: language === 'fr' ? 'Energie annuelle humidification' : 'Annual humidification energy',
-      value: (option) => option.humidificationKwh,
-      format: (value) => value === null ? '-' : formatAnnualEnergyIfComplete(value),
+      value: (option) => option.humidificationKWh,
+      format: (value) => value === null ? (language === 'fr' ? 'Non applicable' : 'Not applicable') : formatAnnualEnergyIfComplete(value),
     },
     {
+      key: 'pump',
       label: language === 'fr' ? 'Energie pompe Humifog' : 'Humifog pump energy',
-      value: (option) => option.pumpKwh,
-      format: (value) => value === null ? '-' : formatAnnualEnergyIfComplete(value),
+      value: (option) => option.pumpKWh,
+      format: (value) => value === null ? (language === 'fr' ? 'Non applicable' : 'Not applicable') : formatAnnualEnergyIfComplete(value),
     },
     {
+      key: 'total',
       label: language === 'fr' ? 'Energie annuelle totale' : 'Total annual energy',
       value: (option) => option.totalKwh,
       format: formatAnnualEnergyIfComplete,
     },
     {
+      key: 'cost',
       label: language === 'fr' ? 'Cout annuel exploitation' : 'Annual operating cost',
       value: (option) => option.annualCost,
       format: formatAnnualCostIfComplete,
     },
   ]
+  const selectedHumifogKey = selectedHumifogTechnology({ mode: reportData.mode, system: reportData.system })
+  const annualTechnologyOptions = freeCoolingAnnualTechnologyOptions.filter((option) => (
+    BASELINE_TECHNOLOGIES.includes(option.key) || option.key === selectedHumifogKey
+  ))
+  const selectedHumifogOption = annualTechnologyOptions.find((option) => option.key === selectedHumifogKey)
+  const annualComparisonReferenceOption = annualTechnologyOptions.find((option) => option.key === annualComparisonReference) || annualTechnologyOptions[0]
+  const detailedAnnualComparisonRows = [
+    { key: 'heatingKWh', label: language === 'fr' ? 'Énergie annuelle chauffage' : 'Annual heating energy', kind: 'energy' },
+    { key: 'humidificationKWh', label: language === 'fr' ? 'Énergie annuelle humidification' : 'Annual humidification energy', kind: 'energy' },
+    { key: 'reheatKWh', label: language === 'fr' ? 'Énergie annuelle réchauffage' : 'Annual reheat energy', kind: 'energy' },
+    { key: 'pumpKWh', label: language === 'fr' ? 'Énergie pompe Humifog' : 'Humifog pump energy', kind: 'energy', humifogOnly: true },
+    ...(selectedHumifogKey === 'humifogFreeCooling'
+      ? [{ key: 'freeCoolingObtainedKWh', label: language === 'fr' ? 'Refroidissement gratuit grâce au Free Cooling' : 'Free cooling obtained from Free Cooling', kind: 'energy', humifogOnly: true }]
+      : []),
+    { key: 'annualEnergyKWh', label: language === 'fr' ? 'Énergie annuelle totale' : 'Total annual energy', kind: 'energy' },
+    { key: 'annualOperatingCost', label: language === 'fr' ? 'Coût annuel total' : 'Total annual cost', kind: 'cost' },
+    { key: 'annualSavings', label: language === 'fr' ? 'Économie annuelle nette' : 'Net annual savings', kind: 'cost', selectedHumifogOnly: true },
+  ]
+  const annualComparisonValue = (row, option) => {
+    if (row.selectedHumifogOnly && option.key !== selectedHumifogKey) return null
+    if (row.humifogOnly && !option.key.startsWith('humifog')) return null
+    if (row.key === 'annualSavings') {
+      return Number(annualComparisonReferenceOption?.annualOperatingCost) - Number(selectedHumifogOption?.annualOperatingCost)
+    }
+    const value = option[row.key]
+    return Number.isFinite(Number(value)) ? Number(value) : undefined
+  }
+  const formatAnnualComparisonValue = (row, value) => {
+    if (value === null) return language === 'fr' ? 'Non applicable' : 'Not applicable'
+    if (!Number.isFinite(value)) return language === 'fr' ? 'Non disponible' : 'Not available'
+    return row.kind === 'cost' ? formatAnnualCost(value) : formatAnnualEnergy(value)
+  }
+  const annualComparisonDifference = (row) => {
+    const referenceValue = annualComparisonValue(row, annualComparisonReferenceOption)
+    const humifogValue = annualComparisonValue(row, selectedHumifogOption)
+    return Number.isFinite(referenceValue) && Number.isFinite(humifogValue)
+      ? referenceValue - humifogValue
+      : null
+  }
+  const format100OaAnnualValue = (row, option) => {
+    if (row.key === 'pump' && !option.key.startsWith('humifog')) {
+      return language === 'fr' ? 'Non applicable' : 'Not applicable'
+    }
+    const value = row.value(option)
+    if (value === undefined || value === null || !Number.isFinite(Number(value))) {
+      return language === 'fr' ? 'Non disponible' : 'Not available'
+    }
+    return row.key === 'cost' ? formatAnnualCost(value) : formatAnnualEnergy(value)
+  }
   const formatOaReductionText = (steamOa, humifogOa) => {
     const difference = Number(steamOa || 0) - Number(humifogOa || 0)
     const points = formatNumber(Math.abs(difference), 0)
@@ -4363,8 +5932,8 @@ function HvacDashboardApp() {
     afterHumifogRh: `HR ${formatNumber(fallbackAfterHumifogState.rh, 0)}%`,
     afterHeatingTemp: `${displayTemp(fallbackAfterHeatingState.db)}${tempUnit}`,
     afterHeatingRh: `HR ${formatNumber(fallbackAfterHeatingState.rh, 0)}%`,
-    saTemp: `${displayTemp(effectiveSupplyAirTemperature)}${tempUnit}`,
-    saRh: `HR ${formatNumber(roomRelativeHumidity, 0)}%`,
+    saTemp: `${displayTemp(displayedAfterHumifogTemp)}${tempUnit}`,
+    saRh: `HR ${formatNumber(displayedAfterHumifogRh, 1)}%`,
     recoveryKw: `${formatNumber(chartRecoveryThermalKw, 1)} kW`,
     heatingKw: `${formatNumber(chartHeatingHpKw, 1)} kW`,
     humifogKw: `${formatNumber(chartHumifogPumpKw, 1)} kW`,
@@ -4391,7 +5960,7 @@ function HvacDashboardApp() {
       'After thermal wheel': language === 'fr' ? 'Après roue thermique' : 'After thermal wheel',
       'After recovery': language === 'fr' ? 'Après récupération' : 'After recovery',
       'After Humifog': language === 'fr' ? 'Après Humifog' : 'After Humifog',
-      'After preheat Humifog': language === 'fr' ? 'Après préchauffage Humifog' : 'After Humifog preheat',
+      'After preheat Humifog': language === 'fr' ? 'Après préchauffage' : 'After Preheat',
       Room: language === 'fr' ? 'Pièce' : 'Room',
     }
 
@@ -4431,8 +6000,8 @@ function HvacDashboardApp() {
       message: reportData.message,
       annualBreakdownRows: reportData.annualBreakdownRows,
       alignedComparisonRows: freeCoolingAlignedComparisonRows,
-      binValidationRows: reportData.binValidationRows,
-      optimizationRows: reportData.optimizationRows,
+      binValidationRows: isCustomOperatingHoursMode ? [] : reportData.binValidationRows,
+      optimizationRows: isCustomOperatingHoursMode ? [] : reportData.optimizationRows,
     },
     displayedValues: {
       humidificationLoad: humidificationLoadDisplay,
@@ -4504,7 +6073,7 @@ function HvacDashboardApp() {
       }
 
       const fallbackPrefix = payload.fallbackReason
-        ? `${language === 'fr' ? 'Mode local HESES actif' : 'HESES local mode active'}\n\n`
+        ? `${language === 'fr' ? 'Mode local HESA actif' : 'HESA local mode active'}\n\n`
         : ''
       setAssistantAnswer(fallbackPrefix + (payload.answer || (language === 'fr'
         ? "L'assistant n'a retourne aucune reponse."
@@ -4514,8 +6083,8 @@ function HvacDashboardApp() {
       const networkFailure = rawMessage === 'Failed to fetch' || rawMessage.includes('NetworkError')
       setAssistantError(networkFailure
         ? (language === 'fr'
-          ? 'Le service Assistant HESES ne repond pas via Vite. Redemarrez HESES avec npm run dev ou npm run dev:all.'
-          : 'The HESES Assistant service is not responding through Vite. Restart HESES with npm run dev or npm run dev:all.')
+          ? 'Le service Assistant HESA ne repond pas via Vite. Redemarrez HESA avec npm run dev ou npm run dev:all.'
+          : 'The HESA Assistant service is not responding through Vite. Restart HESA with npm run dev or npm run dev:all.')
         : rawMessage)
     } finally {
       setAssistantLoading(false)
@@ -4530,15 +6099,15 @@ function HvacDashboardApp() {
         </div>
         <p className="mt-1">
           {language === 'fr'
-            ? 'La route serveur /api/heses-assistant ne repond pas. Redemarrez HESES avec npm run dev ou npm run dev:all.'
-            : 'The server route /api/heses-assistant is not responding. Restart HESES with npm run dev or npm run dev:all.'}
+            ? 'La route serveur /api/heses-assistant ne repond pas. Redemarrez HESA avec npm run dev ou npm run dev:all.'
+            : 'The server route /api/heses-assistant is not responding. Restart HESA with npm run dev or npm run dev:all.'}
         </p>
       </div>
     ) : assistantHealth.configured === false ? (
       <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="font-bold text-slate-900">
-            {language === 'fr' ? 'Mode local HESES actif' : 'HESES local mode active'}
+            {language === 'fr' ? 'Mode local HESA actif' : 'HESA local mode active'}
           </div>
           <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-bold text-slate-700">
             {language === 'fr' ? 'Assistant secondaire' : 'Secondary assistant'}
@@ -4546,108 +6115,52 @@ function HvacDashboardApp() {
         </div>
         <p className="mt-2">
           {language === 'fr'
-            ? "L'assistant explique uniquement les resultats affiches par HESES. Il ne modifie pas les calculs et ne bloque pas le logiciel."
-            : 'The assistant explains only the results displayed by HESES. It does not modify calculations or block the software.'}
+            ? "L'assistant explique uniquement les resultats affiches par HESA. Il ne modifie pas les calculs et ne bloque pas le logiciel."
+            : 'The assistant explains only the results displayed by HESA. It does not modify calculations or block the software.'}
         </p>
       </div>
     ) : (
       <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-900">
         {language === 'fr'
-          ? 'Assistant HESES actif.'
-          : 'HESES Assistant active.'}
+          ? 'Assistant HESA actif.'
+          : 'HESA Assistant active.'}
       </div>
     )
   )
 
+  if (showLandingPage) {
+    return (
+      <HesesLandingPage
+        language={language}
+        setLanguage={setLanguage}
+        onStartAnalysis={() => {
+          if (typeof controlledStartAnalysis === 'function') {
+            controlledStartAnalysis()
+            return
+          }
+          setInternalShowLandingPage(false)
+        }}
+      />
+    )
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 p-6">
       <style>{`
-        @media screen {
-          .heses-print-report {
-            position: absolute;
-            left: -10000px;
-            top: 0;
-            width: 1060px;
-            background: #ffffff;
-          }
-        }
-
-        @media print {
-          @page {
-            size: letter;
-            margin: 14mm;
-          }
-
-          body {
-            background: #ffffff !important;
-          }
-
-          body * {
-            visibility: hidden !important;
-          }
-
-          .heses-print-report,
-          .heses-print-report * {
-            visibility: visible !important;
-          }
-
-          .heses-print-report {
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 100% !important;
-            color: #0f172a !important;
-            background: #ffffff !important;
-          }
-
-          .heses-print-report .engineering-report {
-            max-width: 1060px;
-            margin: 0 auto;
-            font-size: 12px;
-          }
-
-          .heses-print-report .page-break {
-            break-before: auto;
-            page-break-before: auto;
-          }
-
-          .heses-print-report .report-cover.page-break {
-            break-before: auto;
-            page-break-before: auto;
-          }
-
-          .heses-print-report .report-cover {
-            break-after: page;
-            page-break-after: always;
-          }
-
-          .heses-print-report .report-section {
-            break-inside: avoid;
-            page-break-inside: avoid;
-          }
-
-          .heses-print-report .report-section.allow-page-break {
-            break-inside: auto;
-            page-break-inside: auto;
-          }
-
-          .heses-print-report .report-section h2,
-          .heses-print-report .report-section h3 {
-            break-after: avoid;
-            page-break-after: avoid;
-          }
-
-          .heses-print-report button {
-            display: none !important;
-          }
+        .heses-print-report {
+          position: absolute;
+          left: -10000px;
+          top: 0;
+          width: 1060px;
+          background: #ffffff;
         }
       `}</style>
       <div className="mx-auto mb-6 flex max-w-7xl flex-wrap items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-4">
-          <div className="logo-card" role="img" aria-label="HESES Humidification Energy Software">
-            <div className="logo-title">HESES</div>
+          <div className="logo-card" role="img" aria-label="HESA Humidification Energy System Analysis">
+            <div className="logo-title">HESA</div>
             <div className="logo-accent" aria-hidden="true" />
-            <div className="logo-subtitle">Humidification Energy Software</div>
+            <div className="logo-subtitle">Humidification Energy System Analysis</div>
           </div>
           <div className="flex flex-wrap gap-2">
           <button
@@ -4779,7 +6292,7 @@ function HvacDashboardApp() {
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-2xl font-bold text-slate-900">
-                {language === 'fr' ? 'Apercu du rapport HESES genere' : 'Generated HESES report preview'}
+                {language === 'fr' ? 'Apercu du rapport HESA genere' : 'Generated HESA report preview'}
               </h2>
               {reportStatus && (
                 <p className="mt-1 text-sm font-semibold text-slate-600">{reportStatus}</p>
@@ -4818,7 +6331,7 @@ function HvacDashboardApp() {
           </div>
           <div className="max-h-[75vh] overflow-auto rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <iframe
-              title={language === 'fr' ? 'Aperçu du rapport PDF HESES' : 'HESES PDF report preview'}
+              title={language === 'fr' ? 'Aperçu du rapport PDF HESA' : 'HESA PDF report preview'}
               srcDoc={buildPrintableReportHtml({ autoPrint: false })}
               className="h-[75vh] w-full rounded-xl border-0 bg-white shadow"
             />
@@ -4977,6 +6490,62 @@ function HvacDashboardApp() {
                     ? 'Note : si les températures de mélange appliquées sont égales, le minimum OA sélectionné bloque les volets. La cible Humifog demeure plus chaude avant atomisation, mais elle ne peut pas être atteinte sans descendre sous le minimum OA.'
                     : 'Note: if the applied mixed-air temperatures are equal, the selected OA minimum is limiting the dampers. The Humifog target remains warmer before atomization, but it cannot be reached without going below the OA minimum.'}
                 </p>
+
+                <section className="mt-6 rounded-2xl border border-cyan-200 bg-cyan-50 p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-xl font-bold text-slate-900">
+                        {language === 'fr' ? 'Commande des volets OA / RA Free Cooling' : 'Free Cooling OA / RA Damper Control'}
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-700">
+                        {language === 'fr'
+                          ? 'La vapeur et Humifog utilisent leurs propres positions de volets calculées. Le minimum OA sélectionné reste une limite inférieure.'
+                          : 'Steam and Humifog use their own calculated damper positions. The selected minimum OA remains a lower limit.'}
+                      </p>
+                    </div>
+                    <div className="rounded-full border border-cyan-200 bg-white px-3 py-1 text-sm font-bold text-cyan-800">
+                      {language === 'fr' ? 'Volets modulants' : 'Modulating dampers'}
+                    </div>
+                  </div>
+
+                  <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <label className="rounded-xl border border-cyan-100 bg-white p-4">
+                      <span className="block text-xs font-bold uppercase text-slate-500">
+                        {language === 'fr' ? 'Consigne air mélangé' : 'Mixed-air setpoint'}
+                      </span>
+                      <input
+                        type="number"
+                        min={displayTemp(10)}
+                        max={displayTemp(30)}
+                        step="0.5"
+                        value={displayTemp(economizerTargetTemp)}
+                        onChange={(event) => setEconomizerTargetTemp(inputTempToC(Number(event.target.value)))}
+                        className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-right font-bold text-slate-800"
+                      />
+                      <span className="mt-1 block text-xs text-slate-500">{tempUnit}</span>
+                    </label>
+                    <div className="rounded-xl border border-cyan-100 bg-white p-4">
+                      <div className="text-xs font-bold uppercase text-slate-500">{language === 'fr' ? 'OA minimum imposé' : 'Enforced OA minimum'}</div>
+                      <div className="mt-2 text-2xl font-bold text-cyan-800">{formatNumber(minimumOutsideAirPercent, 1)}% OA</div>
+                      <div className="mt-1 text-sm font-semibold text-orange-700">{formatNumber(100 - minimumOutsideAirPercent, 1)}% RA</div>
+                    </div>
+                    <div className="rounded-xl border border-red-100 bg-white p-4">
+                      <div className="text-xs font-bold uppercase text-slate-500">{language === 'fr' ? 'Vapeur, moyenne appliquée' : 'Steam, average applied'}</div>
+                      <div className="mt-2 text-2xl font-bold text-red-700">{formatNumber(freeCoolingHumifogAnalysis.annualComparison.freeCooling.averageAppliedOa, 1)}% OA</div>
+                      <div className="mt-1 text-sm font-semibold text-orange-700">{formatNumber(100 - freeCoolingHumifogAnalysis.annualComparison.freeCooling.averageAppliedOa, 1)}% RA</div>
+                    </div>
+                    <div className="rounded-xl border border-cyan-100 bg-white p-4">
+                      <div className="text-xs font-bold uppercase text-slate-500">{language === 'fr' ? 'Humifog, moyenne appliquée' : 'Humifog, average applied'}</div>
+                      <div className="mt-2 text-2xl font-bold text-cyan-800">{formatNumber(freeCoolingHumifogAnalysis.annualComparison.humifog.averageAppliedOa, 1)}% OA</div>
+                      <div className="mt-1 text-sm font-semibold text-orange-700">{formatNumber(100 - freeCoolingHumifogAnalysis.annualComparison.humifog.averageAppliedOa, 1)}% RA</div>
+                    </div>
+                  </div>
+                  <p className="mt-4 text-sm font-semibold text-slate-700">
+                    {language === 'fr'
+                      ? 'Les positions théoriques et appliquées par BIN restent visibles dans la validation annuelle ci-dessous; la position appliquée ne descend jamais sous le minimum OA.'
+                      : 'The theoretical and applied positions by BIN remain visible in the annual validation below; the applied position never goes below the OA minimum.'}
+                  </p>
+                </section>
               </div>
             </div>
             )}
@@ -5027,7 +6596,11 @@ function HvacDashboardApp() {
                   {displayedHeatRecoverySystems.map((item, index) => (
                     <div
                       key={index}
-                      onClick={() => setSelectedRecoveries([item])}
+                      onClick={() => {
+                        setSelectedRecoveries([item])
+                        setWheelEfficiency(defaultSensibleRecoveryEfficiency(item))
+                        setLatentRecoveryEfficiency(defaultLatentRecoveryEfficiency(item))
+                      }}
                       className={`rounded-2xl p-5 border-2 cursor-pointer transition hover:shadow-lg ${
                         activeSelectedRecoveries.some(r => r.nom === item.nom)
                           ? 'border-cyan-500 bg-cyan-50'
@@ -5046,15 +6619,59 @@ function HvacDashboardApp() {
                       <div className="font-bold text-slate-800 text-lg">{item.nom}</div>
                       <div className="text-slate-500 text-sm mt-2">{item.type}</div>
                       <div className="mt-5 flex justify-between items-center">
-                        <div className="text-sm text-slate-500">{t.efficiency}</div>
-                        <div className="text-3xl font-bold text-cyan-700">{item.efficacite}%</div>
+                        <div className="text-sm text-slate-500">{t.designRecoveryEfficiency}</div>
+                        <div className="text-3xl font-bold text-cyan-700">
+                          {activeSelectedRecoveries.some(r => r.nom === item.nom)
+                            ? `${Math.round(effectiveSensibleRecoveryEfficiency)}%`
+                            : `${Math.round(defaultSensibleRecoveryEfficiency(item))}%`}
+                        </div>
                       </div>
                     </div>
                   ))}
                 </div>
+
+                {!isNoRecovery && (
+                  <div className="mt-6 rounded-2xl border border-orange-200 bg-white p-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <div className="flex justify-between mb-2">
+                          <span className="text-sm font-semibold text-slate-700">{t.sensibleEfficiency}</span>
+                          <span className="text-sm font-bold text-slate-800">{Math.round(effectiveSensibleRecoveryEfficiency)}%</span>
+                        </div>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="1"
+                          value={Math.round(wheelEfficiency)}
+                          onChange={(event) => setWheelEfficiency(clampValue(Number(event.target.value), 0, 100))}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
+                        />
+                        <div className="mt-1 text-xs text-slate-500">{t.designRecoveryEfficiency}</div>
+                      </div>
+                      {selectedRecoverySupportsLatent ? (
+                        <div>
+                          <div className="flex justify-between mb-2">
+                            <span className="text-sm font-semibold text-slate-700">{t.latentEfficiency}</span>
+                            <span className="text-sm font-bold text-slate-800">{Math.round(effectiveLatentRecoveryEfficiency)}%</span>
+                          </div>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={Math.round(latentRecoveryEfficiency)}
+                            onChange={(event) => setLatentRecoveryEfficiency(clampValue(Number(event.target.value), 0, 100))}
+                            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
+                          />
+                          <div className="mt-1 text-xs text-slate-500">{t.designRecoveryEfficiency}</div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
-
             {false && (
               <>
             <h2 className="text-2xl font-bold text-slate-800 mb-6">{t.hvacParameters}</h2>
@@ -5273,28 +6890,33 @@ function HvacDashboardApp() {
                 </div>
               )}
 
-              <div>
+              {!isFreeCoolingMode && (
+                <div>
                 <div className="flex justify-between mb-2">
                   <span>{t.supplyAirTemperature}</span>
-                  <span>{displayTemp(effectiveSupplyAirTemperature)}{tempUnit}</span>
+                  <span>{displayTemp(supplyAirTemperature)}{tempUnit}</span>
                 </div>
-                {is100OA ? (
-                  <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-semibold text-sky-800">
-                    {language === 'fr'
-                      ? 'Automatique : identique à la température de pièce en mode 100 % air extérieur.'
-                      : 'Automatic: equal to room temperature in 100% outdoor air mode.'}
-                  </div>
-                ) : (
-                  <input
-                    type="number"
-                    min={displayTemp(15)}
-                    max={displayTemp(40)}
-                    step="0.1"
-                    value={displayTemp(supplyAirTemperature)}
-                    onChange={(e) => setSupplyAirTemperature(inputTempToC(Number(e.target.value)))}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
-                  />
-                )}
+                <input
+                  type="number"
+                  min={displayTemp(15)}
+                  max={displayTemp(40)}
+                  step="0.1"
+                  value={displayTemp(supplyAirTemperature)}
+                  onChange={(e) => setSupplyAirTemperature(inputTempToC(Number(e.target.value)))}
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
+                />
+                </div>
+              )}
+
+              <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3">
+                <div className="flex justify-between gap-4 mb-2">
+                  <span>{t.beforeHumifogTemperature}</span>
+                  <span className="font-semibold">{displayTemp(displayedPreHumifogTemp)}{tempUnit} / HR {formatNumber(displayedPreHumifogRh, 1)}%</span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span>{t.afterHumifogTemperature}</span>
+                  <span className="font-semibold">{displayTemp(displayedAfterHumifogTemp)}{tempUnit} / HR {formatNumber(displayedAfterHumifogRh, 1)}%</span>
+                </div>
               </div>
             </div>
 
@@ -5353,19 +6975,7 @@ function HvacDashboardApp() {
                 )}
               </div>
 
-              {!isFreeCoolingMode && (
-                <div>
-                  <div className="flex justify-between mb-2">
-                    <span>{t.thermalWheel}</span>
-                    <span>{wheelEfficiency}%</span>
-                  </div>
-                  <input
-                    type="number" min="0" max="100" step="1" value={wheelEfficiency}
-                    onChange={(e) => setWheelEfficiency(Number(e.target.value))}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
-                  />
-                </div>
-              )}
+              {!isFreeCoolingMode && <div />}
 
             </div>
           </div>
@@ -5480,7 +7090,7 @@ function HvacDashboardApp() {
                     />
                   </td>
                   <td className="p-4 text-center text-yellow-700 font-semibold">
-                    {annualNaturalGasCost.toLocaleString()} $/an
+                    {annualNaturalGasCostDisplay.toLocaleString()} $/an
                   </td>
                 </tr>
 
@@ -5510,7 +7120,7 @@ function HvacDashboardApp() {
                     />
                   </td>
                   <td className="p-4 text-center text-amber-700 font-semibold">
-                    {atmosphericGasHumidifierInputKW.toLocaleString()} kW / {displayGasFlow(atmosphericGasHumidifierM3PerHour)} {gasFlowUnit} / {annualAtmosphericGasHumidifierCost.toLocaleString()} $/an
+                    {atmosphericGasHumidifierInputKW.toLocaleString()} kW / {displayGasFlow(atmosphericGasHumidifierM3PerHour)} {gasFlowUnit} / {annualAtmosphericGasHumidifierCostDisplay.toLocaleString()} $/an
                   </td>
                 </tr>
               </tbody>
@@ -5697,19 +7307,19 @@ function HvacDashboardApp() {
 
             <div className="bg-emerald-50 border border-emerald-200 rounded-3xl p-6">
               <div className="text-sm text-emerald-700">{t.eliminatedGHG}</div>
-              <div className="text-5xl font-bold text-emerald-800 mt-3">{eliminatedGES}</div>
+              <div className="text-5xl font-bold text-emerald-800 mt-3">{Number(annualEliminatedGESResolved.toFixed(1))}</div>
               <div className="text-emerald-700 mt-2">tonnes CO2/an</div>
             </div>
 
             <div className="bg-cyan-50 border border-cyan-200 rounded-3xl p-6">
               <div className="text-sm text-cyan-700">{t.totalAdiabaticHP}</div>
-              <div className="text-5xl font-bold text-cyan-800 mt-3">{adiabaticEnergyKW}</div>
+              <div className="text-5xl font-bold text-cyan-800 mt-3">{formatNumber(adiabaticEnergyKW, 1)}</div>
               <div className="text-cyan-700 mt-2">kW</div>
             </div>
           </div>
 
           {/* Comparison Table */}
-          <div className="w-full bg-white rounded-3xl shadow-xl p-6 overflow-x-auto">
+          <div className="hidden w-full bg-white rounded-3xl shadow-xl p-6 overflow-x-auto">
             <h2 className="text-2xl font-bold text-slate-800 mb-6">{t.energyComparison}</h2>
             {showFreeCoolingTables ? (
               <>
@@ -5807,13 +7417,31 @@ function HvacDashboardApp() {
                     <td className="p-4 text-center">0 kW</td>
                     <td className="p-4 text-center">{grossReheatKW} kW</td>
                   </tr>
+                  <tr className="border-b border-slate-200 bg-slate-50">
+                    <td className="p-4 font-semibold">
+                      {language === 'fr' ? 'Chauffage CVC de base (commun)' : 'Base HVAC heating (common)'}
+                    </td>
+                    <td className="p-4 text-center">{commonHvacHeatingThermalKW} kW</td>
+                    <td className="p-4 text-center">{commonHvacHeatingThermalKW} kW</td>
+                    <td className="p-4 text-center">{commonHvacHeatingThermalKW} kW</td>
+                    <td className="p-4 text-center">{commonHvacHeatingThermalKW} kW</td>
+                  </tr>
+                  <tr className="border-b border-slate-200 bg-slate-50">
+                    <td className="p-4 font-semibold">
+                      {language === 'fr' ? 'Préchauffage adiabatique additionnel' : 'Additional adiabatic preheat'}
+                    </td>
+                    <td className="p-4 text-center">0 kW</td>
+                    <td className="p-4 text-center">0 kW</td>
+                    <td className="p-4 text-center">0 kW</td>
+                    <td className="p-4 text-center">{grossReheatKW} kW / {grossHumifogPreheatKW} kW</td>
+                  </tr>
                   <tr className="border-b border-slate-200 bg-blue-50">
                     <td className="p-4 font-semibold">{t.adiabaticCoolingShort}</td>
                     <td className="p-4 text-center">-</td>
                     <td className="p-4 text-center">-</td>
                     <td className="p-4 text-center">-</td>
                     <td className="p-4 text-center text-blue-700 font-bold">
-                      -{displayDeltaTemp(adiabaticTemperatureDrop)}{tempUnit}
+                      -{displayDeltaTemp(adiabaticDisplayDropC)}{tempUnit}
                       <div className="mt-2">{t.airBeforeReheat} : {displayTemp(fallbackAfterHumifogState.db)}{tempUnit}</div>
                     </td>
                   </tr>
@@ -5828,46 +7456,50 @@ function HvacDashboardApp() {
                       {usesHeatPumpReheat && (
                         <div className="mt-1 text-xs font-semibold text-green-700">
                           {language === 'fr'
-                            ? `Réchauffage électrique = ${netReheatKW} kW thermique / COP ${heatPumpCOP.toFixed(1)}`
-                            : `Electric reheat = ${netReheatKW} thermal kW / COP ${heatPumpCOP.toFixed(1)}`}
+                            ? `Consommation thermopompe = ${Number(reheatEnergyKW || 0).toLocaleString('fr-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kW électrique (${Number(netReheatKW || 0).toLocaleString('fr-CA', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} kW thermique / COP ${heatPumpCOP.toLocaleString('fr-CA', { minimumFractionDigits: 1, maximumFractionDigits: 1 })})`
+                            : `Heat pump input = ${Number(reheatEnergyKW || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kW electric (${Number(netReheatKW || 0).toLocaleString('en-CA', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} kW thermal / COP ${heatPumpCOP.toLocaleString('en-CA', { minimumFractionDigits: 1, maximumFractionDigits: 1 })})`}
                         </div>
                       )}
                     </td>
                   </tr>
                   {activeSelectedRecoveries.length > 0 && (
                     <tr className="border-b border-slate-200">
-                      <td className="p-4 font-semibold">{t.selectedRecoveries}</td>
+                      <td className="p-4 font-semibold">
+                        {language === 'fr'
+                          ? 'Récupération sélectionnée (énergie sensible récupérée)'
+                          : 'Selected Recovery (sensible recovered energy)'}
+                      </td>
                       <td className="p-4 text-center">-</td>
                       <td className="p-4 text-center">-</td>
                       <td className="p-4 text-center">-</td>
                       <td className="p-4 text-center text-green-700 font-bold">
-                        {activeSelectedRecoveries[0]?.nom}
-                        <div className="mt-2">{isNoRecovery ? '0' : `-${recoveryEnergyReductionKW}`} kW</div>
+                        {selectedRecoveryDisplayName}
+                        <div className="mt-2">{isNoRecovery ? '0' : `${recoveryEnergyReductionKW}`} kW</div>
                       </td>
                     </tr>
                   )}
                   <tr className="bg-slate-50">
                     <td className="p-4 font-semibold">{t.annualCost}</td>
-                    <td className="p-4 text-center text-red-700 font-bold">{annualSteamCost.toLocaleString()} $</td>
-                    <td className="p-4 text-center text-yellow-700 font-bold">{annualNaturalGasCost.toLocaleString()} $</td>
-                    <td className="p-4 text-center text-amber-700 font-bold">{annualAtmosphericGasHumidifierCost.toLocaleString()} $</td>
+                    <td className="p-4 text-center text-red-700 font-bold">{annualSteamCostDisplay.toLocaleString()} $</td>
+                    <td className="p-4 text-center text-yellow-700 font-bold">{annualNaturalGasCostDisplay.toLocaleString()} $</td>
+                    <td className="p-4 text-center text-amber-700 font-bold">{annualAtmosphericGasHumidifierCostDisplay.toLocaleString()} $</td>
                     <td className="p-4 text-center text-cyan-700 font-bold">
-                      {annualAdiabaticCost.toLocaleString()} $
+                      {annualAdiabaticCostDisplay.toLocaleString()} $
                       {isNoRecovery && (
                         <div className="mt-1 text-xs font-semibold text-cyan-700 leading-relaxed">
                           <div>
                             {language === 'fr'
-                              ? `Pompe Humifog : ${annualAdiabaticPumpCost.toLocaleString()} $/an`
-                              : `Humifog pump: ${annualAdiabaticPumpCost.toLocaleString()} $/year`}
+                              ? `Pompe Humifog : ${Math.round(annualHumifogPumpCostResolved).toLocaleString()} $/an`
+                              : `Humifog pump: ${Math.round(annualHumifogPumpCostResolved).toLocaleString()} $/year`}
                           </div>
                           <div>
                           {language === 'fr'
                             ? (usesHeatPumpReheat
-                              ? `Réchauffage thermopompe COP ${heatPumpCOP.toFixed(1)} : ${annualAdiabaticReheatCost.toLocaleString()} $/an`
-                              : `Réchauffage ${selectedReheatSystem.nom} : ${annualAdiabaticReheatCost.toLocaleString()} $/an`)
+                              ? `Réchauffage thermopompe COP ${heatPumpCOP.toFixed(1)} : ${Math.round(annualHumifogSelectedPreheatCostResolved).toLocaleString()} $/an`
+                              : `Réchauffage ${selectedReheatSystem.nom} : ${Math.round(annualHumifogSelectedPreheatCostResolved).toLocaleString()} $/an`)
                             : (usesHeatPumpReheat
-                              ? `Heat-pump reheat COP ${heatPumpCOP.toFixed(1)}: ${annualAdiabaticReheatCost.toLocaleString()} $/year`
-                              : `${selectedReheatSystem.nom} reheat: ${annualAdiabaticReheatCost.toLocaleString()} $/year`)}
+                              ? `Heat-pump reheat COP ${heatPumpCOP.toFixed(1)}: ${Math.round(annualHumifogSelectedPreheatCostResolved).toLocaleString()} $/year`
+                              : `${selectedReheatSystem.nom} reheat: ${Math.round(annualHumifogSelectedPreheatCostResolved).toLocaleString()} $/year`)}
                           </div>
                         </div>
                       )}
@@ -5876,9 +7508,9 @@ function HvacDashboardApp() {
                   <tr className="bg-slate-50">
                     <td className="p-4 font-semibold">{language === 'fr' ? 'GES annuel' : 'Annual GHG'}</td>
                     <td className="p-4 text-center text-red-700 font-bold">-</td>
-                    <td className="p-4 text-center text-yellow-700 font-bold">{naturalGasGES.toLocaleString()} t</td>
-                    <td className="p-4 text-center text-amber-700 font-bold">{atmosphericGasHumidifierGES.toLocaleString()} t</td>
-                    <td className="p-4 text-center text-cyan-700 font-bold">{adiabaticGES.toLocaleString()} t</td>
+                    <td className="p-4 text-center text-yellow-700 font-bold">{Number(annualNaturalGasGESResolved.toFixed(1)).toLocaleString()} t</td>
+                    <td className="p-4 text-center text-amber-700 font-bold">{Number(annualAtmosphericGasGESResolved.toFixed(1)).toLocaleString()} t</td>
+                    <td className="p-4 text-center text-cyan-700 font-bold">{Number(annualAdiabaticGESResolved.toFixed(1)).toLocaleString()} t</td>
                   </tr>
                 </tbody>
               </table>
@@ -6362,7 +7994,11 @@ function HvacDashboardApp() {
               </div>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-              {t.scheduleNote}
+              {isCustomOperatingHoursMode
+                ? (language === 'fr'
+                  ? 'Les heures d’exploitation personnalisées sont la seule référence horaire utilisée pour les résultats annuels. La météo de la ville reste utilisée pour les conditions extérieures.'
+                  : 'Custom operating hours are the only schedule reference used for annual results. City weather remains available for outdoor conditions.')
+                : t.scheduleNote}
             </div>
 
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -6463,7 +8099,7 @@ function HvacDashboardApp() {
                 <div className="space-y-1">
                   <div>
                     <strong>{language === 'fr' ? 'Source des données' : 'Data source'}:</strong>{' '}
-                    {language === 'fr' ? 'Méthode heures BIN intégrée à HESES' : 'HESES integrated BIN-hours method'}
+                    {language === 'fr' ? 'Méthode heures BIN intégrée à HESA' : 'HESA integrated BIN-hours method'}
                   </div>
                   <div>
                     <strong>{language === 'fr' ? 'Ville climatique' : 'Climate city'}:</strong> {selectedCity.nom}
@@ -6533,27 +8169,32 @@ function HvacDashboardApp() {
                     <th className="p-4 text-left">{t.binTemperature}</th>
                     <th className="p-4 text-center">{t.originalBinHours}</th>
                     <th className="p-4 text-center">{t.effectiveBinHours}</th>
-                    <th className="p-4 text-center">{t.correctedRecoveryLoad}</th>
+                    <th className="p-4 text-center">{isNoRecovery
+                      ? (language === 'fr' ? 'Énergie vapeur sans récupération' : 'Steam Energy Without Recovery')
+                      : t.correctedRecoveryLoad}</th>
                     <th className="p-4 text-center">{t.adiabaticLoad}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {displayedBinData.map((item, index) => (
-                    <tr
-                      key={index}
-                      className={`${index % 2 === 0 ? 'bg-slate-50' : 'bg-white'} border-b border-slate-200`}
-                    >
-                      <td className="p-4 font-semibold text-slate-700">{item.temperature}</td>
-                      <td className="p-4 text-center font-semibold text-slate-800">{item.originalHours} h</td>
-                      <td className="p-4 text-center font-bold text-slate-800">{item.heures} h</td>
-                      <td className="p-4 text-center text-red-700 font-bold">
-                        {Math.round(item.heures * steamEnergyKW * 0.001)} kWh
-                      </td>
-                      <td className="p-4 text-center text-cyan-700 font-bold">
-                        {Math.round(item.heures * adiabaticEnergyKW * 0.001)} kWh
-                      </td>
-                    </tr>
-                  ))}
+                  {displayedBinData.map((item, index) => {
+                    const binEnergyRow = binEnergyRows[index]
+                    return (
+                      <tr
+                        key={index}
+                        className={`${index % 2 === 0 ? 'bg-slate-50' : 'bg-white'} border-b border-slate-200`}
+                      >
+                        <td className="p-4 font-semibold text-slate-700">{item.temperature}</td>
+                        <td className="p-4 text-center font-semibold text-slate-800">{item.originalHours} h</td>
+                        <td className="p-4 text-center font-bold text-slate-800">{item.heures} h</td>
+                        <td className="p-4 text-center text-red-700 font-bold">
+                          {Math.round(binEnergyRow?.steamTotalBinEnergyKwh || 0).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} kWh
+                        </td>
+                        <td className="p-4 text-center text-cyan-700 font-bold">
+                          {Math.round(binEnergyRow?.adiabaticTotalBinEnergyKwh || 0).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} kWh
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -6569,11 +8210,70 @@ function HvacDashboardApp() {
               </div>
               <div className="bg-green-50 border border-green-200 rounded-2xl p-5">
                 <div className="text-sm text-green-700">{t.energyReduction}</div>
-                <div className="text-4xl font-bold text-green-800 mt-2">{savings}%</div>
+                <div className="text-4xl font-bold text-green-800 mt-2">{binEnergyReductionPercent}%</div>
               </div>
             </div>
 
           </div>
+
+          {is100OA && (
+            <section className="mt-8 w-full overflow-hidden rounded-3xl bg-white p-6 shadow-xl">
+              <div className="mb-6">
+                <h2 className="text-2xl font-bold text-slate-800">
+                  {language === 'fr' ? 'Bilan énergétique annuel' : 'Annual Energy Balance'}
+                </h2>
+                <p className="mt-2 text-sm font-semibold text-cyan-800">
+                  {isCustomOperatingHoursMode
+                    ? (language === 'fr' ? 'Base annuelle : Heures personnalisées' : 'Annual basis: Custom Operating Hours')
+                    : (language === 'fr' ? 'Base annuelle : Heures BIN' : 'Annual basis: BIN Hours')}
+                </p>
+              </div>
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-800 text-white">
+                      <th className="p-3 text-left">{language === 'fr' ? 'Poste annuel' : 'Annual item'}</th>
+                      {annualTechnologyOptions.map((option) => (
+                        <th
+                          key={option.key}
+                          className={`p-3 text-center ${
+                            option.color === 'red' ? 'bg-red-700' :
+                            option.color === 'yellow' ? 'bg-yellow-700' :
+                            option.color === 'amber' ? 'bg-amber-700' :
+                            option.color === 'violet' ? 'bg-violet-700' :
+                            'bg-cyan-700'
+                          }`}
+                        >
+                          {option.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {freeCoolingAnnualTechnologyRows.map((row) => (
+                      <tr key={row.label} className="border-b border-slate-100 last:border-b-0">
+                        <td className="p-3 font-semibold text-slate-700">{row.label}</td>
+                        {annualTechnologyOptions.map((option) => (
+                          <td
+                            key={`${row.label}-${option.key}`}
+                            className={`p-3 text-center font-bold ${
+                              option.color === 'red' ? 'text-red-700' :
+                              option.color === 'yellow' ? 'text-yellow-700' :
+                              option.color === 'amber' ? 'text-amber-700' :
+                              option.color === 'violet' ? 'text-violet-700' :
+                              'text-cyan-700'
+                            }`}
+                          >
+                            {format100OaAnnualValue(row, option)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
 
           {showFreeCoolingTables && (
             <section id="free-cooling" className="mt-8 w-full overflow-hidden rounded-3xl bg-white p-6 shadow-xl">
@@ -6624,6 +8324,11 @@ function HvacDashboardApp() {
                 <h3 className="text-xl font-bold text-slate-800 mb-3">
                   {language === 'fr' ? 'Bilan energetique annuel' : 'Annual energy balance'}
                 </h3>
+                <p className="mb-3 text-sm font-semibold text-cyan-800">
+                  {isCustomOperatingHoursMode
+                    ? (language === 'fr' ? 'Base annuelle : Heures personnalisées' : 'Annual basis: Custom Operating Hours')
+                    : (language === 'fr' ? 'Base annuelle : Heures BIN' : 'Annual basis: BIN Hours')}
+                </p>
                 <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
                   <table className="w-full text-sm">
                     <thead>
@@ -6631,7 +8336,7 @@ function HvacDashboardApp() {
                         <th className="p-3 text-left">
                           {language === 'fr' ? 'Poste annuel' : 'Annual item'}
                         </th>
-                        {freeCoolingAnnualTechnologyOptions.map((option) => (
+                        {annualTechnologyOptions.map((option) => (
                           <th
                             key={option.key}
                             className={`p-3 text-center ${
@@ -6650,7 +8355,7 @@ function HvacDashboardApp() {
                       {freeCoolingAnnualTechnologyRows.map((row) => (
                         <tr key={row.label} className="border-b border-slate-100 last:border-b-0">
                           <td className="p-3 font-semibold text-slate-700">{row.label}</td>
-                          {freeCoolingAnnualTechnologyOptions.map((option) => (
+                          {annualTechnologyOptions.map((option) => (
                             <td
                               key={`${row.label}-${option.key}`}
                               className={`p-3 text-center font-bold ${
@@ -6680,7 +8385,7 @@ function HvacDashboardApp() {
                     </h4>
                     <div className="text-2xl font-black text-emerald-800">
                       {freeCoolingCalculationComplete
-                        ? freeCoolingAnnualTechnologyOptions.reduce((best, option) =>
+                        ? annualTechnologyOptions.reduce((best, option) =>
                             option.annualCost < best.annualCost ? option : best
                           ).label
                         : calculationIncompleteText}
@@ -6717,7 +8422,9 @@ function HvacDashboardApp() {
                     [language === 'fr' ? 'Rechauffage thermique requis' : 'Required thermal reheat', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.adiabaticReheatThermalKwh)],
                     [language === 'fr' ? 'Rechauffage applique selon methode' : 'Applied reheat by selected method', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.selectedReheatEnergyKwh)],
                     [language === 'fr' ? 'Cout rechauffage selectionne' : 'Selected reheat cost', formatAnnualCostIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.selectedReheatCost)],
-                    [language === 'fr' ? 'Equivalent thermopompe COP' : 'Heat-pump COP equivalent', `${formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.adiabaticReheatElectricKwh)} / COP ${formatNumber(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.heatPumpCOP ?? heatPumpCOP, 1)}`],
+                    ...(usesHeatPumpReheat
+                      ? [[language === 'fr' ? 'Equivalent thermopompe COP' : 'Heat-pump COP equivalent', `${formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.adiabaticReheatElectricKwh)} / COP ${formatNumber(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.heatPumpCOP ?? heatPumpCOP, 1)}`]]
+                      : []),
                     [language === 'fr' ? 'Total annuel Humifog' : 'Total annual Humifog kWh', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.totalAnnualHumifogKwh)],
                     [language === 'fr' ? 'Cout annuel Humifog' : 'Annual Humifog cost', formatAnnualCostIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.totalAnnualHumifogCost)],
                   ].map(([label, value]) => (
@@ -6831,6 +8538,64 @@ function HvacDashboardApp() {
 
               <div className="overflow-x-auto mb-8">
                 <h3 className="text-xl font-bold text-slate-800 mb-3">
+                  {language === 'fr' ? 'Analyse détaillée Free Cooling' : 'Detailed Free Cooling Analysis'}
+                </h3>
+                <p className="text-sm text-slate-600 mb-3">
+                  {language === 'fr'
+                    ? (isHourlySimulationActive
+                      ? 'Les heures EPW sont regroupées par tranches de température pour garder l’affichage fluide. Les totaux annuels utilisent toutes les heures EPW sélectionnées.'
+                      : 'Chaque ligne correspond à un BIN actif. Les heures affichées reflètent le mode de calcul choisi, y compris les heures effectives du calendrier personnalisé.')
+                    : (isHourlySimulationActive
+                      ? 'EPW hours are grouped by temperature range for a responsive display. Annual totals still use all selected EPW hours.'
+                      : 'Each row corresponds to an active weather BIN. The displayed hours reflect the selected calculation mode, including effective custom operating hours.')}
+                </p>
+                <table className="w-full text-sm min-w-[1400px]">
+                  <thead>
+                    <tr className="bg-slate-100">
+                      {[
+                        language === 'fr' ? 'Température extérieure' : 'Outdoor temperature',
+                        language === 'fr' ? 'Heures effectives' : 'Effective hours',
+                        language === 'fr' ? 'OA vapeur %' : 'Steam OA %',
+                        language === 'fr' ? 'RA vapeur %' : 'Steam RA %',
+                        language === 'fr' ? 'Température mélange vapeur' : 'Steam mixed temp',
+                        language === 'fr' ? 'OA Humifog %' : 'Humifog OA %',
+                        language === 'fr' ? 'RA Humifog %' : 'Humifog RA %',
+                        language === 'fr' ? 'Température mélange Humifog' : 'Humifog mixed temp',
+                        language === 'fr' ? 'Température avant Humifog' : 'Temperature before Humifog',
+                        language === 'fr' ? 'Température après Humifog' : 'Temperature after Humifog',
+                      ].map((heading) => (
+                        <th key={heading} className="p-3 text-center font-semibold text-slate-700 first:text-left">{heading}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {displayedFreeCoolingRows.map(({ humifogRow, steamRow }, index) => {
+                      const steamOaPercent = Number(steamRow.appliedOutdoorAirPercent ?? steamRow.outdoorAirPercent ?? 0)
+                      const steamRaPercent = 100 - steamOaPercent
+                      const humifogOaPercent = Number(humifogRow.appliedOutdoorAirPercent ?? humifogRow.outdoorAirPercent ?? 0)
+                      const humifogRaPercent = 100 - humifogOaPercent
+
+                      return (
+                        <tr key={`detail-${humifogRow.tempC}-${humifogRow.hours}-${index}`} className="border-b border-slate-100">
+                          <td className="p-3 font-bold text-slate-700">{displayTemp(humifogRow.tempC)}{tempUnit}</td>
+                          <td className="p-3 text-center font-semibold text-slate-800">{formatNumber(humifogRow.hours, 0)} h</td>
+                          <td className="p-3 text-center font-bold text-red-700">{formatNumber(steamOaPercent, 1)}%</td>
+                          <td className="p-3 text-center font-bold text-red-600">{formatNumber(steamRaPercent, 1)}%</td>
+                          <td className="p-3 text-center font-bold text-red-700">{displayTemp(steamRow.mixed?.db ?? steamRow.calculatedMixed?.db ?? 0)}{tempUnit}</td>
+                          <td className="p-3 text-center font-bold text-cyan-700">{formatNumber(humifogOaPercent, 1)}%</td>
+                          <td className="p-3 text-center font-bold text-cyan-600">{formatNumber(humifogRaPercent, 1)}%</td>
+                          <td className="p-3 text-center font-bold text-cyan-700">{displayTemp(humifogRow.mixed?.db ?? 0)}{tempUnit}</td>
+                          <td className="p-3 text-center font-bold text-cyan-700">{displayTemp(humifogRow.inletToHumifog?.db ?? 0)}{tempUnit}</td>
+                          <td className="p-3 text-center font-bold text-cyan-700">{displayTemp(humifogRow.afterHumifog?.db ?? 0)}{tempUnit}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="overflow-x-auto mb-8">
+                <h3 className="text-xl font-bold text-slate-800 mb-3">
                   {language === 'fr' ? '1. Validation annuelle BIN par BIN' : '1. Annual BIN-by-BIN validation'}
                 </h3>
                 <p className="text-sm text-slate-600 mb-3">
@@ -6843,7 +8608,14 @@ function HvacDashboardApp() {
                     ? 'Validation adiabatique: Sortie Humifog apres atomisation = T melange Humifog appliquee - DeltaT adiabatique.'
                     : 'Adiabatic validation: Humifog outlet after atomization = applied Humifog mixed T - adiabatic DeltaT.'}
                 </p>
-                <table className="w-full text-sm">
+                {isHourlySimulationActive && (
+                  <div className="mb-4 rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm font-semibold text-cyan-900">
+                    {language === 'fr'
+                      ? `Les ${formatNumber(filteredHourlyRecords.length, 0)} heures EPW utilisées sont validées dans le calcul annuel et regroupées dans le résumé ci-dessus. Le détail heure par heure reste disponible dans le fichier EPW source, mais n’est pas rendu ici afin de garder le logiciel fluide.`
+                      : `The ${formatNumber(filteredHourlyRecords.length, 0)} selected EPW hours are validated in the annual calculation and grouped in the summary above. The hour-by-hour detail remains available in the source EPW file but is not rendered here to keep the software responsive.`}
+                  </div>
+                )}
+                <table className={`w-full text-sm ${isHourlySimulationActive ? 'hidden' : ''}`}>
                   <thead>
                     <tr className="bg-slate-100">
                       {[
@@ -6868,7 +8640,7 @@ function HvacDashboardApp() {
                     </tr>
                   </thead>
                   <tbody>
-                    {annualValidationRows.map((row) => {
+                    {!isHourlySimulationActive && annualValidationRows.map((row) => {
                       const displayedHumifogAppliedMixedTempDb = Number(row.humifogAppliedMixTempDb ?? 0)
                       const displayedAdiabaticDeltaDb = Math.abs(Number(row.adiabaticCoolingC ?? 0))
                       const displayedHumifogOutletAfterAtomizationDb = displayedHumifogAppliedMixedTempDb - displayedAdiabaticDeltaDb
@@ -7081,63 +8853,69 @@ function HvacDashboardApp() {
 
               <div className="overflow-x-auto mb-8">
                 <h3 className="text-xl font-bold text-slate-800 mb-3">
-                  {language === 'fr' ? '3. Ventilation detaillee des calculs annuels' : '3. Detailed annual calculation breakdown'}
+                  {language === 'fr' ? '3. Comparaison détaillée des calculs annuels' : '3. Detailed Annual Energy Comparison'}
                 </h3>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-sm">
+                  <label className="font-semibold text-slate-700">
+                    {language === 'fr' ? 'Technologie de référence' : 'Reference Technology'}
+                    <select
+                      value={annualComparisonReference}
+                      onChange={(event) => setAnnualComparisonReference(event.target.value)}
+                      className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2 font-bold text-slate-800"
+                    >
+                      {annualTechnologyOptions.filter((option) => BASELINE_TECHNOLOGIES.includes(option.key)).map((option) => (
+                        <option key={option.key} value={option.key}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <span className="font-semibold text-cyan-800">
+                    {selectedHumifogOption?.label || (language === 'fr' ? 'Humifog - solution sélectionnée' : 'Humifog - Selected Solution')}
+                  </span>
+                </div>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-slate-100">
-                      <th className="p-3 text-left">{language === 'fr' ? 'Parametre' : 'Parameter'}</th>
-                      <th className="p-3 text-center">{language === 'fr' ? 'Scenario vapeur' : 'Steam scenario'}</th>
-                      <th className="p-3 text-center">{language === 'fr' ? 'Scenario Humifog' : 'Humifog scenario'}</th>
-                      <th className="p-3 text-center">{language === 'fr' ? 'Difference' : 'Difference'}</th>
+                      <th className="p-3 text-left">{language === 'fr' ? 'Paramètre' : 'Parameter'}</th>
+                      {annualTechnologyOptions.map((option) => (
+                        <th key={option.key} className="p-3 text-center">{option.label}</th>
+                      ))}
+                      <th className="p-3 text-center">
+                        {language === 'fr' ? 'Écart vs technologie de référence' : 'Difference vs Reference Technology'}
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {freeCoolingHumifogAnalysis.annualBreakdownRows.map((row) => (
-                      <tr key={row.key} className="border-b border-slate-100">
-                        <td className="p-3 font-bold text-slate-700">
-                          {language === 'fr'
-                            ? {
-                              heatingEnergyKwh: 'Energie annuelle chauffage',
-                              humidificationEnergyKwh: 'Energie annuelle humidification',
-                              reheatEnergyKwh: 'Energie annuelle rechauffage',
-                              freeCoolingObtainedKwh: 'Refroidissement gratuit grâce au Free Cooling',
-                              totalEnergyKwh: 'Energie annuelle totale',
-                              annualCost: 'Cout annuel total',
-                            }[row.key] || row.parameter
-                            : row.parameter}
-                        </td>
-                        <td className="p-3 text-center">{formatBreakdownValue(row, row.steamReference)}</td>
-                        <td className="p-3 text-center">{formatBreakdownValue(row, row.humifogOptimized)}</td>
-                        <td className={`p-3 text-center font-bold ${row.difference >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                          {formatBreakdownValue(row, row.difference, true)}
-                        </td>
-                      </tr>
-                    ))}
-                    <tr className="bg-slate-50">
-                      <td className="p-3 font-bold text-slate-800">
-                        {language === 'fr' ? 'Economie annuelle nette' : 'Net annual savings'}
-                      </td>
-                      <td className="p-3 text-center">-</td>
-                      <td className="p-3 text-center font-bold text-slate-900">
-                        {freeCoolingCalculationComplete
-                          ? `${formatSavingsAnnualEnergy(freeCoolingHumifogAnalysis.annualComparison.savingsKwh)} / ${formatSavingsAnnualCost(freeCoolingHumifogAnalysis.annualComparison.annualSavings)}`
-                          : calculationIncompleteText}
-                      </td>
-                      <td className={`p-3 text-center font-bold ${freeCoolingHumifogAnalysis.annualComparison.savingsKwh >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                        {freeCoolingCalculationComplete
-                          ? formatSavingsPercent(freeCoolingHumifogAnalysis.annualComparison.savingsPercent)
-                          : calculationIncompleteText}
-                      </td>
-                    </tr>
+                    {detailedAnnualComparisonRows.map((row) => {
+                      const difference = annualComparisonDifference(row)
+                      return (
+                        <tr key={row.key} className="border-b border-slate-100">
+                          <td className="p-3 font-bold text-slate-700">{row.label}</td>
+                          {annualTechnologyOptions.map((option) => (
+                            <td key={`${row.key}-${option.key}`} className="p-3 text-center">
+                              {formatAnnualComparisonValue(row, annualComparisonValue(row, option))}
+                            </td>
+                          ))}
+                          <td className={`p-3 text-center font-bold ${difference === null ? 'text-slate-500' : difference >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                            {difference === null
+                              ? (language === 'fr' ? 'Non applicable' : 'Not applicable')
+                              : row.kind === 'cost' ? formatSavingsAnnualCost(difference) : formatSavingsAnnualEnergy(difference)}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
 
               <div className="overflow-x-auto">
                 <h3 className="text-xl font-bold text-slate-800 mb-3">
-                  {language === 'fr' ? '4. Comparaison annuelle' : '4. Annual comparison'}
+                  {language === 'fr' ? '4. Analyse détaillée Free Cooling' : '4. Detailed Free Cooling Analysis'}
                 </h3>
+                <p className="mb-3 text-sm text-slate-600">
+                  {language === 'fr'
+                    ? 'Cette section illustre le comportement physique Free Cooling : modulation OA/RA, mélange, refroidissement adiabatique et température après Humifog. Les totaux annuels restent dans la section 3.'
+                    : 'This section illustrates the physical Free Cooling behavior: OA/RA modulation, mixed-air temperature, adiabatic cooling and post-Humifog temperature. Annual totals remain in section 3.'}
+                </p>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-slate-800 text-white">
@@ -7153,14 +8931,13 @@ function HvacDashboardApp() {
                         `${formatNumber(freeCoolingHumifogAnalysis.annualComparison.freeCooling.averageTheoreticalOa, 0)}% -> ${formatNumber(freeCoolingHumifogAnalysis.annualComparison.freeCooling.averageAppliedOa, 0)}%`,
                         `${formatNumber(freeCoolingHumifogAnalysis.annualComparison.humifog.averageTheoreticalOa, 0)}% -> ${formatNumber(freeCoolingHumifogAnalysis.annualComparison.humifog.averageAppliedOa, 0)}%`,
                       ],
-                      [language === 'fr' ? 'Temperature melange moyenne' : 'Average mixed air temperature', `${displayTemp(freeCoolingHumifogAnalysis.annualComparison.freeCooling.averageMixedDb)}${tempUnit}`, `${displayTemp(freeCoolingHumifogAnalysis.annualComparison.humifog.averageMixedDb)}${tempUnit}`],
-                      [language === 'fr' ? 'Energie annuelle chauffage' : 'Annual heating energy', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.freeCooling.heatingEnergyKwh), formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifog.heatingEnergyKwh)],
-                      [language === 'fr' ? 'Energie annuelle humidification vapeur' : 'Annual steam humidification energy', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.freeCooling.humidificationEnergyKwh), '-'],
-                      [language === 'fr' ? 'Energie annuelle pompe Humifog' : 'Annual Humifog pump energy', '-', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifog.humidificationEnergyKwh)],
-                      [language === 'fr' ? 'Energie annuelle rechauffage Humifog' : 'Annual Humifog reheat energy', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.freeCooling.reheatEnergyKwh), formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifog.reheatEnergyKwh)],
-                      [language === 'fr' ? 'Energie annuelle totale' : 'Total annual energy', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.freeCooling.totalEnergyKwh), formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifog.totalEnergyKwh)],
-                      [language === 'fr' ? 'Cout annuel total' : 'Total annual cost', formatAnnualCostIfComplete(freeCoolingHumifogAnalysis.annualComparison.freeCooling.annualCost), formatAnnualCostIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifog.annualCost)],
-                      [language === 'fr' ? 'Economie annuelle nette' : 'Net annual savings', '-', freeCoolingCalculationComplete ? `${formatSavingsAnnualEnergy(freeCoolingHumifogAnalysis.annualComparison.savingsKwh)} / ${formatSavingsAnnualCost(freeCoolingHumifogAnalysis.annualComparison.annualSavings)} / ${formatSavingsPercent(freeCoolingHumifogAnalysis.annualComparison.savingsPercent)}` : calculationIncompleteText],
+                      [
+                        language === 'fr' ? 'OA moyen vapeur / Humifog' : 'Average steam / Humifog OA',
+                        `${formatNumber(freeCoolingHumifogAnalysis.annualComparison.freeCooling.averageAppliedOa, 0)}%`,
+                        `${formatNumber(freeCoolingHumifogAnalysis.annualComparison.humifog.averageAppliedOa, 0)}%`,
+                      ],
+                      [language === 'fr' ? 'Température mélange moyenne vapeur' : 'Average steam mixed air temperature', `${displayTemp(freeCoolingHumifogAnalysis.annualComparison.freeCooling.averageMixedDb)}${tempUnit}`, '-'],
+                      [language === 'fr' ? 'Température mélange moyenne Humifog' : 'Average Humifog mixed air temperature', '-', `${displayTemp(freeCoolingHumifogAnalysis.annualComparison.humifog.averageMixedDb)}${tempUnit}`],
                     ].map(([label, freeCoolingValue, humifogValue]) => (
                       <tr key={label} className="border-b border-slate-100">
                         <td className="p-3 font-bold text-slate-700">{label}</td>
@@ -7213,7 +8990,7 @@ function HvacDashboardApp() {
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <h3 className="text-xl font-bold text-slate-900">
-                      {language === 'fr' ? 'Assistant HESES - Bêta' : 'HESES Assistant - Beta'}
+                      {language === 'fr' ? 'Assistant HESA - Bêta' : 'HESA Assistant - Beta'}
                     </h3>
                     <p className="mt-1 text-sm text-slate-700">
                       {language === 'fr'
@@ -7315,7 +9092,7 @@ function HvacDashboardApp() {
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-bold text-slate-900">
-                  {language === 'fr' ? 'Assistant HESES - Bêta' : 'HESES Assistant - Beta'}
+                  {language === 'fr' ? 'Assistant HESA - Bêta' : 'HESA Assistant - Beta'}
                 </h2>
                 <p className="text-slate-600 mt-1">
                   {language === 'fr'
@@ -7411,6 +9188,7 @@ function HvacDashboardApp() {
                 <div className="text-4xl font-bold mt-2">{cappedRecoveryEfficiency}%</div>
               </div>
             </div>
+            <div className="mt-8 border-t border-white/20 pt-4 text-xs text-white/70">© 2026 Enersol inc. / Carel Group. HESA - Humidification Energy System Analysis. All rights reserved.</div>
           </div>
 
       </div>

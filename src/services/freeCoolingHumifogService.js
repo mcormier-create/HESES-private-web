@@ -6,7 +6,7 @@ import {
   psychrometricState,
   sensibleHeatingKw,
   stateFromDbW,
-} from '../calculations/psychrometrics'
+} from '../calculations/psychrometrics.js'
 
 export const FREE_COOLING_OA_TEST_POINTS = [20, 25, 30, 35, 40, 50, 60]
 
@@ -26,8 +26,10 @@ export function calculateFreeCoolingHumifogComparison({
   heatPumpCOP = 3.8,
   useMeasuredMixedAirTemperature = false,
   measuredMixedAirTemperatureC = 18,
+  optimizationBins = null,
 }) {
   const weatherBins = normalizeBins(bins)
+  const optimizationWeatherBins = normalizeBins(optimizationBins || bins)
   const hasValidBins = weatherBins.length > 0 && weatherBins.every((bin) =>
     Number.isFinite(bin.tempC) &&
     Number.isFinite(bin.hours) &&
@@ -75,7 +77,7 @@ export function calculateFreeCoolingHumifogComparison({
   ])].sort((a, b) => a - b)
 
   const optimizationRows = oaTestPoints.map((oaPercent) => {
-    const rows = weatherBins.map((bin) => calculateHumifogBinRow({
+    const rows = optimizationWeatherBins.map((bin) => calculateHumifogBinRow({
       ...common,
       bin,
       outdoorAirPercent: oaPercent,
@@ -149,6 +151,7 @@ export function calculateFreeCoolingHumifogComparison({
       adiabaticReheatThermalKwh: humifog.adiabaticReheatThermalKwh,
       heatPumpCOP,
       adiabaticReheatElectricKwh: humifog.adiabaticReheatElectricKwh,
+      thermalReheatEnergyKwh: humifog.thermalReheatEnergyKwh,
       selectedReheatEnergyKwh: humifog.reheatEnergyKwh,
       selectedReheatCost: humifog.reheatCost,
       selectedReheatSource: reheatSourceType(selectedReheatSystem),
@@ -267,6 +270,7 @@ function calculateHumifogBinRow({
   })
   const heatingEnergyKwh = heatingLoadKw * bin.hours
   const reheatEnergyKwh = reheatLoadKw * bin.hours
+  const thermalReheatEnergyKwh = reheatThermalKw * bin.hours
   const adiabaticReheatThermalKw = sensibleHeatingKw(airflowCfm, adiabaticCoolingC)
   const adiabaticReheatThermalKwh = adiabaticReheatThermalKw * bin.hours
   const adiabaticReheatElectricKw = adiabaticReheatThermalKw / Math.max(heatPumpCOP, 0.1)
@@ -312,6 +316,7 @@ function calculateHumifogBinRow({
     humifogWetBulbReferenceC: mixed.wb,
     reheatDeltaC,
     reheatThermalKw,
+    thermalReheatEnergyKwh,
     humifogLoadLbHr,
     humifogLoadKgH: humifogLoadLbHr * 0.453592,
     humidificationLoadKw: humifogPumpKw,
@@ -887,11 +892,16 @@ function summarizeRows(rows) {
     averageMixedRh: weighted((row) => row.mixed.rh),
     averageMixedW: weighted((row) => row.mixed.w),
     averageMixedH: weighted((row) => row.mixed.h),
+    averageInletToHumifogDb: weighted((row) => row.inletToHumifog?.db ?? row.mixed.db),
+    averageInletToHumifogRh: weighted((row) => row.inletToHumifog?.rh ?? row.mixed.rh),
     averageHumifogDb: weighted((row) => row.afterHumifog.db),
+    averageAfterHumifogDb: weighted((row) => row.afterHumifog.db),
+    averageAfterHumifogRh: weighted((row) => row.afterHumifog.rh),
     heatingEnergyKwh: rows.reduce((total, row) => total + row.heatingEnergyKwh, 0),
     comparisonHeatingEnergyKwh: rows.reduce((total, row) => total + row.comparisonHeatingEnergyKwh, 0),
     humidificationEnergyKwh: rows.reduce((total, row) => total + row.humidificationEnergyKwh, 0),
     reheatEnergyKwh: rows.reduce((total, row) => total + (row.reheatEnergyKwh || 0), 0),
+    thermalReheatEnergyKwh: rows.reduce((total, row) => total + (row.thermalReheatEnergyKwh || 0), 0),
     mechanicalReheatEnergyKwh: rows.reduce((total, row) => total + (row.reheatEnergyKwh || 0), 0),
     adiabaticReheatThermalKwh: rows.reduce((total, row) => total + (row.adiabaticReheatThermalKwh || 0), 0),
     adiabaticReheatElectricKwh: rows.reduce((total, row) => total + (row.adiabaticReheatElectricKwh || 0), 0),
@@ -926,17 +936,23 @@ function reheatEnergyCost(energyKwh, selectedReheatSystem, electricityRate, natu
   return energyKwh * electricityRate
 }
 
-function reheatInputKw(thermalKw, selectedReheatSystem, heatPumpCOP) {
+export function calculateAppliedReheatEnergyKwh(thermalReheatEnergyKwh, selectedReheatSystem, heatPumpCOP = 3.8) {
+  const thermalEnergy = Math.max(0, Number(thermalReheatEnergyKwh) || 0)
   const sourceType = reheatSourceType(selectedReheatSystem)
 
-  if (sourceType === 'heatPump') return thermalKw / Math.max(heatPumpCOP, 0.1)
+  if (sourceType === 'heatPump') return thermalEnergy / Math.max(heatPumpCOP, 0.1)
   if (sourceType === 'naturalGas') {
     const efficiency = Number.isFinite(Number(selectedReheatSystem?.rendement))
       ? Number(selectedReheatSystem.rendement) / 100
       : 0.88
-    return thermalKw / Math.max(efficiency, 0.01)
+    return thermalEnergy / Math.max(efficiency, 0.01)
   }
-  return thermalKw * (selectedReheatSystem?.facteur ?? 1)
+  if (sourceType === 'passiveRecovery') return 0
+  return thermalEnergy * (selectedReheatSystem?.facteur ?? 1)
+}
+
+function reheatInputKw(thermalKw, selectedReheatSystem, heatPumpCOP) {
+  return calculateAppliedReheatEnergyKwh(thermalKw, selectedReheatSystem, heatPumpCOP)
 }
 
 function waterLoadLbHr(airflowCfm, deltaHumidityRatio) {
