@@ -596,6 +596,10 @@ function blobToBase64(blob) {
   })
 }
 
+function createPrintableDocumentUrl(html) {
+  return URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }))
+}
+
 function HesesPrintableReportPage() {
   const reportHtml = typeof window === 'undefined'
     ? ''
@@ -627,11 +631,10 @@ function HesesPrintableReportPage() {
       }
 
       const html = reportHtml || ''
+      const reportDocumentUrl = createPrintableDocumentUrl(html)
       console.timeEnd('printCurrentReport-build-html')
       console.time('printCurrentReport-write-doc')
-      printWindow.document.open()
-      printWindow.document.write(html)
-      printWindow.document.close()
+      printWindow.location.replace(reportDocumentUrl)
       console.timeEnd('printCurrentReport-write-doc')
       console.time('printCurrentReport-print')
       const onAfterPrint = () => {
@@ -641,8 +644,10 @@ function HesesPrintableReportPage() {
         try { printWindow.close() } catch { }
       }
       printWindow.addEventListener('afterprint', onAfterPrint, { once: true })
-      printWindow.focus()
-      printWindow.print()
+      printWindow.addEventListener('load', () => {
+        printWindow.focus()
+        printWindow.print()
+      }, { once: true })
     } catch (error) {
       console.error('Erreur impression rapport original:', error)
       printInProgressRef.current = false
@@ -3110,9 +3115,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       return
     }
 
-    popup.document.open()
-    popup.document.write(buildPrintableReportHtml({ autoPrint: false, bodyHtml: reportHtml }))
-    popup.document.close()
+    const reportDocumentUrl = createPrintableDocumentUrl(
+      buildPrintableReportHtml({ autoPrint: false, bodyHtml: reportHtml })
+    )
+    popup.location.replace(reportDocumentUrl)
     popup.focus()
   }
 
@@ -3158,7 +3164,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     }
   }
 
-  const waitForReportDocumentReady = (printWindow, timeoutMs = 15000) => new Promise((resolve, reject) => {
+  const waitForReportDocumentReady = (printWindow, expectedUrl, timeoutMs = 15000) => new Promise((resolve, reject) => {
     const start = Date.now()
     const tick = () => {
       try {
@@ -3168,7 +3174,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         }
 
         const doc = printWindow.document
-        if (!doc || doc.readyState !== 'complete') {
+        if (!doc || printWindow.location.href !== expectedUrl || doc.readyState !== 'complete') {
           if (Date.now() - start > timeoutMs) {
             reject(new Error('Timed out waiting for the print document to finish loading.'))
             return
@@ -3256,13 +3262,12 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   </body>
 </html>`
 
-      staticPrintWindow.document.open()
-      staticPrintWindow.document.write(staticHtml)
-      staticPrintWindow.document.close()
+      const staticDocumentUrl = createPrintableDocumentUrl(staticHtml)
+      staticPrintWindow.location.replace(staticDocumentUrl)
       printWindowRef.current = staticPrintWindow
       setReportStatus(language === 'fr' ? 'Ouverture du rapport imprimable...' : 'Opening print-ready report...')
 
-      await waitForReportDocumentReady(staticPrintWindow)
+      await waitForReportDocumentReady(staticPrintWindow, staticDocumentUrl)
       staticPrintWindow.focus()
       staticPrintWindow.print()
     } catch (error) {
