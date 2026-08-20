@@ -1,4 +1,4 @@
-﻿import { useState, useRef, useEffect } from 'react'
+﻿import { useState, useRef, useEffect, useMemo } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import HVACSystemImage from './components/HVACSystemImage'
 import PsychrometricChart from './components/PsychrometricChart'
@@ -3725,9 +3725,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     hourlyWeatherRecords.length >= 8750
   const scheduleStartHour = Number(String(scheduleStartTime || '00:00').split(':')[0] || 0)
   const scheduleEndHour = Number(String(scheduleEndTime || '00:00').split(':')[0] || 0)
-  const filteredHourlyRecords = calculationMethod === 'hourly'
+  const filteredHourlyRecords = useMemo(() => calculationMethod === 'hourly'
     ? hourlyWeatherRecords.filter((record) => isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays))
-    : []
+    : [], [calculationMethod, hourlyWeatherRecords, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays])
   const hasFilteredHourlyRecords =
     hasLoadedHourlyEpw &&
     Array.isArray(filteredHourlyRecords) &&
@@ -4296,21 +4296,21 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const isWeatherChartEmpty = calculationMethod === 'hourly'
     ? (!hourlyWeatherRecords.length || !hasFilteredHourlyRecords || hourlyWeatherHistogramData.length === 0)
     : weatherChartData.length === 0
-  const selectedBinWeatherData = effectiveBinData.map(([tempC, hours]) => ({
+  const selectedBinWeatherData = useMemo(() => effectiveBinData.map(([tempC, hours]) => ({
     tempC,
     hours,
     rh: Math.round(Math.max(35, Math.min(90, selectedCity.humidite + (10 - tempC) * 0.45))),
-  }))
-  const freeCoolingWeatherData = isHourlySimulationActive
+  })), [effectiveBinData, selectedCity.humidite])
+  const freeCoolingWeatherData = useMemo(() => isHourlySimulationActive
     ? filteredHourlyRecords.map((record) => ({
       tempC: Number(record.dryBulbC),
       hours: 1,
       rh: Number(record.relativeHumidity),
     }))
-    : selectedBinWeatherData
-  const freeCoolingOptimizationWeatherData = isHourlySimulationActive
+    : selectedBinWeatherData, [isHourlySimulationActive, filteredHourlyRecords, selectedBinWeatherData])
+  const freeCoolingOptimizationWeatherData = useMemo(() => isHourlySimulationActive
     ? compactWeatherBins(freeCoolingWeatherData, 96)
-    : freeCoolingWeatherData
+    : freeCoolingWeatherData, [isHourlySimulationActive, freeCoolingWeatherData])
   const binEnergyRows = selectedBinWeatherData.map((bin) => {
     const binMetrics = calculateHvacDashboardMetrics({
       outsideAirCFM,
@@ -4510,7 +4510,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     : adiabaticGESRaw
   const annualEliminatedGESResolved = annualNaturalGasGESResolved - annualAdiabaticGESResolved
 
-  const freeCoolingHumifogAnalysis = calculateFreeCoolingHumifogComparison({
+  const freeCoolingHumifogAnalysis = useMemo(() => calculateFreeCoolingHumifogComparison({
     bins: freeCoolingWeatherData,
     optimizationBins: freeCoolingOptimizationWeatherData,
     roomDb: roomTemperature,
@@ -4527,7 +4527,25 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     heatPumpCOP,
     useMeasuredMixedAirTemperature,
     measuredMixedAirTemperatureC: measuredMixedAirTemperature,
-  })
+  }), [
+    freeCoolingWeatherData,
+    freeCoolingOptimizationWeatherData,
+    roomTemperature,
+    roomRelativeHumidity,
+    minimumOutsideAirPercent,
+    isNoRecovery,
+    freeCoolingRecoveryType,
+    cappedRecoveryEfficiency,
+    ventilationMode.evaporativeEffectiveness,
+    outsideAirCFM,
+    electricityRate,
+    naturalGasRate,
+    economizerTargetTemp,
+    selectedReheatSystem,
+    heatPumpCOP,
+    useMeasuredMixedAirTemperature,
+    measuredMixedAirTemperature,
+  ])
   const displayedFreeCoolingRows = isHourlySimulationActive
     ? aggregateFreeCoolingComparisonRows(
       freeCoolingHumifogAnalysis.binRows,
