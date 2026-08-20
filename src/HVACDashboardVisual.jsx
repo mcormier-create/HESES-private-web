@@ -3106,8 +3106,12 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       ? 'Préparation du rapport...'
       : 'Preparing report...')
 
-    const reportHtml = buildPrintableReportMarkup()
-    const popup = window.open('', '_blank', 'popup,width=1200,height=900')
+    const reportHtml = buildPrintableReportHtml({
+      autoPrint: false,
+      bodyHtml: buildPrintableReportMarkup(),
+    })
+    window.sessionStorage.setItem(HESES_PRINT_REPORT_STORAGE_KEY, reportHtml)
+    const popup = window.open('/heses-report-print', '_blank', 'popup,width=1200,height=900')
     if (!popup) {
       setReportStatus(language === 'fr'
         ? 'Autorisez les fenêtres contextuelles pour imprimer le rapport.'
@@ -3115,10 +3119,6 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       return
     }
 
-    const reportDocumentUrl = createPrintableDocumentUrl(
-      buildPrintableReportHtml({ autoPrint: false, bodyHtml: reportHtml })
-    )
-    popup.location.replace(reportDocumentUrl)
     popup.focus()
   }
 
