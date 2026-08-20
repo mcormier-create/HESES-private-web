@@ -8507,7 +8507,14 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     ? 'Validation adiabatique: Sortie Humifog apres atomisation = T melange Humifog appliquee - DeltaT adiabatique.'
                     : 'Adiabatic validation: Humifog outlet after atomization = applied Humifog mixed T - adiabatic DeltaT.'}
                 </p>
-                <table className="w-full text-sm">
+                {isHourlySimulationActive && (
+                  <div className="mb-4 rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm font-semibold text-cyan-900">
+                    {language === 'fr'
+                      ? `Les ${formatNumber(filteredHourlyRecords.length, 0)} heures EPW utilisées sont validées dans le calcul annuel et regroupées dans le résumé ci-dessus. Le détail heure par heure reste disponible dans le fichier EPW source, mais n’est pas rendu ici afin de garder le logiciel fluide.`
+                      : `The ${formatNumber(filteredHourlyRecords.length, 0)} selected EPW hours are validated in the annual calculation and grouped in the summary above. The hour-by-hour detail remains available in the source EPW file but is not rendered here to keep the software responsive.`}
+                  </div>
+                )}
+                <table className={`w-full text-sm ${isHourlySimulationActive ? 'hidden' : ''}`}>
                   <thead>
                     <tr className="bg-slate-100">
                       {[
@@ -8532,7 +8539,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     </tr>
                   </thead>
                   <tbody>
-                    {annualValidationRows.map((row) => {
+                    {!isHourlySimulationActive && annualValidationRows.map((row) => {
                       const displayedHumifogAppliedMixedTempDb = Number(row.humifogAppliedMixTempDb ?? 0)
                       const displayedAdiabaticDeltaDb = Math.abs(Number(row.adiabaticCoolingC ?? 0))
                       const displayedHumifogOutletAfterAtomizationDb = displayedHumifogAppliedMixedTempDb - displayedAdiabaticDeltaDb
