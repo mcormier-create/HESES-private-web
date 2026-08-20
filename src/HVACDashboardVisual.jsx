@@ -617,7 +617,7 @@ function HesesPrintableReportPage() {
     setPdfReportStatus('Ouverture de la fenetre d impression du rapport original...')
 
     try {
-      const printWindow = window.open('', '_blank', 'noopener,noreferrer,popup,width=1200,height=900')
+      const printWindow = window.open('', '_blank', 'popup,width=1200,height=900')
       if (!printWindow) {
         setPdfReportStatus('Autorisez les fenetres contextuelles pour imprimer le rapport.')
         console.timeEnd('printCurrentReport-build-html')
@@ -3101,11 +3101,20 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     setReportStatus(language === 'fr'
       ? 'Préparation du rapport...'
       : 'Preparing report...')
-    window.setTimeout(() => {
-      const html = buildPrintableReportHtml({ autoPrint: false })
-      window.sessionStorage.setItem(HESES_PRINT_REPORT_STORAGE_KEY, html)
-      window.location.href = '/heses-report-print'
-    }, 0)
+
+    const reportHtml = buildPrintableReportMarkup()
+    const popup = window.open('', '_blank', 'popup,width=1200,height=900')
+    if (!popup) {
+      setReportStatus(language === 'fr'
+        ? 'Autorisez les fenêtres contextuelles pour imprimer le rapport.'
+        : 'Allow pop-up windows to print the report.')
+      return
+    }
+
+    popup.document.open()
+    popup.document.write(buildPrintableReportHtml({ autoPrint: false, bodyHtml: reportHtml }))
+    popup.document.close()
+    popup.focus()
   }
 
   const generatePDF = () => {
@@ -3121,73 +3130,156 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     }
   }
 
-  const printReportPreview = () => {
+  const convertCanvasToImagesInHtml = (htmlString) => {
+    if (typeof window === 'undefined') return htmlString
+
+    try {
+      const parser = new DOMParser()
+      const doc = parser.parseFromString(htmlString, 'text/html')
+      const canvases = Array.from(doc.querySelectorAll('canvas'))
+
+      canvases.forEach((canvas) => {
+        try {
+          const dataUrl = canvas.toDataURL('image/png')
+          const image = doc.createElement('img')
+          image.src = dataUrl
+          image.alt = 'HESA report chart'
+          image.style.maxWidth = '100%'
+          image.style.height = 'auto'
+          image.style.display = 'block'
+          canvas.replaceWith(image)
+        } catch {
+          // Keep the canvas if it cannot be serialized safely.
+        }
+      })
+
+      return doc.body.innerHTML
+    } catch {
+      return htmlString
+    }
+  }
+
+  const waitForReportDocumentReady = (printWindow, timeoutMs = 15000) => new Promise((resolve, reject) => {
+    const start = Date.now()
+    const tick = () => {
+      try {
+        if (printWindow.closed) {
+          reject(new Error('Print window closed'))
+          return
+        }
+
+        const doc = printWindow.document
+        if (!doc || doc.readyState !== 'complete') {
+          if (Date.now() - start > timeoutMs) {
+            reject(new Error('Timed out waiting for the print document to finish loading.'))
+            return
+          }
+          setTimeout(tick, 100)
+          return
+        }
+
+        const images = Array.from(doc.images || [])
+        const imagesReady = images.every((image) => !image.src || image.complete)
+        const fontsReady = !doc.fonts || typeof doc.fonts.ready?.then === 'function'
+          ? true
+          : true
+
+        if (imagesReady && fontsReady) {
+          resolve()
+          return
+        }
+
+        if (Date.now() - start > timeoutMs) {
+          resolve()
+          return
+        }
+
+        setTimeout(tick, 100)
+      } catch {
+        if (Date.now() - start > timeoutMs) {
+          resolve()
+          return
+        }
+        setTimeout(tick, 100)
+      }
+    }
+
+    tick()
+  })
+
+  const printStaticReport = async () => {
     if (printInProgressRef.current) {
-      console.warn('printReportPreview: impression déjà en cours, ignorer la demande.')
       return
     }
 
     printInProgressRef.current = true
-    console.time('printReportPreview-total')
-    console.time('printReportPreview-collect-report-html')
+    console.time('printStaticReport-total')
     try {
-      if (printWindowRef.current && !printWindowRef.current.closed) {
-        printWindowRef.current.focus()
-        printInProgressRef.current = false
-        console.timeEnd('printReportPreview-collect-report-html')
-        console.timeEnd('printReportPreview-total')
-        return
-      }
-
-      const reportBodyHtml = reportRef.current?.innerHTML || buildPrintableReportMarkup()
-      console.timeEnd('printReportPreview-collect-report-html')
-      console.time('printReportPreview-open-window')
-      const printWindow = window.open('', '_blank', 'popup,width=1200,height=900')
-      if (!printWindow) {
+      const reportContent = convertCanvasToImagesInHtml(buildPrintableReportMarkup())
+      const staticPrintWindow = window.open('', '_blank', 'popup,width=1200,height=900')
+      if (!staticPrintWindow) {
         setReportStatus(language === 'fr'
           ? 'Autorisez les fenêtres contextuelles pour imprimer le rapport.'
           : 'Allow pop-up windows to print the report.')
         printInProgressRef.current = false
-        console.timeEnd('printReportPreview-open-window')
-        console.timeEnd('printReportPreview-total')
+        console.timeEnd('printStaticReport-total')
         return
       }
 
-      printWindowRef.current = printWindow
-      printWindow.document.open()
-      printWindow.document.write('<!doctype html><html><head><meta charset="utf-8" /></head><body style="font-family:Arial,sans-serif;padding:32px">Préparation du rapport…</body></html>')
-      printWindow.document.close()
-      console.timeEnd('printReportPreview-open-window')
-      setReportStatus(language === 'fr' ? 'Préparation de l’impression...' : 'Preparing print...')
-
-      console.time('printReportPreview-build-print-doc')
-      const html = buildPrintableReportHtml({ autoPrint: true, includeActions: false, bodyHtml: reportBodyHtml })
-      console.timeEnd('printReportPreview-build-print-doc')
-
-      console.time('printReportPreview-write-doc')
-      printWindow.document.open()
-      printWindow.document.write(html)
-      printWindow.document.close()
-      console.timeEnd('printReportPreview-write-doc')
-
-      console.time('printReportPreview-print-call')
-      const handlePrintDone = () => {
-        console.timeEnd('printReportPreview-print-call')
-        console.timeEnd('printReportPreview-total')
-        printInProgressRef.current = false
-        if (printWindowRef.current === printWindow) printWindowRef.current = null
+      const staticHtml = `<!doctype html>
+<html lang="${language === 'fr' ? 'fr-CA' : 'en-CA'}">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${language === 'fr' ? 'Rapport HESA' : 'HESA Report'}</title>
+    <style>
+      @page { size: letter; margin: 12mm; }
+      html, body { margin: 0; background: #ffffff; }
+      body {
+        font-family: Arial, Helvetica, sans-serif;
+        color: #0f172a;
+        background: #ffffff;
       }
+      img, svg { max-width: 100%; height: auto; display: block; }
+      .engineering-report {
+        max-width: 1060px;
+        margin: 0 auto;
+        background: #ffffff;
+      }
+      @media print {
+        body { background: #ffffff; }
+        .print-actions { display: none !important; }
+      }
+    </style>
+  </head>
+  <body>
+    ${reportContent}
+  </body>
+</html>`
 
-      printWindow.addEventListener('afterprint', handlePrintDone, { once: true })
-      printWindow.focus()
-      printWindow.print()
+      staticPrintWindow.document.open()
+      staticPrintWindow.document.write(staticHtml)
+      staticPrintWindow.document.close()
+      printWindowRef.current = staticPrintWindow
+      setReportStatus(language === 'fr' ? 'Ouverture du rapport imprimable...' : 'Opening print-ready report...')
+
+      await waitForReportDocumentReady(staticPrintWindow)
+      staticPrintWindow.focus()
+      staticPrintWindow.print()
     } catch (error) {
-      console.error('Erreur impression rapport:', error)
+      console.error('Erreur impression du rapport statique:', error)
+      setReportStatus(language === 'fr' ? 'Impossible d’imprimer ce rapport.' : 'Unable to print this report.')
+    } finally {
       printInProgressRef.current = false
-      console.timeEnd('printReportPreview-collect-report-html')
-      console.timeEnd('printReportPreview-total')
-      alert(t.pdfError)
+      console.timeEnd('printStaticReport-total')
+      if (printWindowRef.current && !printWindowRef.current.closed) {
+        printWindowRef.current.focus()
+      }
     }
+  }
+
+  const printReportPreview = () => {
+    void printStaticReport()
   }
   const buildPrintableReportMarkup = () => (
     renderToStaticMarkup(<HvacEnergyOptimizationReport data={reportData} />)
@@ -6055,84 +6147,12 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   return (
     <div className="min-h-screen bg-slate-100 p-6">
       <style>{`
-        @media screen {
-          .heses-print-report {
-            position: absolute;
-            left: -10000px;
-            top: 0;
-            width: 1060px;
-            background: #ffffff;
-          }
-        }
-
-        @media print {
-          @page {
-            size: letter;
-            margin: 14mm;
-          }
-
-          body {
-            background: #ffffff !important;
-          }
-
-          body * {
-            visibility: hidden !important;
-          }
-
-          .heses-print-report,
-          .heses-print-report * {
-            visibility: visible !important;
-          }
-
-          .heses-print-report {
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 100% !important;
-            color: #0f172a !important;
-            background: #ffffff !important;
-          }
-
-          .heses-print-report .engineering-report {
-            max-width: 1060px;
-            margin: 0 auto;
-            font-size: 12px;
-          }
-
-          .heses-print-report .page-break {
-            break-before: auto;
-            page-break-before: auto;
-          }
-
-          .heses-print-report .report-cover.page-break {
-            break-before: auto;
-            page-break-before: auto;
-          }
-
-          .heses-print-report .report-cover {
-            break-after: page;
-            page-break-after: always;
-          }
-
-          .heses-print-report .report-section {
-            break-inside: avoid;
-            page-break-inside: avoid;
-          }
-
-          .heses-print-report .report-section.allow-page-break {
-            break-inside: auto;
-            page-break-inside: auto;
-          }
-
-          .heses-print-report .report-section h2,
-          .heses-print-report .report-section h3 {
-            break-after: avoid;
-            page-break-after: avoid;
-          }
-
-          .heses-print-report button {
-            display: none !important;
-          }
+        .heses-print-report {
+          position: absolute;
+          left: -10000px;
+          top: 0;
+          width: 1060px;
+          background: #ffffff;
         }
       `}</style>
       <div className="mx-auto mb-6 flex max-w-7xl flex-wrap items-center justify-between gap-4">

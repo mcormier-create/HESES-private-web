@@ -134,6 +134,7 @@ async function handleAuth(request, response) {
     return true
   }
   if (!accessPassword) {
+    if (!isProduction) return false
     response.statusCode = 503
     sendLoginPage(response, url.searchParams.get('lang') || 'fr', 'Private access is not configured on this server.')
     return true

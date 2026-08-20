@@ -260,7 +260,7 @@ function createHesesCalculationPlugin() {
   };
 }
 
-function createHesesAccessGatePlugin(env) {
+function createHesesAccessGatePlugin(env, isProduction) {
   const accessPassword = env.HESA_ACCESS_PASSWORD || process.env.HESA_ACCESS_PASSWORD;
   const cookieName = 'heses_private_access';
   const sessions = new Map();
@@ -420,6 +420,10 @@ function createHesesAccessGatePlugin(env) {
     cleanupRateLimits();
     setSecurityHeaders(response);
     if (!accessPassword) {
+      if (!isProduction) {
+        next();
+        return;
+      }
       sendLogin(response, {
         language: new URL(request.url || '/', 'http://heses.local').searchParams.get('lang') || 'fr',
         statusCode: 503,
@@ -546,9 +550,10 @@ function createOttawaWeatherFilePlugin() {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
+  const isProduction = mode === 'production';
 
   return {
-    plugins: [createHesesAccessGatePlugin(env), react(), createOttawaWeatherFilePlugin(), createHesesAssistantPlugin(env), createHesesCalculationPlugin(), createHesesReportPdfPlugin()],
+    plugins: [createHesesAccessGatePlugin(env, isProduction), react(), createOttawaWeatherFilePlugin(), createHesesAssistantPlugin(env), createHesesCalculationPlugin(), createHesesReportPdfPlugin()],
     server: {
       watch: {
         ignored: [
