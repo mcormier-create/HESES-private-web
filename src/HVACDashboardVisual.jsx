@@ -3967,7 +3967,6 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     scheduleEndTime,
     scheduleDaysOption,
     JSON.stringify(scheduleCustomDays),
-    hourlyWeatherSourceType,
     t.noBuiltInWeatherAvailable,
     t.builtInWeatherLoadFailed,
   ])
