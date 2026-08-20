@@ -1097,6 +1097,48 @@ function compactWeatherBins(records = [], targetCount = 96) {
   return compacted
 }
 
+function aggregateFreeCoolingComparisonRows(humifogRows = [], steamRows = [], binSizeC = 5) {
+  const groups = new Map()
+  humifogRows.forEach((humifogRow, index) => {
+    const steamRow = steamRows[index] || {}
+    const key = Math.floor(Number(humifogRow.tempC || 0) / binSizeC) * binSizeC
+    const group = groups.get(key) || { weight: 0, humifog: [], steam: [] }
+    const weight = Math.max(0, Number(humifogRow.hours || 0))
+    group.weight += weight
+    group.humifog.push({ row: humifogRow, weight })
+    group.steam.push({ row: steamRow, weight })
+    groups.set(key, group)
+  })
+
+  const weighted = (entries, selector, weight) => {
+    if (!weight) return 0
+    return entries.reduce((total, entry) => total + Number(selector(entry.row) || 0) * entry.weight, 0) / weight
+  }
+  const stateAverage = (entries, selector, weight) => {
+    const source = entries.find((entry) => selector(entry.row))?.row
+    const state = source ? selector(source) : null
+    if (!state || !weight) return null
+    return Object.fromEntries(Object.keys(state).map((key) => [
+      key,
+      weighted(entries, (row) => selector(row)?.[key], weight),
+    ]))
+  }
+  const rowAverage = (entries, weight, tempC) => ({
+    tempC,
+    hours: weight,
+    outdoorAirPercent: weighted(entries, (row) => row.outdoorAirPercent, weight),
+    appliedOutdoorAirPercent: weighted(entries, (row) => row.appliedOutdoorAirPercent, weight),
+    mixed: stateAverage(entries, (row) => row.mixed, weight),
+    inletToHumifog: stateAverage(entries, (row) => row.inletToHumifog, weight),
+    afterHumifog: stateAverage(entries, (row) => row.afterHumifog, weight),
+  })
+
+  return [...groups.entries()].sort(([left], [right]) => left - right).map(([tempC, group]) => ({
+    humifogRow: rowAverage(group.humifog, group.weight, tempC),
+    steamRow: rowAverage(group.steam, group.weight, tempC),
+  }))
+}
+
 function loadMultiSystemState(initialSettings, language = 'fr') {
   if (typeof window !== 'undefined') {
     try {
@@ -4487,6 +4529,16 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     useMeasuredMixedAirTemperature,
     measuredMixedAirTemperatureC: measuredMixedAirTemperature,
   })
+  const displayedFreeCoolingRows = isHourlySimulationActive
+    ? aggregateFreeCoolingComparisonRows(
+      freeCoolingHumifogAnalysis.binRows,
+      freeCoolingHumifogAnalysis.conventionalRows,
+      5
+    )
+    : freeCoolingHumifogAnalysis.binRows.map((humifogRow, index) => ({
+      humifogRow,
+      steamRow: freeCoolingHumifogAnalysis.conventionalRows[index] || {},
+    }))
   const freeCoolingCalculationComplete = Boolean(freeCoolingHumifogAnalysis.isComplete)
   const freeCoolingSummaryRows = freeCoolingHumifogAnalysis.binRows || []
   const isFreeCoolingSummaryRowActive = (row) => (
@@ -8389,8 +8441,12 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                 </h3>
                 <p className="text-sm text-slate-600 mb-3">
                   {language === 'fr'
-                    ? 'Chaque ligne correspond à un BIN actif. Les heures affichées reflètent le mode de calcul choisi, y compris les heures effectives du calendrier personnalisé.'
-                    : 'Each row corresponds to an active weather BIN. The displayed hours reflect the selected calculation mode, including effective custom operating hours.'}
+                    ? (isHourlySimulationActive
+                      ? 'Les heures EPW sont regroupées par tranches de température pour garder l’affichage fluide. Les totaux annuels utilisent toutes les heures EPW sélectionnées.'
+                      : 'Chaque ligne correspond à un BIN actif. Les heures affichées reflètent le mode de calcul choisi, y compris les heures effectives du calendrier personnalisé.')
+                    : (isHourlySimulationActive
+                      ? 'EPW hours are grouped by temperature range for a responsive display. Annual totals still use all selected EPW hours.'
+                      : 'Each row corresponds to an active weather BIN. The displayed hours reflect the selected calculation mode, including effective custom operating hours.')}
                 </p>
                 <table className="w-full text-sm min-w-[1400px]">
                   <thead>
@@ -8412,8 +8468,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     </tr>
                   </thead>
                   <tbody>
-                    {freeCoolingHumifogAnalysis.binRows.map((humifogRow, index) => {
-                      const steamRow = freeCoolingHumifogAnalysis.conventionalRows[index] || {}
+                    {displayedFreeCoolingRows.map(({ humifogRow, steamRow }, index) => {
                       const steamOaPercent = Number(steamRow.appliedOutdoorAirPercent ?? steamRow.outdoorAirPercent ?? 0)
                       const steamRaPercent = 100 - steamOaPercent
                       const humifogOaPercent = Number(humifogRow.appliedOutdoorAirPercent ?? humifogRow.outdoorAirPercent ?? 0)
