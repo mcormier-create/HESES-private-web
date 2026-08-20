@@ -1,8 +1,10 @@
 import fs from 'node:fs/promises'
+import { mkdirSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { chromium } from 'playwright'
 
 const REPORTS = new Map()
 const REPORT_TTL_MS = 60 * 60 * 1000
@@ -18,6 +20,8 @@ const CHROME_CANDIDATES = [
   'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
 ]
+
+mkdirSync(GENERATED_REPORT_DIR, { recursive: true })
 
 function cleanOldReports() {
   const now = Date.now()
@@ -49,21 +53,39 @@ function isLikelyReportHtml(html) {
   return value.includes('<!doctype html') && value.includes('engineering-report')
 }
 
-async function findChromeExecutable() {
+async function findBrowserExecutable() {
+  if (process.platform !== 'win32') {
+    const executablePath = chromium.executablePath()
+    try {
+      await fs.access(executablePath)
+      return { engine: 'Playwright Chromium', executablePath }
+    } catch (error) {
+      throw new Error(`Playwright Chromium introuvable sur ${process.platform}: ${executablePath}. ${error.message}`)
+    }
+  }
+
   for (const candidate of CHROME_CANDIDATES) {
     try {
       await fs.access(candidate)
-      return candidate
+      return { engine: 'Local Chrome/Edge', executablePath: candidate }
     } catch {
-      // try next path
+      // Try the next Windows installation path.
     }
   }
-  return ''
+
+  const executablePath = chromium.executablePath()
+  try {
+    await fs.access(executablePath)
+    return { engine: 'Playwright Chromium', executablePath }
+  } catch (error) {
+    throw new Error(`Aucun moteur PDF trouve sur Windows. Chrome/Edge locaux et Playwright Chromium indisponibles. ${error.message}`)
+  }
 }
 
 async function createChromePdfBufferFromHtml(html, id) {
-  const chromePath = await findChromeExecutable()
-  if (!chromePath) throw new Error('Chrome ou Edge introuvable pour generer le PDF.')
+  const browserExecutable = await findBrowserExecutable()
+  console.info(`PDF engine: ${browserExecutable.engine}`)
+  console.info(`Browser executable: ${browserExecutable.executablePath}`)
 
   const workDir = path.join(os.tmpdir(), 'heses-report-pdf')
   await fs.mkdir(workDir, { recursive: true })
@@ -108,29 +130,38 @@ async function createChromePdfBufferFromHtml(html, id) {
   await fs.rm(pdfPath, { force: true }).catch(() => {})
 
   const fileUrl = `file:///${htmlPath.replace(/\\/g, '/')}`
-  await execFileAsync(chromePath, [
-    '--headless=new',
-    '--disable-gpu',
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-extensions',
-    '--allow-file-access-from-files',
-    `--user-data-dir=${profilePath}`,
-    '--run-all-compositor-stages-before-draw',
-    '--virtual-time-budget=2500',
-    '--print-to-pdf-no-header',
-    `--print-to-pdf=${pdfPath}`,
-    fileUrl,
-  ], { timeout: 30000, windowsHide: true })
-
-  const pdfBuffer = await fs.readFile(pdfPath)
-  if (!isLikelyValidPdf(pdfBuffer)) throw new Error('Chrome a genere un PDF invalide.')
-
-  fs.rm(htmlPath, { force: true }).catch(() => {})
-  fs.rm(pdfPath, { force: true }).catch(() => {})
-  fs.rm(profilePath, { recursive: true, force: true }).catch(() => {})
-
-  return pdfBuffer
+  let browser
+  let page
+  try {
+    browser = await chromium.launch({
+      executablePath: browserExecutable.executablePath,
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--allow-file-access-from-files'],
+    })
+    page = await browser.newPage({ viewport: { width: 1060, height: 1372 } })
+    await page.goto(fileUrl, { waitUntil: 'load', timeout: 30000 })
+    await page.emulateMediaType('print')
+    await page.pdf({
+      path: pdfPath,
+      format: 'Letter',
+      printBackground: true,
+      preferCSSPageSize: true,
+      margin: { top: '12mm', right: '12mm', bottom: '12mm', left: '12mm' },
+    })
+    const pdfBuffer = await fs.readFile(pdfPath)
+    if (!isLikelyValidPdf(pdfBuffer)) throw new Error('Chromium a genere un PDF invalide.')
+    console.info(`PDF generated: ${pdfPath} (${pdfBuffer.length} bytes)`)
+    return pdfBuffer
+  } catch (error) {
+    console.error(`PDF generation failed: engine=${browserExecutable.engine}; executable=${browserExecutable.executablePath}; ${error.message}`)
+    throw error
+  } finally {
+    if (page) await page.close().catch(() => {})
+    if (browser) await browser.close().catch(() => {})
+    fs.rm(htmlPath, { force: true }).catch(() => {})
+    fs.rm(pdfPath, { force: true }).catch(() => {})
+    fs.rm(profilePath, { recursive: true, force: true }).catch(() => {})
+  }
 }
 
 async function writeLatestReportFiles({ html, pdfBuffer }) {
