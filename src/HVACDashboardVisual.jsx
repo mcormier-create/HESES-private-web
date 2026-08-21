@@ -466,9 +466,50 @@ function calculateHourlySimulation(records, options) {
     .toLowerCase()
   const usesHeatPumpReheat = reheatEnergySource.includes('thermopompe') || reheatEnergySource.includes('heat pump')
 
-  const filtered = records.filter((record) => isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays))
+  const firstRecord = records[0]
+  const lastRecord = records[records.length - 1]
+  const firstDate = firstRecord
+    ? new Date(firstRecord.year, firstRecord.month - 1, firstRecord.day, epwRecordHour(firstRecord.hour), firstRecord.minute || 0)
+    : null
+  const lastDate = lastRecord
+    ? new Date(lastRecord.year, lastRecord.month - 1, lastRecord.day, epwRecordHour(lastRecord.hour), lastRecord.minute || 0)
+    : null
 
-  const hourlyRows = filtered.map((record) => {
+  let operatingCount = 0
+  let outdoorTempSum = 0
+  let outdoorRhSum = 0
+  let minOutdoorTemp = Number.POSITIVE_INFINITY
+  let maxOutdoorTemp = Number.NEGATIVE_INFINITY
+
+  let totalSteamKwh = 0
+  let totalGasKwh = 0
+  let totalHumifogKwh = 0
+  let totalCost = 0
+  let totalSteamCost = 0
+  let totalNaturalGasGES = 0
+  let totalAtmosphericGasGES = 0
+  let totalAdiabaticGES = 0
+  let totalWaterKg = 0
+
+  let hoursBelowZero = 0
+  let hoursBelowMinusTen = 0
+  let hoursBelowMinusTwenty = 0
+  let hoursWithHumidificationRequired = 0
+
+  for (const record of records) {
+    if (!isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays)) {
+      continue
+    }
+
+    operatingCount += 1
+    outdoorTempSum += record.dryBulbC
+    outdoorRhSum += record.relativeHumidity
+    if (record.dryBulbC < minOutdoorTemp) minOutdoorTemp = record.dryBulbC
+    if (record.dryBulbC > maxOutdoorTemp) maxOutdoorTemp = record.dryBulbC
+    if (record.dryBulbC < 0) hoursBelowZero += 1
+    if (record.dryBulbC < -10) hoursBelowMinusTen += 1
+    if (record.dryBulbC < -20) hoursBelowMinusTwenty += 1
+
     const pressureKPa = record.pressurePa / 1000
     const outdoorHumidityRatio = humidityRatioFromRH(record.dryBulbC, record.relativeHumidity, pressureKPa)
     const recoveredHumidityRatioRaw = outdoorHumidityRatio +
@@ -484,9 +525,6 @@ function calculateHourlySimulation(records, options) {
     const steamEnergyKW = Math.round(correctedHumidificationLoad * 0.345)
     const adiabaticLoad = correctedHumidificationLoad
     const adiabaticPumpKW = Math.max(1, Math.round(adiabaticLoad * 0.0009))
-    const adiabaticTemperatureDrop = Number(
-      Math.max(0.3, Math.min(12, deltaW * 7000 * 0.22)).toFixed(1)
-    )
     const recoveredDryBulbC = record.dryBulbC + (sensibleRecoveryEfficiency / 100) * (roomTemperature - record.dryBulbC)
     const enteringHumifogEnthalpy = moistAirEnthalpyBtuLb(recoveredDryBulbC, recoveredHumidityRatio)
     const preheatBtuPerHr = Math.max(0, 4.5 * effectiveOutsideAirCFM * (indoorEnthalpy - enteringHumifogEnthalpy))
@@ -496,9 +534,6 @@ function calculateHourlySimulation(records, options) {
       sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, preheatTargetTempC - recoveredDryBulbC))
     )
     const grossReheatKW = Math.max(0, grossHumifogPreheatKW - baseHvacHeatingThermalKW)
-    const recoveryEnergyReductionKW = isNoRecovery
-      ? 0
-      : Math.round(sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, recoveredDryBulbC - record.dryBulbC)))
     const netReheatKW = grossReheatKW
     const reheatEnergyKW = usesHeatPumpReheat
       ? Number((netReheatKW / Math.max(heatPumpCOP, 0.1)).toFixed(2))
@@ -516,49 +551,19 @@ function calculateHourlySimulation(records, options) {
     const adiabaticGES = usesHeatPumpReheat ? Number(((reheatEnergyKW * 0.182) / 1000).toFixed(6)) : 0
     const waterKg = Number((correctedHumidificationLoad * 0.453592).toFixed(3))
 
-    return {
-      date: new Date(record.year, record.month - 1, record.day, epwRecordHour(record.hour), record.minute || 0),
-      dryBulbC: record.dryBulbC,
-      relativeHumidity: record.relativeHumidity,
-      steamEnergyKW,
-      adiabaticEnergyKW,
-      naturalGasSteamInputKW,
-      atmosphericGasHumidifierInputKW,
-      annualGasKwh: naturalGasSteamInputKW + atmosphericGasHumidifierInputKW,
-      steamCost,
-      adiabaticCost,
-      gasCost,
-      naturalGasGES,
-      atmosphericGasHumidifierGES,
-      adiabaticGES,
-      waterKg,
-    }
-  })
+    if (steamEnergyKW > 0) hoursWithHumidificationRequired += 1
 
-  const orderedAll = records.map((record) => ({
-    ...record,
-    date: new Date(record.year, record.month - 1, record.day, epwRecordHour(record.hour), record.minute || 0),
-  })).sort((a, b) => a.date - b.date)
-  const firstDate = orderedAll[0].date
-  const lastDate = orderedAll[orderedAll.length - 1].date
-
-  const operatingCount = hourlyRows.length
-  const outdoorTemps = hourlyRows.map((row) => row.dryBulbC)
-  const outdoorRhs = hourlyRows.map((row) => row.relativeHumidity)
-
-  const totalSteamKwh = hourlyRows.reduce((sum, row) => sum + row.steamEnergyKW, 0)
-  const totalGasKwh = hourlyRows.reduce((sum, row) => sum + row.annualGasKwh, 0)
-  const totalHumifogKwh = hourlyRows.reduce((sum, row) => sum + row.adiabaticEnergyKW, 0)
-  const totalCost = hourlyRows.reduce((sum, row) => sum + row.adiabaticCost, 0)
-  const totalSteamCost = hourlyRows.reduce((sum, row) => sum + row.steamCost, 0)
-  const totalNaturalGasGES = hourlyRows.reduce((sum, row) => sum + row.naturalGasGES, 0)
-  const totalAtmosphericGasGES = hourlyRows.reduce((sum, row) => sum + row.atmosphericGasHumidifierGES, 0)
-  const totalAdiabaticGES = hourlyRows.reduce((sum, row) => sum + row.adiabaticGES, 0)
-  const totalWaterKg = hourlyRows.reduce((sum, row) => sum + row.waterKg, 0)
-  const hoursBelowZero = hourlyRows.filter((row) => row.dryBulbC < 0).length
-  const hoursBelowMinusTen = hourlyRows.filter((row) => row.dryBulbC < -10).length
-  const hoursBelowMinusTwenty = hourlyRows.filter((row) => row.dryBulbC < -20).length
-  const hoursWithHumidificationRequired = hourlyRows.filter((row) => row.steamEnergyKW > 0).length
+    totalSteamKwh += steamEnergyKW
+    totalGasKwh += naturalGasSteamInputKW + atmosphericGasHumidifierInputKW
+    totalHumifogKwh += adiabaticEnergyKW
+    totalCost += adiabaticCost
+    totalSteamCost += steamCost
+    totalNaturalGasGES += naturalGasGES
+    totalAtmosphericGasGES += atmosphericGasHumidifierGES
+    totalAdiabaticGES += adiabaticGES
+    totalWaterKg += waterKg
+    void gasCost
+  }
 
   return {
     weatherLocation: records[0]?.weatherLocation || '',
@@ -566,10 +571,10 @@ function calculateHourlySimulation(records, options) {
     operatingHoursUsed: operatingCount,
     firstDate,
     lastDate,
-    averageOutdoorTemp: operatingCount ? outdoorTemps.reduce((sum, value) => sum + value, 0) / operatingCount : 0,
-    minOutdoorTemp: operatingCount ? Math.min(...outdoorTemps) : 0,
-    maxOutdoorTemp: operatingCount ? Math.max(...outdoorTemps) : 0,
-    averageOutdoorRh: operatingCount ? outdoorRhs.reduce((sum, value) => sum + value, 0) / operatingCount : 0,
+    averageOutdoorTemp: operatingCount ? outdoorTempSum / operatingCount : 0,
+    minOutdoorTemp: operatingCount ? minOutdoorTemp : 0,
+    maxOutdoorTemp: operatingCount ? maxOutdoorTemp : 0,
+    averageOutdoorRh: operatingCount ? outdoorRhSum / operatingCount : 0,
     annualSteamKwh: totalSteamKwh,
     annualGasKwh: totalGasKwh,
     annualHumifogKwh: totalHumifogKwh,
