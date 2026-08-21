@@ -6,7 +6,7 @@ import HvacEnergyOptimizationReport from './reports/HvacEnergyOptimizationReport
 import { BASELINE_TECHNOLOGIES, selectedHumifogTechnology } from './reports/projectEnergySummary'
 import { calculateFreeCoolingHumifogComparison } from './services/freeCoolingHumifogService'
 import { calculateHvacDashboardMetrics } from './services/hvacEngineeringService'
-import { epwTextToRecords as parseHourlyEpwText, calculateHourlySimulation as simulateHourlyWeather } from './services/hourlyWeatherSimulation'
+import { epwTextToRecords as parseHourlyEpwText, calculateHourlySimulation as simulateHourlyWeather, isEpwRecordOperating } from './services/hourlyWeatherSimulation'
 import { dryBulbFromEnthalpyHumidityRatio, mixAirStates, psychrometricState, sensibleHeatingKw, stateFromDbW } from './calculations/psychrometrics'
 import { getSystemSchematic, resolveSystemSchematicId, systemImages } from './utils/systemImages'
 import {
@@ -3707,6 +3707,25 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     isHourlyMode &&
     Array.isArray(hourlyWeatherRecords) &&
     hourlyWeatherRecords.length >= 8750
+  const filteredHourlyRecords = useMemo(() => {
+    if (!isHourlyMode) return []
+    return hourlyWeatherRecords.filter((record) => isEpwRecordOperating(
+      record,
+      scheduleMode,
+      scheduleStartTime,
+      scheduleEndTime,
+      scheduleDaysOption,
+      scheduleCustomDays
+    ))
+  }, [
+    isHourlyMode,
+    hourlyWeatherRecords,
+    scheduleMode,
+    scheduleStartTime,
+    scheduleEndTime,
+    scheduleDaysOption,
+    scheduleCustomDays,
+  ])
   const scheduleStartHour = Number(String(scheduleStartTime || '00:00').split(':')[0] || 0)
   const scheduleEndHour = Number(String(scheduleEndTime || '00:00').split(':')[0] || 0)
   const hasFilteredHourlyRecords =

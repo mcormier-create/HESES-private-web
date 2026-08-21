@@ -35,7 +35,7 @@ function epwRecordHour(hour) {
   return epwHour >= 1 && epwHour <= 24 ? epwHour - 1 : epwHour
 }
 
-function isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays) {
+export function isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays) {
   if (scheduleMode === '24-7') return true
 
   const hourOfDay = epwRecordHour(record.hour)
