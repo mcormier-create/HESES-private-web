@@ -3420,6 +3420,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const debouncedAtmosphericGasHumidifierEfficiency = useDebouncedValue(atmosphericGasHumidifierEfficiency)
   const debouncedElectricityRate = useDebouncedValue(electricityRate)
   const debouncedNaturalGasRate = useDebouncedValue(naturalGasRate)
+  const debouncedScheduleStartTime = useDebouncedValue(scheduleStartTime, 250)
+  const debouncedScheduleEndTime = useDebouncedValue(scheduleEndTime, 250)
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof Worker === 'undefined') return
@@ -3731,8 +3733,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     return hourlyWeatherRecords.filter((record) => isEpwRecordOperating(
       record,
       scheduleMode,
-      scheduleStartTime,
-      scheduleEndTime,
+      debouncedScheduleStartTime,
+      debouncedScheduleEndTime,
       scheduleDaysOption,
       scheduleCustomDays
     ))
@@ -3740,8 +3742,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     isHourlyMode,
     hourlyWeatherRecords,
     scheduleMode,
-    scheduleStartTime,
-    scheduleEndTime,
+    debouncedScheduleStartTime,
+    debouncedScheduleEndTime,
     scheduleDaysOption,
     scheduleCustomDays,
   ])
@@ -4024,8 +4026,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       hourlyWeatherFileName,
       hourlyWeatherRecords.length,
       scheduleMode,
-      scheduleStartTime,
-      scheduleEndTime,
+      debouncedScheduleStartTime,
+      debouncedScheduleEndTime,
       scheduleDaysOption,
       JSON.stringify(scheduleCustomDays),
       debouncedOutsideAirCFM,
@@ -4060,8 +4062,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
 
     const options = {
       scheduleMode,
-      scheduleStartTime,
-      scheduleEndTime,
+      scheduleStartTime: debouncedScheduleStartTime,
+      scheduleEndTime: debouncedScheduleEndTime,
       scheduleDaysOption,
       scheduleCustomDays,
       outsideAirCFM: debouncedOutsideAirCFM,
@@ -4154,8 +4156,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     calculationMethod,
     hourlyWeatherRecords,
     scheduleMode,
-    scheduleStartTime,
-    scheduleEndTime,
+    debouncedScheduleStartTime,
+    debouncedScheduleEndTime,
     scheduleDaysOption,
     scheduleCustomDays,
     debouncedOutsideAirCFM,
