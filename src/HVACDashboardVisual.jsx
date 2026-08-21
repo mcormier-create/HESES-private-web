@@ -5,8 +5,9 @@ import PsychrometricChart from './components/PsychrometricChart'
 import HvacEnergyOptimizationReport from './reports/HvacEnergyOptimizationReport'
 import { BASELINE_TECHNOLOGIES, selectedHumifogTechnology } from './reports/projectEnergySummary'
 import { calculateFreeCoolingHumifogComparison } from './services/freeCoolingHumifogService'
-import { calculateAutomaticPreHumifogTemperature, calculateHvacDashboardMetrics } from './services/hvacEngineeringService'
-import { dryBulbFromEnthalpyHumidityRatio, humidityRatioFromRH, mixAirStates, moistAirEnthalpyBtuLb, psychrometricState, sensibleHeatingKw, stateFromDbW } from './calculations/psychrometrics'
+import { calculateHvacDashboardMetrics } from './services/hvacEngineeringService'
+import { epwTextToRecords as parseHourlyEpwText, calculateHourlySimulation as simulateHourlyWeather } from './services/hourlyWeatherSimulation'
+import { dryBulbFromEnthalpyHumidityRatio, mixAirStates, psychrometricState, sensibleHeatingKw, stateFromDbW } from './calculations/psychrometrics'
 import { getSystemSchematic, resolveSystemSchematicId, systemImages } from './utils/systemImages'
 import {
   ResponsiveContainer,
@@ -319,274 +320,20 @@ function computeScheduleDailyHours(startTime, endTime, mode) {
   return ((24 * 60 - start) + end) / 60
 }
 
+function useDebouncedValue(value, delayMs = 400) {
+  const [debouncedValue, setDebouncedValue] = useState(value)
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setDebouncedValue(value), delayMs)
+    return () => window.clearTimeout(timeoutId)
+  }, [value, delayMs])
+
+  return debouncedValue
+}
+
 function resolveScheduleActiveDays(option, customDays) {
   if (option === 'custom') return { ...DEFAULT_SCHEDULE_CUSTOM_DAYS, ...customDays }
   return { ...PRESET_SCHEDULE_DAYS[option] }
-}
-
-function epwTextToRecords(text) {
-  const lines = text.split(/\r?\n/)
-  let weatherLocation = ''
-  const records = []
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim()
-    if (!line || line.startsWith('!')) continue
-    const parts = line.split(',').map((item) => item.trim())
-    const keyword = parts[0]?.toUpperCase()
-
-    if (keyword === 'LOCATION') {
-      weatherLocation = parts.slice(1).join(', ').trim()
-      continue
-    }
-
-    if (parts.length < 10) continue
-    const [yearText, monthText, dayText, hourText, minuteText, , dryBulbText, dewPointText, rhText, pressureText] = parts
-    const year = Number(yearText)
-    const month = Number(monthText)
-    const day = Number(dayText)
-    const hour = Number(hourText)
-    const minute = Number(minuteText)
-    const dryBulbC = Number(dryBulbText)
-    const dewPointC = Number(dewPointText)
-    const relativeHumidity = Number(rhText)
-    const pressurePa = Number(pressureText)
-
-    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day) || !Number.isFinite(hour)) continue
-    if (!Number.isFinite(dryBulbC) || !Number.isFinite(relativeHumidity) || !Number.isFinite(pressurePa)) continue
-
-    records.push({ year, month, day, hour, minute: Number.isFinite(minute) ? minute : 0, dryBulbC, dewPointC, relativeHumidity, pressurePa, weatherLocation })
-  }
-
-  if (!records.length) {
-    throw new Error('EPW file did not contain any valid hourly records.')
-  }
-
-  return { weatherLocation, records }
-}
-
-function epwRecordHour(hour) {
-  const epwHour = Number(hour)
-  if (!Number.isFinite(epwHour)) return 0
-  return epwHour >= 1 && epwHour <= 24 ? epwHour - 1 : epwHour
-}
-
-function isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays) {
-  if (scheduleMode === '24-7') return true
-
-  const hourOfDay = epwRecordHour(record.hour)
-  const date = new Date(record.year, record.month - 1, record.day)
-  const dayOfWeek = date.getDay()
-  const dayName = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][dayOfWeek]
-
-  let enabledDay = false
-  if (scheduleDaysOption === 'mon-fri') {
-    enabledDay = dayOfWeek >= 1 && dayOfWeek <= 5
-  } else if (scheduleDaysOption === 'mon-sat') {
-    enabledDay = dayOfWeek >= 1 && dayOfWeek <= 6
-  } else if (scheduleDaysOption === 'seven-days') {
-    enabledDay = true
-  } else {
-    enabledDay = Boolean(scheduleCustomDays[dayName])
-  }
-
-  if (!enabledDay) return false
-
-  const [startHours, startMinutes] = scheduleStartTime.split(':').map(Number)
-  const [endHours, endMinutes] = scheduleEndTime.split(':').map(Number)
-  const start = startHours * 60 + startMinutes
-  let end = endHours * 60 + endMinutes
-  if (end === 0) end = 24 * 60
-  const recordMinutes = hourOfDay * 60
-
-  if (start === end) return true
-  if (start < end) return recordMinutes >= start && recordMinutes < end
-  return recordMinutes >= start || recordMinutes < end
-}
-
-function isEnthalpyCassette(recoveryInput) {
-  const recoveries = Array.isArray(recoveryInput)
-    ? recoveryInput
-    : [recoveryInput]
-
-  return recoveries.some((recovery) => {
-    if (!recovery) return false
-
-    const name = String(recovery.nom || recovery.name || '')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-
-    return (
-      name === 'echangeur a cassette enthalpique' ||
-      name === 'enthalpy cassette heat exchanger' ||
-      (name.includes('cassette') && name.includes('enthalp'))
-    )
-  })
-}
-
-function calculateHourlySimulation(records, options) {
-  const {
-    scheduleMode,
-    scheduleStartTime,
-    scheduleEndTime,
-    scheduleDaysOption,
-    scheduleCustomDays,
-    outsideAirCFM,
-    activeFraction,
-    roomTemperature,
-    roomRelativeHumidity,
-    supplyAirTemperature,
-    selectedRecoveries,
-    wheelEfficiency,
-    latentRecoveryEfficiency,
-    selectedReheatSystem,
-    heatPumpCOP,
-    steamBoilerEfficiency,
-    atmosphericGasHumidifierEfficiency,
-    electricityRate,
-    naturalGasRate,
-  } = options
-
-  const indoorHumidityRatio = humidityRatioFromRH(supplyAirTemperature, roomRelativeHumidity)
-  const selectedRecovery = selectedRecoveries[0]
-  const isNoRecovery = Boolean(selectedRecovery?.noRecovery)
-  const latentRecoverySupported = supportsLatentRecovery(selectedRecovery)
-  const sensibleRecoveryEfficiency = isNoRecovery
-    ? 0
-    : clampValue(Number(wheelEfficiency), 0, 95)
-  const effectiveLatentRecoveryEfficiency = isNoRecovery || !latentRecoverySupported
-    ? 0
-    : clampValue(Number(latentRecoveryEfficiency), 0, 95)
-  const indoorEnthalpy = moistAirEnthalpyBtuLb(supplyAirTemperature, indoorHumidityRatio)
-  const effectiveOutsideAirCFM = Math.round(outsideAirCFM * activeFraction)
-  const reheatEnergySource = String(selectedReheatSystem?.energie || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-  const usesHeatPumpReheat = reheatEnergySource.includes('thermopompe') || reheatEnergySource.includes('heat pump')
-
-  const firstRecord = records[0]
-  const lastRecord = records[records.length - 1]
-  const firstDate = firstRecord
-    ? new Date(firstRecord.year, firstRecord.month - 1, firstRecord.day, epwRecordHour(firstRecord.hour), firstRecord.minute || 0)
-    : null
-  const lastDate = lastRecord
-    ? new Date(lastRecord.year, lastRecord.month - 1, lastRecord.day, epwRecordHour(lastRecord.hour), lastRecord.minute || 0)
-    : null
-
-  let operatingCount = 0
-  let outdoorTempSum = 0
-  let outdoorRhSum = 0
-  let minOutdoorTemp = Number.POSITIVE_INFINITY
-  let maxOutdoorTemp = Number.NEGATIVE_INFINITY
-
-  let totalSteamKwh = 0
-  let totalGasKwh = 0
-  let totalHumifogKwh = 0
-  let totalCost = 0
-  let totalSteamCost = 0
-  let totalNaturalGasGES = 0
-  let totalAtmosphericGasGES = 0
-  let totalAdiabaticGES = 0
-  let totalWaterKg = 0
-
-  let hoursBelowZero = 0
-  let hoursBelowMinusTen = 0
-  let hoursBelowMinusTwenty = 0
-  let hoursWithHumidificationRequired = 0
-
-  for (const record of records) {
-    if (!isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays)) {
-      continue
-    }
-
-    operatingCount += 1
-    outdoorTempSum += record.dryBulbC
-    outdoorRhSum += record.relativeHumidity
-    if (record.dryBulbC < minOutdoorTemp) minOutdoorTemp = record.dryBulbC
-    if (record.dryBulbC > maxOutdoorTemp) maxOutdoorTemp = record.dryBulbC
-    if (record.dryBulbC < 0) hoursBelowZero += 1
-    if (record.dryBulbC < -10) hoursBelowMinusTen += 1
-    if (record.dryBulbC < -20) hoursBelowMinusTwenty += 1
-
-    const pressureKPa = record.pressurePa / 1000
-    const outdoorHumidityRatio = humidityRatioFromRH(record.dryBulbC, record.relativeHumidity, pressureKPa)
-    const recoveredHumidityRatioRaw = outdoorHumidityRatio +
-      (effectiveLatentRecoveryEfficiency / 100) * (indoorHumidityRatio - outdoorHumidityRatio)
-    const recoveredHumidityRatio = clampValue(
-      recoveredHumidityRatioRaw,
-      Math.max(0, Math.min(outdoorHumidityRatio, indoorHumidityRatio)),
-      Math.max(outdoorHumidityRatio, indoorHumidityRatio)
-    )
-    const deltaW = Math.max(0.00001, indoorHumidityRatio - recoveredHumidityRatio)
-    const steamHumidificationLoad = Math.max(0, Math.round(4.5 * effectiveOutsideAirCFM * deltaW))
-    const correctedHumidificationLoad = steamHumidificationLoad
-    const steamEnergyKW = Math.round(correctedHumidificationLoad * 0.345)
-    const adiabaticLoad = correctedHumidificationLoad
-    const adiabaticPumpKW = Math.max(1, Math.round(adiabaticLoad * 0.0009))
-    const recoveredDryBulbC = record.dryBulbC + (sensibleRecoveryEfficiency / 100) * (roomTemperature - record.dryBulbC)
-    const enteringHumifogEnthalpy = moistAirEnthalpyBtuLb(recoveredDryBulbC, recoveredHumidityRatio)
-    const preheatBtuPerHr = Math.max(0, 4.5 * effectiveOutsideAirCFM * (indoorEnthalpy - enteringHumifogEnthalpy))
-    const grossHumifogPreheatKW = Math.round(preheatBtuPerHr / 3412)
-    const preheatTargetTempC = calculateAutomaticPreHumifogTemperature(indoorEnthalpy, recoveredHumidityRatio)
-    const baseHvacHeatingThermalKW = Math.round(
-      sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, preheatTargetTempC - recoveredDryBulbC))
-    )
-    const grossReheatKW = Math.max(0, grossHumifogPreheatKW - baseHvacHeatingThermalKW)
-    const netReheatKW = grossReheatKW
-    const reheatEnergyKW = usesHeatPumpReheat
-      ? Number((netReheatKW / Math.max(heatPumpCOP, 0.1)).toFixed(2))
-      : Number((netReheatKW * (selectedReheatSystem?.facteur ?? 1)).toFixed(2))
-    const adiabaticEnergyKW = Number(Math.max(0, adiabaticPumpKW + reheatEnergyKW).toFixed(2))
-    const naturalGasSteamInputKW = Math.round(steamEnergyKW / Math.max(steamBoilerEfficiency / 100, 0.01))
-    const atmosphericGasHumidifierInputKW = Math.round(steamEnergyKW / Math.max(atmosphericGasHumidifierEfficiency / 100, 0.01))
-    const atmosphericGasHumidifierM3PerHour = Number((atmosphericGasHumidifierInputKW / 10.35).toFixed(1))
-    const naturalGasM3PerHour = Number((naturalGasSteamInputKW / 10.35).toFixed(1))
-    const steamCost = Math.round(steamEnergyKW * electricityRate)
-    const adiabaticCost = Math.round(adiabaticEnergyKW * electricityRate)
-    const gasCost = Math.round((naturalGasM3PerHour + atmosphericGasHumidifierM3PerHour) * naturalGasRate)
-    const naturalGasGES = Number(((naturalGasSteamInputKW * 0.182) / 1000).toFixed(6))
-    const atmosphericGasHumidifierGES = Number(((atmosphericGasHumidifierInputKW * 0.182) / 1000).toFixed(6))
-    const adiabaticGES = usesHeatPumpReheat ? Number(((reheatEnergyKW * 0.182) / 1000).toFixed(6)) : 0
-    const waterKg = Number((correctedHumidificationLoad * 0.453592).toFixed(3))
-
-    if (steamEnergyKW > 0) hoursWithHumidificationRequired += 1
-
-    totalSteamKwh += steamEnergyKW
-    totalGasKwh += naturalGasSteamInputKW + atmosphericGasHumidifierInputKW
-    totalHumifogKwh += adiabaticEnergyKW
-    totalCost += adiabaticCost
-    totalSteamCost += steamCost
-    totalNaturalGasGES += naturalGasGES
-    totalAtmosphericGasGES += atmosphericGasHumidifierGES
-    totalAdiabaticGES += adiabaticGES
-    totalWaterKg += waterKg
-    void gasCost
-  }
-
-  return {
-    weatherLocation: records[0]?.weatherLocation || '',
-    recordsLoaded: records.length,
-    operatingHoursUsed: operatingCount,
-    firstDate,
-    lastDate,
-    averageOutdoorTemp: operatingCount ? outdoorTempSum / operatingCount : 0,
-    minOutdoorTemp: operatingCount ? minOutdoorTemp : 0,
-    maxOutdoorTemp: operatingCount ? maxOutdoorTemp : 0,
-    averageOutdoorRh: operatingCount ? outdoorRhSum / operatingCount : 0,
-    annualSteamKwh: totalSteamKwh,
-    annualGasKwh: totalGasKwh,
-    annualHumifogKwh: totalHumifogKwh,
-    annualCost: totalCost,
-    annualSavings: totalSteamCost - totalCost,
-    annualGhgReduction: Math.max(0, totalNaturalGasGES + totalAtmosphericGasGES - totalAdiabaticGES),
-    annualWaterConsumptionKg: totalWaterKg,
-    hoursBelowZero,
-    hoursBelowMinusTen,
-    hoursBelowMinusTwenty,
-    hoursWithHumidificationRequired,
-  }
 }
 
 function blobToBase64(blob) {
@@ -3639,6 +3386,19 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const [hourlyWeatherFetchStatus, setHourlyWeatherFetchStatus] = useState(0)
   const [hourlyWeatherDebugRecordCount, setHourlyWeatherDebugRecordCount] = useState(0)
   const [hourlyWeatherBuiltInMissing, setHourlyWeatherBuiltInMissing] = useState(false)
+  const [hourlyCalcInProgress, setHourlyCalcInProgress] = useState(false)
+  const [hourlyPerfMetrics, setHourlyPerfMetrics] = useState({
+    lastLoadMs: 0,
+    lastParseMs: 0,
+    lastSimulationMs: 0,
+    cacheHits: 0,
+    simulationRuns: 0,
+  })
+  const builtInWeatherCacheRef = useRef(new Map())
+  const customWeatherCacheRef = useRef(new Map())
+  const hourlySummaryCacheRef = useRef(new Map())
+  const hourlyWorkerRef = useRef(null)
+  const hourlyWorkerRequestIdRef = useRef(0)
   const [scheduleStartTime, setScheduleStartTime] = useState(() => initialProjectSettings.scheduleStartTime || '06:00')
   const [scheduleEndTime, setScheduleEndTime] = useState(() => initialProjectSettings.scheduleEndTime || '18:00')
   const [scheduleDaysOption, setScheduleDaysOption] = useState(() => {
@@ -3648,6 +3408,29 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const [scheduleCustomDays, setScheduleCustomDays] = useState(() => parseObjectSetting(initialProjectSettings, 'scheduleCustomDays', DEFAULT_SCHEDULE_CUSTOM_DAYS))
   const [useMeasuredMixedAirTemperature, setUseMeasuredMixedAirTemperature] = useState(() => booleanSetting(initialProjectSettings, 'useMeasuredMixedAirTemperature', false))
   const [measuredMixedAirTemperature, setMeasuredMixedAirTemperature] = useState(() => finiteSetting(initialProjectSettings, 'measuredMixedAirTemperature', 18))
+  const debouncedOutsideAirCFM = useDebouncedValue(outsideAirCFM)
+  const debouncedRoomTemperature = useDebouncedValue(roomTemperature)
+  const debouncedRoomRelativeHumidity = useDebouncedValue(roomRelativeHumidity)
+  const debouncedSupplyAirTemperature = useDebouncedValue(supplyAirTemperature)
+  const debouncedWheelEfficiency = useDebouncedValue(wheelEfficiency)
+  const debouncedLatentRecoveryEfficiency = useDebouncedValue(latentRecoveryEfficiency)
+  const debouncedHeatPumpCOP = useDebouncedValue(heatPumpCOP)
+  const debouncedSteamBoilerEfficiency = useDebouncedValue(steamBoilerEfficiency)
+  const debouncedAtmosphericGasHumidifierEfficiency = useDebouncedValue(atmosphericGasHumidifierEfficiency)
+  const debouncedElectricityRate = useDebouncedValue(electricityRate)
+  const debouncedNaturalGasRate = useDebouncedValue(naturalGasRate)
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof Worker === 'undefined') return
+
+    const worker = new Worker(new URL('./workers/hourlyWeather.worker.js', import.meta.url), { type: 'module' })
+    hourlyWorkerRef.current = worker
+
+    return () => {
+      worker.terminate()
+      if (hourlyWorkerRef.current === worker) hourlyWorkerRef.current = null
+    }
+  }, [])
 
   const economizerTargetOptions = units === 'imperial'
     ? [55, 57, 61, 64, 68]
@@ -3668,6 +3451,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     setHourlyWeatherResolvedUrl('')
     setHourlyWeatherFetchStatus(0)
     setHourlyWeatherDebugRecordCount(0)
+    setHourlyCalcInProgress(false)
   }
 
   const buildProjectSettingsSnapshot = () => ({
@@ -3793,11 +3577,27 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     setHourlyWeatherRecordsLoaded(0)
     setHourlyWeatherOperatingHoursUsed(0)
 
+    const customKey = `${file.name}|${file.size}|${file.lastModified}`
+    const cachedCustomWeather = customWeatherCacheRef.current.get(customKey)
+    if (cachedCustomWeather) {
+      setHourlyWeatherSourceType('custom')
+      setCalculationMethod('hourly')
+      setHourlyWeatherFileLocation(cachedCustomWeather.weatherLocation || '')
+      setHourlyWeatherRecords(cachedCustomWeather.records)
+      setHourlyWeatherMetadata(cachedCustomWeather.metadata)
+      setHourlyWeatherValidationWarning(cachedCustomWeather.metadata.validationStatus === 'official' ? '' : getCustomWeatherWarning(language))
+      setHourlyWeatherParseError('')
+      setHourlyWeatherLoading(false)
+      setHourlyPerfMetrics((current) => ({ ...current, cacheHits: current.cacheHits + 1 }))
+      return
+    }
+
     const reader = new FileReader()
     reader.onload = () => {
       try {
+        const parseStartedAt = performance.now()
         const text = String(reader.result || '')
-        const { weatherLocation, records } = epwTextToRecords(text)
+        const { weatherLocation, records } = parseHourlyEpwText(text)
         const validation = validateHourlyWeatherRecords(records)
         if (!validation.isValid) {
           setHourlyWeatherSourceType('none')
@@ -3837,6 +3637,15 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         setHourlyWeatherMetadata(customMetadata)
         setHourlyWeatherValidationWarning(customMetadata.validationStatus === 'official' ? '' : getCustomWeatherWarning(language))
         setHourlyWeatherParseError('')
+        customWeatherCacheRef.current.set(customKey, {
+          weatherLocation,
+          records,
+          metadata: customMetadata,
+        })
+        setHourlyPerfMetrics((current) => ({
+          ...current,
+          lastParseMs: Number((performance.now() - parseStartedAt).toFixed(2)),
+        }))
       } catch (error) {
         setHourlyWeatherSourceType('none')
         setHourlyWeatherRecords([])
@@ -3900,13 +3709,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     hourlyWeatherRecords.length >= 8750
   const scheduleStartHour = Number(String(scheduleStartTime || '00:00').split(':')[0] || 0)
   const scheduleEndHour = Number(String(scheduleEndTime || '00:00').split(':')[0] || 0)
-  const filteredHourlyRecords = useMemo(() => calculationMethod === 'hourly'
-    ? hourlyWeatherRecords.filter((record) => isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays))
-    : [], [calculationMethod, hourlyWeatherRecords, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays])
   const hasFilteredHourlyRecords =
     hasLoadedHourlyEpw &&
-    Array.isArray(filteredHourlyRecords) &&
-    filteredHourlyRecords.length > 0
+    Number(hourlyWeatherSummary?.operatingHoursUsed || 0) > 0
   const hourlyWeatherFileFound = calculationMethod === 'hourly' && hasLoadedHourlyEpw
   const hourlyWeatherFileMissing = calculationMethod === 'hourly' && !hourlyWeatherFileFound
   const shouldShowBuiltInFileNotFound =
@@ -4013,6 +3818,24 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     const epwUrl = buildEpwUrl(fileName)
     setHourlyWeatherResolvedUrl(epwUrl)
 
+    const builtInCacheKey = `${normalizeCityKey(selectedCity?.nom || '')}|${fileName}`
+    const cachedBuiltInWeather = builtInWeatherCacheRef.current.get(builtInCacheKey)
+    if (cachedBuiltInWeather) {
+      setHourlyWeatherFileName(fileName)
+      setHourlyWeatherFileLocation(cachedBuiltInWeather.weatherLocation || selectedCity.nom)
+      setHourlyWeatherRecords(cachedBuiltInWeather.records)
+      setHourlyWeatherMetadata(cachedBuiltInWeather.metadata)
+      setHourlyWeatherValidationWarning('')
+      setHourlyWeatherBuiltInMissing(false)
+      setHourlyWeatherRecordsLoaded(cachedBuiltInWeather.records.length)
+      setHourlyWeatherOperatingHoursUsed(0)
+      setHourlyWeatherParseError('')
+      setHourlyWeatherLoading(false)
+      setHourlyPerfMetrics((current) => ({ ...current, cacheHits: current.cacheHits + 1 }))
+      return
+    }
+
+    const loadStartedAt = performance.now()
     fetch(epwUrl, { cache: 'no-store' })
       .then(async (response) => {
         const text = await response.text()
@@ -4033,6 +3856,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       .then((text) => {
         if (!text || isCancelled) return
         if (isCancelled) return
+        const parseStartedAt = performance.now()
         const weatherLines = text
           .split(/\r?\n/)
           .filter((line) => /^\d{4},\d{1,2},\d{1,2},\d{1,2},/.test(String(line || '').trim()))
@@ -4043,7 +3867,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
           throw new Error('BUILT_IN_ZERO_RECORDS')
         }
 
-        const { weatherLocation, records } = epwTextToRecords(text)
+        const { weatherLocation, records } = parseHourlyEpwText(text)
         const metadata = getWeatherMetadataForCity(selectedCity.nom)
 
         if (!Array.isArray(records) || records.length === 0) {
@@ -4074,6 +3898,16 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         setHourlyWeatherRecordsLoaded(records.length)
         setHourlyWeatherOperatingHoursUsed(0)
         setHourlyWeatherParseError('')
+        builtInWeatherCacheRef.current.set(builtInCacheKey, {
+          weatherLocation,
+          records,
+          metadata: resolvedMetadata,
+        })
+        setHourlyPerfMetrics((current) => ({
+          ...current,
+          lastLoadMs: Number((performance.now() - loadStartedAt).toFixed(2)),
+          lastParseMs: Number((performance.now() - parseStartedAt).toFixed(2)),
+        }))
       })
       .catch((error) => {
         if (isCancelled) return
@@ -4129,37 +3963,130 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       return
     }
 
-    try {
-      const summary = calculateHourlySimulation(hourlyWeatherRecords, {
-        scheduleMode,
-        scheduleStartTime,
-        scheduleEndTime,
-        scheduleDaysOption,
-        scheduleCustomDays,
-        outsideAirCFM,
-        activeFraction,
-        roomTemperature,
-        roomRelativeHumidity,
-        supplyAirTemperature,
-        selectedRecoveries: activeSelectedRecoveries,
-        wheelEfficiency,
-        latentRecoveryEfficiency,
-        selectedReheatSystem,
-        heatPumpCOP,
-        steamBoilerEfficiency,
-        atmosphericGasHumidifierEfficiency,
-        electricityRate,
-        naturalGasRate,
-      })
+    const summaryCacheKey = [
+      hourlyWeatherSourceType,
+      hourlyWeatherFileName,
+      hourlyWeatherRecords.length,
+      scheduleMode,
+      scheduleStartTime,
+      scheduleEndTime,
+      scheduleDaysOption,
+      JSON.stringify(scheduleCustomDays),
+      debouncedOutsideAirCFM,
+      activeFraction,
+      debouncedRoomTemperature,
+      debouncedRoomRelativeHumidity,
+      debouncedSupplyAirTemperature,
+      activeSelectedRecoveriesSignature,
+      debouncedWheelEfficiency,
+      debouncedLatentRecoveryEfficiency,
+      selectedReheatSystemSignature,
+      debouncedHeatPumpCOP,
+      debouncedSteamBoilerEfficiency,
+      debouncedAtmosphericGasHumidifierEfficiency,
+      debouncedElectricityRate,
+      debouncedNaturalGasRate,
+    ].join('::')
+    const cachedSummary = hourlySummaryCacheRef.current.get(summaryCacheKey)
+    if (cachedSummary) {
+      setHourlyWeatherSummary(cachedSummary)
+      setHourlyWeatherRecordsLoaded(cachedSummary.recordsLoaded)
+      setHourlyWeatherOperatingHoursUsed(cachedSummary.operatingHoursUsed)
+      setHourlyWeatherParseError('')
+      setHourlyCalcInProgress(false)
+      setHourlyPerfMetrics((current) => ({ ...current, cacheHits: current.cacheHits + 1 }))
+      return
+    }
+
+    let isCancelled = false
+    const simulationStartedAt = performance.now()
+    setHourlyCalcInProgress(true)
+
+    const options = {
+      scheduleMode,
+      scheduleStartTime,
+      scheduleEndTime,
+      scheduleDaysOption,
+      scheduleCustomDays,
+      outsideAirCFM: debouncedOutsideAirCFM,
+      activeFraction,
+      roomTemperature: debouncedRoomTemperature,
+      roomRelativeHumidity: debouncedRoomRelativeHumidity,
+      supplyAirTemperature: debouncedSupplyAirTemperature,
+      selectedRecoveries: activeSelectedRecoveries,
+      wheelEfficiency: debouncedWheelEfficiency,
+      latentRecoveryEfficiency: debouncedLatentRecoveryEfficiency,
+      selectedReheatSystem,
+      heatPumpCOP: debouncedHeatPumpCOP,
+      steamBoilerEfficiency: debouncedSteamBoilerEfficiency,
+      atmosphericGasHumidifierEfficiency: debouncedAtmosphericGasHumidifierEfficiency,
+      electricityRate: debouncedElectricityRate,
+      naturalGasRate: debouncedNaturalGasRate,
+    }
+
+    const finalizeSummary = (summary) => {
+      if (isCancelled) return
+      hourlySummaryCacheRef.current.set(summaryCacheKey, summary)
+      if (hourlySummaryCacheRef.current.size > 80) {
+        hourlySummaryCacheRef.current.clear()
+      }
       setHourlyWeatherSummary(summary)
       setHourlyWeatherRecordsLoaded(summary.recordsLoaded)
       setHourlyWeatherOperatingHoursUsed(summary.operatingHoursUsed)
       setHourlyWeatherParseError('')
-    } catch (error) {
+      setHourlyCalcInProgress(false)
+      setHourlyPerfMetrics((current) => ({
+        ...current,
+        simulationRuns: current.simulationRuns + 1,
+        lastSimulationMs: Number((performance.now() - simulationStartedAt).toFixed(2)),
+      }))
+    }
+
+    const failSummary = (message) => {
+      if (isCancelled) return
       setHourlyWeatherSummary(null)
       setHourlyWeatherRecordsLoaded(hourlyWeatherRecords.length)
       setHourlyWeatherOperatingHoursUsed(0)
-      setHourlyWeatherParseError(error?.message || 'Unable to calculate hourly simulation.')
+      setHourlyWeatherParseError(message || 'Unable to calculate hourly simulation.')
+      setHourlyCalcInProgress(false)
+    }
+
+    const worker = hourlyWorkerRef.current
+    if (worker) {
+      const requestId = ++hourlyWorkerRequestIdRef.current
+      const onMessage = (event) => {
+        const payload = event.data || {}
+        if (payload.id !== requestId) return
+        worker.removeEventListener('message', onMessage)
+        worker.removeEventListener('error', onError)
+        if (payload.ok) finalizeSummary(payload.summary)
+        else failSummary(payload.error)
+      }
+      const onError = (event) => {
+        worker.removeEventListener('message', onMessage)
+        worker.removeEventListener('error', onError)
+        failSummary(event?.message || 'Hourly weather worker failed.')
+      }
+      worker.addEventListener('message', onMessage)
+      worker.addEventListener('error', onError)
+      worker.postMessage({ id: requestId, records: hourlyWeatherRecords, options })
+
+      return () => {
+        isCancelled = true
+        worker.removeEventListener('message', onMessage)
+        worker.removeEventListener('error', onError)
+      }
+    }
+
+    try {
+      const summary = simulateHourlyWeather(hourlyWeatherRecords, options)
+      finalizeSummary(summary)
+    } catch (error) {
+      failSummary(error?.message || 'Unable to calculate hourly simulation.')
+    }
+
+    return () => {
+      isCancelled = true
     }
   }, [
     calculationMethod,
@@ -4169,21 +4096,26 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     scheduleEndTime,
     scheduleDaysOption,
     scheduleCustomDays,
-    outsideAirCFM,
+    debouncedOutsideAirCFM,
     activeFraction,
-    roomTemperature,
-    roomRelativeHumidity,
-    supplyAirTemperature,
+    debouncedRoomTemperature,
+    debouncedRoomRelativeHumidity,
+    debouncedSupplyAirTemperature,
     activeSelectedRecoveriesSignature,
-    wheelEfficiency,
-    latentRecoveryEfficiency,
+    debouncedWheelEfficiency,
+    debouncedLatentRecoveryEfficiency,
     selectedReheatSystemSignature,
-    heatPumpCOP,
-    steamBoilerEfficiency,
-    atmosphericGasHumidifierEfficiency,
-    electricityRate,
-    naturalGasRate,
+    debouncedHeatPumpCOP,
+    debouncedSteamBoilerEfficiency,
+    debouncedAtmosphericGasHumidifierEfficiency,
+    debouncedElectricityRate,
+    debouncedNaturalGasRate,
   ])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.__hesesHourlyPerf = hourlyPerfMetrics
+  }, [hourlyPerfMetrics])
 
   const operatingDaysPerWeek = scheduleMode === '24-7'
     ? 7
@@ -7684,10 +7616,15 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                           <div>{language === 'fr' ? `Fetch status : ${hourlyWeatherFetchStatus || '-'}` : `Fetch status: ${hourlyWeatherFetchStatus || '-'}`}</div>
                           <div>{language === 'fr' ? `Enregistrements EPW : ${formatNumber(hourlyWeatherDebugRecordCount || hourlyWeatherSummary?.recordsLoaded || hourlyWeatherRecords.length || 0, 0)}` : `EPW records: ${formatNumber(hourlyWeatherDebugRecordCount || hourlyWeatherSummary?.recordsLoaded || hourlyWeatherRecords.length || 0, 0)}`}</div>
                           <div>{language === 'fr' ? `Enregistrements EPW chargés : ${formatNumber(hourlyWeatherRecords.length, 0)}` : `EPW records loaded: ${formatNumber(hourlyWeatherRecords.length, 0)}`}</div>
-                          <div>{language === 'fr' ? `Enregistrements d’exploitation filtrés : ${formatNumber(filteredHourlyRecords.length, 0)}` : `Filtered operating records: ${formatNumber(filteredHourlyRecords.length, 0)}`}</div>
+                          <div>{language === 'fr' ? `Enregistrements d’exploitation filtrés : ${formatNumber(hourlyWeatherSummary?.operatingHoursUsed || 0, 0)}` : `Filtered operating records: ${formatNumber(hourlyWeatherSummary?.operatingHoursUsed || 0, 0)}`}</div>
                           <div>{language === 'fr' ? `Heure de début d’horaire : ${formatNumber(scheduleStartHour, 0)}` : `Schedule start hour: ${formatNumber(scheduleStartHour, 0)}`}</div>
                           <div>{language === 'fr' ? `Heure de fin d’horaire : ${formatNumber(scheduleEndHour, 0)}` : `Schedule end hour: ${formatNumber(scheduleEndHour, 0)}`}</div>
                           <div>{language === 'fr' ? 'Source de calcul : EPW horaire intégré' : 'Calculation source: Built-in hourly EPW'}</div>
+                          <div>{language === 'fr' ? `Temps chargement EPW : ${formatNumber(hourlyPerfMetrics.lastLoadMs || 0, 2)} ms` : `EPW load time: ${formatNumber(hourlyPerfMetrics.lastLoadMs || 0, 2)} ms`}</div>
+                          <div>{language === 'fr' ? `Temps parsing EPW : ${formatNumber(hourlyPerfMetrics.lastParseMs || 0, 2)} ms` : `EPW parse time: ${formatNumber(hourlyPerfMetrics.lastParseMs || 0, 2)} ms`}</div>
+                          <div>{language === 'fr' ? `Temps simulation annuelle : ${formatNumber(hourlyPerfMetrics.lastSimulationMs || 0, 2)} ms` : `Annual simulation time: ${formatNumber(hourlyPerfMetrics.lastSimulationMs || 0, 2)} ms`}</div>
+                          <div>{language === 'fr' ? `Exécutions simulation : ${formatNumber(hourlyPerfMetrics.simulationRuns || 0, 0)}` : `Simulation runs: ${formatNumber(hourlyPerfMetrics.simulationRuns || 0, 0)}`}</div>
+                          <div>{language === 'fr' ? `Cache hits météo/calcul : ${formatNumber(hourlyPerfMetrics.cacheHits || 0, 0)}` : `Weather/calculation cache hits: ${formatNumber(hourlyPerfMetrics.cacheHits || 0, 0)}`}</div>
                         </div>
                       )}
                       {calculationMethod === 'hourly' && hourlyWeatherFileFound && (
@@ -7712,6 +7649,16 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                       {hourlyWeatherLoading && (
                         <div className="mt-2 rounded-2xl bg-white p-3 text-slate-700">
                           {language === 'fr' ? 'Chargement du fichier météo horaire...' : 'Loading hourly weather file...'}
+                        </div>
+                      )}
+                      {hourlyCalcInProgress && !hourlyWeatherLoading && (
+                        <div className="mt-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                          {language === 'fr' ? 'Calcul annuel en cours...' : 'Annual calculation in progress...'}
+                        </div>
+                      )}
+                      {!hourlyCalcInProgress && calculationMethod === 'hourly' && hourlyWeatherSummary && (
+                        <div className="mt-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-emerald-900">
+                          {language === 'fr' ? 'Analyse annuelle terminée' : 'Annual analysis completed'}
                         </div>
                       )}
                       {hourlyWeatherSummary && (
