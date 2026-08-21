@@ -732,41 +732,45 @@ function HesaMultiSystemApp() {
     )
   }
 
+  const systemNav = (
+    <nav className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white/95 px-6 py-3 shadow-sm">
+      {systems.map((system) => (
+        <button
+          key={system.id}
+          type="button"
+          onClick={() => setActiveSystemId(system.id)}
+          className={`rounded-xl px-4 py-2 text-sm font-bold ${system.id === activeSystem.id ? 'bg-cyan-600 text-white' : 'bg-slate-100 text-slate-700'}`}
+        >
+          {system.name}
+        </button>
+      ))}
+      <button type="button" onClick={addSystem} disabled={systems.length >= 6} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">{systemControlLabels.addSystem}</button>
+      {isRenamingSystem ? (
+        <>
+          <input
+            value={renameDraft}
+            onChange={(event) => setRenameDraft(event.target.value)}
+            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm focus:border-cyan-500 focus:outline-none"
+            aria-label={systemControlLabels.renamePrompt}
+            autoFocus
+          />
+          <button type="button" onClick={commitRenameSystem} className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-bold text-white">OK</button>
+          <button type="button" onClick={cancelRenameSystem} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">{systemControlsLanguage === 'en' ? 'Cancel' : 'Annuler'}</button>
+        </>
+      ) : (
+        <button type="button" onClick={startRenameSystem} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">{systemControlLabels.rename}</button>
+      )}
+      <button type="button" onClick={duplicateSystem} disabled={systems.length >= 6} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">{systemControlLabels.duplicate}</button>
+      <button type="button" onClick={deleteSystem} disabled={systems.length <= 1} className="rounded-xl border border-red-200 px-4 py-2 text-sm font-bold text-red-700 disabled:opacity-40">{systemControlLabels.delete}</button>
+      <button type="button" onClick={() => setShowBuildingSummary(true)} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white">{systemControlLabels.buildingSummary}</button>
+    </nav>
+  )
+
   return (
     <>
-      <nav className="sticky top-0 z-50 flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white/95 px-6 py-3 shadow-sm backdrop-blur">
-        {systems.map((system) => (
-          <button
-            key={system.id}
-            type="button"
-            onClick={() => setActiveSystemId(system.id)}
-            className={`rounded-xl px-4 py-2 text-sm font-bold ${system.id === activeSystem.id ? 'bg-cyan-600 text-white' : 'bg-slate-100 text-slate-700'}`}
-          >
-            {system.name}
-          </button>
-        ))}
-        <button type="button" onClick={addSystem} disabled={systems.length >= 6} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">{systemControlLabels.addSystem}</button>
-        {isRenamingSystem ? (
-          <>
-            <input
-              value={renameDraft}
-              onChange={(event) => setRenameDraft(event.target.value)}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm focus:border-cyan-500 focus:outline-none"
-              aria-label={systemControlLabels.renamePrompt}
-              autoFocus
-            />
-            <button type="button" onClick={commitRenameSystem} className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-bold text-white">OK</button>
-            <button type="button" onClick={cancelRenameSystem} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">{systemControlsLanguage === 'en' ? 'Cancel' : 'Annuler'}</button>
-          </>
-        ) : (
-          <button type="button" onClick={startRenameSystem} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">{systemControlLabels.rename}</button>
-        )}
-        <button type="button" onClick={duplicateSystem} disabled={systems.length >= 6} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">{systemControlLabels.duplicate}</button>
-        <button type="button" onClick={deleteSystem} disabled={systems.length <= 1} className="rounded-xl border border-red-200 px-4 py-2 text-sm font-bold text-red-700 disabled:opacity-40">{systemControlLabels.delete}</button>
-        <button type="button" onClick={() => setShowBuildingSummary(true)} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white">{systemControlLabels.buildingSummary}</button>
-      </nav>
       <HvacDashboardApp
         key={activeSystem.id}
+        systemNav={systemNav}
         showLandingPage={false}
         onStartAnalysis={() => setAnalysisOpen(true)}
         onLanguageChange={setSystemControlsLanguage}
@@ -2708,7 +2712,7 @@ function HesesLandingPage({ language, setLanguage, onStartAnalysis }) {
   )
 }
 
-function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartAnalysis: controlledStartAnalysis, onLanguageChange, systemSettings, onSettingsChange, onAnnualResults, onReportSnapshot, projectSystems, activeSystemName, activeSystemId }) {
+function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartAnalysis: controlledStartAnalysis, onLanguageChange, systemSettings, onSettingsChange, onAnnualResults, onReportSnapshot, projectSystems, activeSystemName, activeSystemId, systemNav }) {
   const printWindowRef = useRef(null)
   const printInProgressRef = useRef(false)
   const hourlyWeatherFileInputRef = useRef(null)
@@ -6189,21 +6193,6 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
           </button>
           </div>
         </div>
-
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={generatePDF}
-            className="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-2xl shadow-xl font-bold transition"
-          >
-            {t.generatePDF}
-          </button>
-          <button
-            onClick={downloadPrintableReport}
-            className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-3 rounded-2xl shadow-xl font-bold transition"
-          >
-            {language === 'fr' ? 'Rapport imprimable' : 'Printable report'}
-          </button>
-        </div>
       </div>
 
       <section className="mx-auto mb-6 max-w-7xl rounded-3xl border border-slate-200 bg-white p-5 shadow-xl">
@@ -6270,6 +6259,12 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
           </div>
         )}
       </section>
+
+      {systemNav && (
+        <div className="mx-auto mb-6 max-w-7xl">
+          {systemNav}
+        </div>
+      )}
 
       {reportPreviewVisible && (
         <section className="mx-auto mb-6 max-w-7xl rounded-3xl border border-slate-300 bg-white p-5 shadow-xl">
@@ -9162,6 +9157,21 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
             )}
           </section>
           )}
+
+          <div className="flex flex-wrap justify-center gap-2">
+            <button
+              onClick={generatePDF}
+              className="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-2xl shadow-xl font-bold transition"
+            >
+              {t.generatePDF}
+            </button>
+            <button
+              onClick={downloadPrintableReport}
+              className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-3 rounded-2xl shadow-xl font-bold transition"
+            >
+              {language === 'fr' ? 'Rapport imprimable' : 'Printable report'}
+            </button>
+          </div>
 
           {/* Summary Footer */}
           <div className="w-full bg-gradient-to-r from-slate-900 to-sky-900 rounded-3xl shadow-2xl p-8 text-white">
