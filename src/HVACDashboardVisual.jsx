@@ -3864,12 +3864,22 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const effectiveOutsideAirCFM = Math.round(outsideAirCFM * activeFraction)
   const calculatedReturnAirCFM = Math.max(0, outsideAirCFM - effectiveOutsideAirCFM)
   const noRecoverySelection = heatRecoverySystems[language][0]
-  const displayedHeatRecoverySystems = isFreeCoolingMode
-    ? [noRecoverySelection]
-    : heatRecoverySystems[language]
-  const activeSelectedRecoveries = isFreeCoolingMode
-    ? [noRecoverySelection]
-    : selectedRecoveries
+  const displayedHeatRecoverySystems = useMemo(() => (
+    isFreeCoolingMode
+      ? [noRecoverySelection]
+      : heatRecoverySystems[language]
+  ), [isFreeCoolingMode, language, noRecoverySelection])
+  const activeSelectedRecoveries = useMemo(() => (
+    isFreeCoolingMode
+      ? [noRecoverySelection]
+      : selectedRecoveries
+  ), [isFreeCoolingMode, noRecoverySelection, selectedRecoveries])
+  const activeSelectedRecoveriesSignature = useMemo(() => (
+    activeSelectedRecoveries
+      .map((item) => `${item?.nom || ''}|${item?.type || ''}|${Boolean(item?.noRecovery)}`)
+      .join('||')
+  ), [activeSelectedRecoveries])
+  const selectedReheatSystemSignature = `${selectedReheatSystem?.nom || ''}|${selectedReheatSystem?.energie || ''}|${selectedReheatSystem?.facteur ?? ''}`
   const selectedReheatEnergySource = String(selectedReheatSystem?.energie || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -4159,10 +4169,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     roomTemperature,
     roomRelativeHumidity,
     supplyAirTemperature,
-    activeSelectedRecoveries,
+    activeSelectedRecoveriesSignature,
     wheelEfficiency,
     latentRecoveryEfficiency,
-    selectedReheatSystem,
+    selectedReheatSystemSignature,
     heatPumpCOP,
     steamBoilerEfficiency,
     atmosphericGasHumidifierEfficiency,
