@@ -3998,7 +3998,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     const epwUrl = buildEpwUrl(fileName)
     setHourlyWeatherResolvedUrl(epwUrl)
 
-    fetch(`${epwUrl}?v=${Date.now()}`, { cache: 'no-store' })
+    fetch(epwUrl, { cache: 'no-store' })
       .then(async (response) => {
         const text = await response.text()
         if (isCancelled) return null
@@ -4056,30 +4056,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         setHourlyWeatherMetadata(resolvedMetadata)
         setHourlyWeatherValidationWarning('')
         setHourlyWeatherBuiltInMissing(false)
-        const summary = calculateHourlySimulation(records, {
-          scheduleMode,
-          scheduleStartTime,
-          scheduleEndTime,
-          scheduleDaysOption,
-          scheduleCustomDays,
-          outsideAirCFM,
-          activeFraction,
-          roomTemperature,
-          roomRelativeHumidity,
-          supplyAirTemperature,
-          selectedRecoveries: activeSelectedRecoveries,
-          wheelEfficiency,
-          latentRecoveryEfficiency,
-          selectedReheatSystem,
-          heatPumpCOP,
-          steamBoilerEfficiency,
-          atmosphericGasHumidifierEfficiency,
-          electricityRate,
-          naturalGasRate,
-        })
-        setHourlyWeatherSummary(summary)
-        setHourlyWeatherRecordsLoaded(summary.recordsLoaded)
-        setHourlyWeatherOperatingHoursUsed(summary.operatingHoursUsed)
+        setHourlyWeatherRecordsLoaded(records.length)
+        setHourlyWeatherOperatingHoursUsed(0)
         setHourlyWeatherParseError('')
       })
       .catch((error) => {
@@ -4121,12 +4099,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     }
   }, [
     calculationMethod,
+    hourlyWeatherSourceType,
     selectedCity.nom,
-    scheduleMode,
-    scheduleStartTime,
-    scheduleEndTime,
-    scheduleDaysOption,
-    JSON.stringify(scheduleCustomDays),
     t.noBuiltInWeatherAvailable,
     t.builtInWeatherLoadFailed,
   ])
