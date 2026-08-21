@@ -4656,7 +4656,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const annualEliminatedGESResolved = annualNaturalGasGESResolved - annualAdiabaticGESResolved
 
   const freeCoolingHumifogAnalysis = useMemo(() => calculateFreeCoolingHumifogComparison({
-    bins: freeCoolingWeatherData,
+    // Downstream rows are re-aggregated into 5C bins anyway, so use the compacted
+    // (max 96-point) weather data instead of full 8760 hourly records to avoid
+    // blocking the main thread when EPW hourly schedule/hours change.
+    bins: freeCoolingOptimizationWeatherData,
     optimizationBins: freeCoolingOptimizationWeatherData,
     roomDb: roomTemperature,
     roomRh: roomRelativeHumidity,
@@ -4673,7 +4676,6 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     useMeasuredMixedAirTemperature,
     measuredMixedAirTemperatureC: measuredMixedAirTemperature,
   }), [
-    freeCoolingWeatherData,
     freeCoolingOptimizationWeatherData,
     roomTemperature,
     roomRelativeHumidity,
