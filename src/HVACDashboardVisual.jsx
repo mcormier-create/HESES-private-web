@@ -3399,6 +3399,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const hourlySummaryCacheRef = useRef(new Map())
   const hourlyWorkerRef = useRef(null)
   const hourlyWorkerRequestIdRef = useRef(0)
+  const hourlyWorkerRecordsTokenRef = useRef('')
   const [scheduleStartTime, setScheduleStartTime] = useState(() => initialProjectSettings.scheduleStartTime || '06:00')
   const [scheduleEndTime, setScheduleEndTime] = useState(() => initialProjectSettings.scheduleEndTime || '18:00')
   const [scheduleDaysOption, setScheduleDaysOption] = useState(() => {
@@ -3707,6 +3708,24 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     isHourlyMode &&
     Array.isArray(hourlyWeatherRecords) &&
     hourlyWeatherRecords.length >= 8750
+  const hourlyRecordsToken = useMemo(() => {
+    if (!Array.isArray(hourlyWeatherRecords) || !hourlyWeatherRecords.length) return ''
+    const first = hourlyWeatherRecords[0]
+    const last = hourlyWeatherRecords[hourlyWeatherRecords.length - 1]
+    return [
+      hourlyWeatherSourceType,
+      hourlyWeatherFileName,
+      hourlyWeatherRecords.length,
+      first?.year,
+      first?.month,
+      first?.day,
+      first?.hour,
+      last?.year,
+      last?.month,
+      last?.day,
+      last?.hour,
+    ].join('|')
+  }, [hourlyWeatherSourceType, hourlyWeatherFileName, hourlyWeatherRecords])
   const filteredHourlyRecords = useMemo(() => {
     if (!isHourlyMode) return []
     return hourlyWeatherRecords.filter((record) => isEpwRecordOperating(
@@ -3780,6 +3799,24 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       setHourlyWeatherParseError('')
     }
   }, [calculationMethod, hasLoadedHourlyEpw, hourlyWeatherParseError])
+
+  useEffect(() => {
+    const worker = hourlyWorkerRef.current
+    if (!worker) return
+    if (calculationMethod !== 'hourly') return
+    if (!hourlyWeatherRecords.length) return
+    if (!hourlyRecordsToken) return
+    if (hourlyWorkerRecordsTokenRef.current === hourlyRecordsToken) return
+
+    const requestId = ++hourlyWorkerRequestIdRef.current
+    worker.postMessage({
+      id: requestId,
+      type: 'set-records',
+      recordsToken: hourlyRecordsToken,
+      records: hourlyWeatherRecords,
+    })
+    hourlyWorkerRecordsTokenRef.current = hourlyRecordsToken
+  }, [calculationMethod, hourlyWeatherRecords, hourlyRecordsToken])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -4088,7 +4125,13 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       }
       worker.addEventListener('message', onMessage)
       worker.addEventListener('error', onError)
-      worker.postMessage({ id: requestId, records: hourlyWeatherRecords, options })
+      const workerHasCurrentRecords = hourlyWorkerRecordsTokenRef.current === hourlyRecordsToken && hourlyRecordsToken !== ''
+      worker.postMessage({
+        id: requestId,
+        records: workerHasCurrentRecords ? undefined : hourlyWeatherRecords,
+        recordsToken: hourlyRecordsToken,
+        options,
+      })
 
       return () => {
         isCancelled = true
@@ -4129,6 +4172,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     debouncedAtmosphericGasHumidifierEfficiency,
     debouncedElectricityRate,
     debouncedNaturalGasRate,
+    hourlyRecordsToken,
   ])
 
   useEffect(() => {
@@ -4366,28 +4410,27 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   }))
 
   const hourlyHistogramBinSizeC = 5
-  const hourlyWeatherHistogramData = calculationMethod === 'hourly'
-    ? (() => {
-      if (!hasFilteredHourlyRecords) return []
+  const hourlyWeatherHistogramData = useMemo(() => {
+    if (calculationMethod !== 'hourly') return []
+    if (!hasFilteredHourlyRecords) return []
 
-      const buckets = new Map()
-      filteredHourlyRecords.forEach((record) => {
-        if (!Number.isFinite(record?.dryBulbC)) return
-        const binStart = Math.floor(record.dryBulbC / hourlyHistogramBinSizeC) * hourlyHistogramBinSizeC
-        buckets.set(binStart, (buckets.get(binStart) || 0) + 1)
-      })
+    const buckets = new Map()
+    filteredHourlyRecords.forEach((record) => {
+      if (!Number.isFinite(record?.dryBulbC)) return
+      const binStart = Math.floor(record.dryBulbC / hourlyHistogramBinSizeC) * hourlyHistogramBinSizeC
+      buckets.set(binStart, (buckets.get(binStart) || 0) + 1)
+    })
 
-      return [...buckets.entries()]
-        .sort((a, b) => a[0] - b[0])
-        .map(([binStart, hours]) => ({
-          tempC: binStart,
-          temperatureBin: language === 'fr'
-            ? `${displayTemp(binStart)}${tempUnit} à ${displayTemp(binStart + hourlyHistogramBinSizeC)}${tempUnit}`
-            : `${displayTemp(binStart)}${tempUnit} to ${displayTemp(binStart + hourlyHistogramBinSizeC)}${tempUnit}`,
-          hoursUsed: Number(hours),
-        }))
-    })()
-    : []
+    return [...buckets.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([binStart, hours]) => ({
+        tempC: binStart,
+        temperatureBin: language === 'fr'
+          ? `${displayTemp(binStart)}${tempUnit} à ${displayTemp(binStart + hourlyHistogramBinSizeC)}${tempUnit}`
+          : `${displayTemp(binStart)}${tempUnit} to ${displayTemp(binStart + hourlyHistogramBinSizeC)}${tempUnit}`,
+        hoursUsed: Number(hours),
+      }))
+  }, [calculationMethod, hasFilteredHourlyRecords, filteredHourlyRecords, language, tempUnit])
 
   const weatherChartData = calculationMethod === 'hourly'
     ? hourlyWeatherHistogramData
