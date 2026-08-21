@@ -1,0 +1,39 @@
+{
+  "url": "https://hesahvac.com",
+  "timestamp": "2026-08-21T17:35:56.666Z",
+  "findings": [
+    {
+      "severity": "AVERTISSEMENT",
+      "message": "Timeout lors du chargement de l'interface. Le site pourrait nécessiter un mot de passe."
+    },
+    {
+      "severity": "INFO",
+      "message": "Bouton mode horaire EPW non trouvé. Le mode pourrait déjà être actif."
+    },
+    {
+      "severity": "AVERTISSEMENT",
+      "message": "Carte de ville Montréal non trouvée. Capture: audit-before-montreal.png"
+    },
+    {
+      "severity": "AVERTISSEMENT",
+      "message": "Carte de ville Ottawa non trouvée. Capture: audit-before-ottawa.png"
+    }
+  ],
+  "metrics": {
+    "montreal": {
+      "epwLoad": null,
+      "recalc": null,
+      "inputChange": null,
+      "epwReloads": 0
+    },
+    "ottawa": {
+      "epwLoad": null,
+      "recalc": null,
+      "inputChange": null,
+      "epwReloads": 0
+    }
+  },
+  "consoleErrors": [],
+  "networkRequests": [],
+  "verdict": "VALIDÉ"
+}

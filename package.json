@@ -15,6 +15,7 @@
     "test:100oa": "node scripts/100oa-regression.mjs",
     "test:multi-system-pdf": "node scripts/multi-system-pdf-regression.mjs",
     "test:economic-reheat": "node scripts/economic-reheat-regression.mjs",
+    "test:epw-audit": "node scripts/epw-performance-audit.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.app.json"
   },
   "dependencies": {
