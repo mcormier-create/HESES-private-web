@@ -1459,7 +1459,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
           [tr('Économies d’énergie totales', 'Total energy savings'), formatEnergy(buildingSavings.totals.energySavings)],
           [tr('Réduction d’énergie totale', 'Total energy reduction'), Number.isFinite(buildingSavings.totals.energyReductionPercent) ? `${formatNumber(buildingSavings.totals.energyReductionPercent, 1)}%` : tr('Non disponible', 'Not available')],
           [tr('Coût énergie de référence total', 'Total reference energy operating cost'), formatMoney(buildingSavings.totals.referenceCost)],
-          [tr('Coût énergie Humifog total', 'Total Humifog energy operating cost'), formatMoney(buildingSavings.totals.humifogCost)],
+          [tr('Coût énergie Humifog + coût réchauffage', 'Total Humifog energy cost + reheat cost'), formatMoney(buildingSavings.totals.humifogCost)],
           [tr('Économies de coût annuelles totales', 'Total annual cost savings'), formatMoney(buildingSavings.totals.costSavings)],
           [tr('Investissement Humifog total', 'Total Humifog installed investment'), formatMoney(projectEnergy.totals.humifogSelected.installedInvestmentCost)],
           [tr('Investissement incrémental total', 'Total incremental investment'), formatMoney(buildingSavings.totals.incrementalInvestment)],
