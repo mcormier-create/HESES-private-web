@@ -6224,6 +6224,21 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
             </div>
           </div>
 
+          <div className="flex flex-wrap justify-center gap-2">
+            <button
+              onClick={generatePDF}
+              className="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-2xl shadow-xl font-bold transition"
+            >
+              {t.generatePDF}
+            </button>
+            <button
+              onClick={downloadPrintableReport}
+              className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-3 rounded-2xl shadow-xl font-bold transition"
+            >
+              {language === 'fr' ? 'Rapport imprimable' : 'Printable report'}
+            </button>
+          </div>
+
           <section className="w-full rounded-3xl border border-slate-200 bg-white p-5 shadow-xl">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -9158,21 +9173,6 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
             )}
           </section>
           )}
-
-          <div className="flex flex-wrap justify-center gap-2">
-            <button
-              onClick={generatePDF}
-              className="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-2xl shadow-xl font-bold transition"
-            >
-              {t.generatePDF}
-            </button>
-            <button
-              onClick={downloadPrintableReport}
-              className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-3 rounded-2xl shadow-xl font-bold transition"
-            >
-              {language === 'fr' ? 'Rapport imprimable' : 'Printable report'}
-            </button>
-          </div>
 
           {/* Summary Footer */}
           <div className="w-full bg-gradient-to-r from-slate-900 to-sky-900 rounded-3xl shadow-2xl p-8 text-white">
