@@ -6195,129 +6195,6 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         </div>
       </div>
 
-      <section className="mx-auto mb-6 max-w-7xl rounded-3xl border border-slate-200 bg-white p-5 shadow-xl">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900">
-              {language === 'fr' ? 'Identification du projet' : 'Project Identification'}
-            </h2>
-            <p className="mt-1 text-sm font-semibold text-slate-500">
-              {language === 'fr'
-                ? 'Ces informations sont sauvegardées localement et apparaissent dans le rapport PDF.'
-                : 'These details are saved locally and appear in the PDF report.'}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={saveProjectProfile}
-            className="rounded-xl bg-emerald-600 px-5 py-3 font-bold text-white shadow hover:bg-emerald-700"
-          >
-            {language === 'fr' ? 'Sauvegarder le projet' : 'Save project'}
-          </button>
-        </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          <label className="block">
-            <span className="mb-2 block text-sm font-bold text-slate-700">
-              {language === 'fr' ? 'Nom du projet' : 'Project name'}
-            </span>
-            <input
-              type="text"
-              value={projectProfile.name}
-              onChange={(event) => updateProjectProfile('name', event.target.value)}
-              placeholder={language === 'fr' ? 'Ex. Hôpital - CTA niveau 2' : 'Ex. Hospital - AHU level 2'}
-              className="w-full rounded-xl border border-slate-300 px-4 py-3 font-semibold text-slate-900 shadow-sm focus:border-cyan-500 focus:outline-none"
-            />
-          </label>
-          <label className="block">
-            <span className="mb-2 block text-sm font-bold text-slate-700">
-              {language === 'fr' ? 'Client / propriétaire' : 'Client / owner'}
-            </span>
-            <input
-              type="text"
-              value={projectProfile.owner}
-              onChange={(event) => updateProjectProfile('owner', event.target.value)}
-              placeholder={language === 'fr' ? 'Nom du client' : 'Client name'}
-              className="w-full rounded-xl border border-slate-300 px-4 py-3 font-semibold text-slate-900 shadow-sm focus:border-cyan-500 focus:outline-none"
-            />
-          </label>
-          <label className="block">
-            <span className="mb-2 block text-sm font-bold text-slate-700">
-              {language === 'fr' ? 'Ingénieur / représentant' : 'Engineer / representative'}
-            </span>
-            <input
-              type="text"
-              value={projectProfile.engineer}
-              onChange={(event) => updateProjectProfile('engineer', event.target.value)}
-              placeholder={language === 'fr' ? 'Nom de l’ingénieur ou représentant' : 'Engineer or representative name'}
-              className="w-full rounded-xl border border-slate-300 px-4 py-3 font-semibold text-slate-900 shadow-sm focus:border-cyan-500 focus:outline-none"
-            />
-          </label>
-        </div>
-        {projectSaveStatus && (
-          <div className="mt-4 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800">
-            {projectSaveStatus}
-          </div>
-        )}
-      </section>
-
-      {systemNav && (
-        <div className="mx-auto mb-6 max-w-7xl">
-          {systemNav}
-        </div>
-      )}
-
-      {reportPreviewVisible && (
-        <section className="mx-auto mb-6 max-w-7xl rounded-3xl border border-slate-300 bg-white p-5 shadow-xl">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-2xl font-bold text-slate-900">
-                {language === 'fr' ? 'Apercu du rapport HESA genere' : 'Generated HESA report preview'}
-              </h2>
-              {reportStatus && (
-                <p className="mt-1 text-sm font-semibold text-slate-600">{reportStatus}</p>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={generatePDF}
-                className="rounded-xl bg-red-600 px-4 py-2 font-bold text-white hover:bg-red-700"
-              >
-                {language === 'fr' ? 'Ouvrir rapport PDF' : 'Open PDF report'}
-              </button>
-              <button
-                type="button"
-                onClick={printReportPreview}
-                className="rounded-xl bg-cyan-700 px-4 py-2 font-bold text-white hover:bg-cyan-800"
-              >
-                {language === 'fr' ? 'Imprimer cet aperçu' : 'Print this preview'}
-              </button>
-              <button
-                type="button"
-                onClick={downloadPrintableReport}
-                className="rounded-xl bg-slate-800 px-4 py-2 font-bold text-white hover:bg-slate-900"
-              >
-                {language === 'fr' ? 'Telecharger HTML' : 'Download HTML'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setReportPreviewVisible(false)}
-                className="rounded-xl border border-slate-300 bg-white px-4 py-2 font-bold text-slate-700 hover:bg-slate-50"
-              >
-                {language === 'fr' ? 'Fermer' : 'Close'}
-              </button>
-            </div>
-          </div>
-          <div className="max-h-[75vh] overflow-auto rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <iframe
-              title={language === 'fr' ? 'Aperçu du rapport PDF HESA' : 'HESA PDF report preview'}
-              srcDoc={buildPrintableReportHtml({ autoPrint: false })}
-              className="h-[75vh] w-full rounded-xl border-0 bg-white shadow"
-            />
-          </div>
-        </section>
-      )}
-
       <div>
         <div className="mx-auto w-full max-w-7xl space-y-6">
 
@@ -6346,6 +6223,129 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
               })}
             </div>
           </div>
+
+          <section className="w-full rounded-3xl border border-slate-200 bg-white p-5 shadow-xl">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">
+                  {language === 'fr' ? 'Identification du projet' : 'Project Identification'}
+                </h2>
+                <p className="mt-1 text-sm font-semibold text-slate-500">
+                  {language === 'fr'
+                    ? 'Ces informations sont sauvegardées localement et apparaissent dans le rapport PDF.'
+                    : 'These details are saved locally and appear in the PDF report.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={saveProjectProfile}
+                className="rounded-xl bg-emerald-600 px-5 py-3 font-bold text-white shadow hover:bg-emerald-700"
+              >
+                {language === 'fr' ? 'Sauvegarder le projet' : 'Save project'}
+              </button>
+            </div>
+            <div className="grid gap-4 md:grid-cols-3">
+              <label className="block">
+                <span className="mb-2 block text-sm font-bold text-slate-700">
+                  {language === 'fr' ? 'Nom du projet' : 'Project name'}
+                </span>
+                <input
+                  type="text"
+                  value={projectProfile.name}
+                  onChange={(event) => updateProjectProfile('name', event.target.value)}
+                  placeholder={language === 'fr' ? 'Ex. Hôpital - CTA niveau 2' : 'Ex. Hospital - AHU level 2'}
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 font-semibold text-slate-900 shadow-sm focus:border-cyan-500 focus:outline-none"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-2 block text-sm font-bold text-slate-700">
+                  {language === 'fr' ? 'Client / propriétaire' : 'Client / owner'}
+                </span>
+                <input
+                  type="text"
+                  value={projectProfile.owner}
+                  onChange={(event) => updateProjectProfile('owner', event.target.value)}
+                  placeholder={language === 'fr' ? 'Nom du client' : 'Client name'}
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 font-semibold text-slate-900 shadow-sm focus:border-cyan-500 focus:outline-none"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-2 block text-sm font-bold text-slate-700">
+                  {language === 'fr' ? 'Ingénieur / représentant' : 'Engineer / representative'}
+                </span>
+                <input
+                  type="text"
+                  value={projectProfile.engineer}
+                  onChange={(event) => updateProjectProfile('engineer', event.target.value)}
+                  placeholder={language === 'fr' ? 'Nom de l’ingénieur ou représentant' : 'Engineer or representative name'}
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 font-semibold text-slate-900 shadow-sm focus:border-cyan-500 focus:outline-none"
+                />
+              </label>
+            </div>
+            {projectSaveStatus && (
+              <div className="mt-4 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800">
+                {projectSaveStatus}
+              </div>
+            )}
+          </section>
+
+          {systemNav && (
+            <div className="w-full">
+              {systemNav}
+            </div>
+          )}
+
+          {reportPreviewVisible && (
+            <section className="w-full rounded-3xl border border-slate-300 bg-white p-5 shadow-xl">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900">
+                    {language === 'fr' ? 'Apercu du rapport HESA genere' : 'Generated HESA report preview'}
+                  </h2>
+                  {reportStatus && (
+                    <p className="mt-1 text-sm font-semibold text-slate-600">{reportStatus}</p>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={generatePDF}
+                    className="rounded-xl bg-red-600 px-4 py-2 font-bold text-white hover:bg-red-700"
+                  >
+                    {language === 'fr' ? 'Ouvrir rapport PDF' : 'Open PDF report'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={printReportPreview}
+                    className="rounded-xl bg-cyan-700 px-4 py-2 font-bold text-white hover:bg-cyan-800"
+                  >
+                    {language === 'fr' ? 'Imprimer cet aperçu' : 'Print this preview'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={downloadPrintableReport}
+                    className="rounded-xl bg-slate-800 px-4 py-2 font-bold text-white hover:bg-slate-900"
+                  >
+                    {language === 'fr' ? 'Telecharger HTML' : 'Download HTML'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReportPreviewVisible(false)}
+                    className="rounded-xl border border-slate-300 bg-white px-4 py-2 font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    {language === 'fr' ? 'Fermer' : 'Close'}
+                  </button>
+                </div>
+              </div>
+              <div className="max-h-[75vh] overflow-auto rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <iframe
+                  title={language === 'fr' ? 'Aperçu du rapport PDF HESA' : 'HESA PDF report preview'}
+                  srcDoc={buildPrintableReportHtml({ autoPrint: false })}
+                  className="h-[75vh] w-full rounded-xl border-0 bg-white shadow"
+                />
+              </div>
+            </section>
+          )}
 
 
           {/* Climate Cities */}
