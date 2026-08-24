@@ -241,9 +241,10 @@ export function calculateHourlySimulation(records, options) {
     const atmosphericGasHumidifierInputKW = Math.round(steamEnergyKW / Math.max(atmosphericGasHumidifierEfficiency / 100, 0.01))
     const atmosphericGasHumidifierM3PerHour = Number((atmosphericGasHumidifierInputKW / 10.35).toFixed(1))
     const naturalGasM3PerHour = Number((naturalGasSteamInputKW / 10.35).toFixed(1))
-    const steamCost = Math.round(steamEnergyKW * electricityRate)
-    const adiabaticCost = Math.round(adiabaticEnergyKW * electricityRate)
-    const gasCost = Math.round((naturalGasM3PerHour + atmosphericGasHumidifierM3PerHour) * naturalGasRate)
+    // Keep hourly costs as decimals; rounding each hour can zero-out valid annual costs.
+    const steamCost = steamEnergyKW * electricityRate
+    const adiabaticCost = adiabaticEnergyKW * electricityRate
+    const gasCost = (naturalGasM3PerHour + atmosphericGasHumidifierM3PerHour) * naturalGasRate
     const naturalGasGES = Number(((naturalGasSteamInputKW * 0.182) / 1000).toFixed(6))
     const atmosphericGasHumidifierGES = Number(((atmosphericGasHumidifierInputKW * 0.182) / 1000).toFixed(6))
     const adiabaticGES = usesHeatPumpReheat ? Number(((reheatEnergyKW * 0.182) / 1000).toFixed(6)) : 0
