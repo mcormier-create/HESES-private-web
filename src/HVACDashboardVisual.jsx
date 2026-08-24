@@ -4334,9 +4334,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   ].filter(Boolean)
   const electricityEquipmentLabel = joinLocalizedList(electricityEquipmentLabels, language)
   const freeCoolingRecoveryType = {
-    WHEEL: 'enthalpyWheel',
+    WHEEL: selectedRecoverySupportsLatent ? 'enthalpyWheel' : 'sensibleWheel',
     CROSSFLOW: 'crossflowPlate',
-    CASSETTE: 'crossflowPlate',
+    CASSETTE: selectedRecoverySupportsLatent ? 'enthalpyWheel' : 'crossflowPlate',
     GLYCOL: 'sensibleWheel',
     BASIC: 'sensibleWheel',
     NONE: 'none',
