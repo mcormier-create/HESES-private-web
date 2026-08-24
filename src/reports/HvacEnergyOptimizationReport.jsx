@@ -411,7 +411,14 @@ const PROFESSIONAL_REPORT_CSS = `
     margin-top: 0;
   }
 
-  .graph-card svg,
+  .graph-card svg {
+    display: block;
+    width: 100%;
+    max-width: 360px;
+    height: 210px;
+    margin: 0 auto;
+  }
+
   .engineering-report svg {
     width: 100%;
     height: auto;
@@ -567,6 +574,15 @@ const PROFESSIONAL_REPORT_CSS = `
     .graph-card {
       break-inside: avoid;
       page-break-inside: avoid;
+    }
+
+    .graph-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .graph-card svg {
+      max-width: 340px;
+      height: 198px;
     }
 
     .report-table,
