@@ -4611,6 +4611,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const annualCommonHvacHeatingKwhResolved = usesBinAnnualTotals
     ? binAnnualCommonHvacHeatingKwh
     : commonHvacHeatingThermalKWRaw * annualHumidificationHoursRaw
+  const annualCommonHvacHeatingCostResolved = annualCommonHvacHeatingKwhResolved * electricityRate
   const annualSteamCostResolved = usesBinAnnualTotals
     ? (annualCommonHvacHeatingKwhResolved + annualSteamEnergyKwhResolved) * electricityRate
     : usesHourlyAnnualTotals
@@ -4647,7 +4648,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const annualHumifogHeatPumpCostResolved = usesBinAnnualTotals
     ? (annualCommonHvacHeatingKwhResolved + annualHumifogHeatPumpTotalEnergyKwhResolved) * electricityRate
     : usesHourlyAnnualTotals
-      ? Number(hourlyWeatherSummary?.annualCost || 0)
+      ? Number(hourlyWeatherSummary?.annualCost || 0) + annualCommonHvacHeatingCostResolved
       : (commonHvacHeatingThermalKWRaw + adiabaticHumidificationKWRaw + grossReheatKWRaw / Math.max(heatPumpCOP, 0.1)) * annualHumidificationHoursRaw * electricityRate
   const annualSavingsPercentResolved = annualSteamEnergyKwhResolved > 0
     ? Math.round((1 - annualAdiabaticEnergyKwhResolved / annualSteamEnergyKwhResolved) * 100)
@@ -5458,10 +5459,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     humifogElectric: {
       annualEnergyKWh: isFreeCoolingMode
         ? freeCoolingHumifogAnnual.totalEnergyKwh || 0
-        : energySummary.humifog.annualEnergyKwh || 0,
+        : annualCommonHvacHeatingKwhResolved + (energySummary.humifog.annualEnergyKwh || 0),
       annualOperatingCost: isFreeCoolingMode
         ? freeCoolingHumifogAnnual.annualCost || 0
-        : annualHumifogElectricCostResolved,
+        : annualCommonHvacHeatingCostResolved + annualHumifogElectricCostResolved,
       heatingKWh: isFreeCoolingMode ? freeCoolingHumifogAnnual.heatingEnergyKwh || 0 : annualCommonHvacHeatingKwhResolved,
       humidificationKWh: isFreeCoolingMode
         ? freeCoolingHumifogAnnual.humidificationEnergyKwh || 0
