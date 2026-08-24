@@ -38,20 +38,34 @@ function epwRecordHour(hour) {
 export function isEpwRecordOperating(record, scheduleMode, scheduleStartTime, scheduleEndTime, scheduleDaysOption, scheduleCustomDays) {
   if (scheduleMode === '24-7') return true
 
+  const normalizedDaysOption = ['mon-fri', 'mon-sat', 'seven-days', 'custom'].includes(scheduleDaysOption)
+    ? scheduleDaysOption
+    : 'mon-fri'
+  const resolvedCustomDays = {
+    mon: true,
+    tue: true,
+    wed: true,
+    thu: true,
+    fri: true,
+    sat: false,
+    sun: false,
+    ...(scheduleCustomDays && typeof scheduleCustomDays === 'object' ? scheduleCustomDays : {}),
+  }
+
   const hourOfDay = epwRecordHour(record.hour)
   const date = new Date(record.year, record.month - 1, record.day)
   const dayOfWeek = date.getDay()
   const dayName = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][dayOfWeek]
 
   let enabledDay = false
-  if (scheduleDaysOption === 'mon-fri') {
+  if (normalizedDaysOption === 'mon-fri') {
     enabledDay = dayOfWeek >= 1 && dayOfWeek <= 5
-  } else if (scheduleDaysOption === 'mon-sat') {
+  } else if (normalizedDaysOption === 'mon-sat') {
     enabledDay = dayOfWeek >= 1 && dayOfWeek <= 6
-  } else if (scheduleDaysOption === 'seven-days') {
+  } else if (normalizedDaysOption === 'seven-days') {
     enabledDay = true
   } else {
-    enabledDay = Boolean(scheduleCustomDays[dayName])
+    enabledDay = Boolean(resolvedCustomDays[dayName])
   }
 
   if (!enabledDay) return false
