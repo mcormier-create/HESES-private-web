@@ -162,6 +162,8 @@ export function calculateHourlySimulation(records, options) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
+  const usesNaturalGasReheat = reheatEnergySource.includes('gaz') || reheatEnergySource.includes('natural gas')
+  const usesPassiveRecoveryReheat = reheatEnergySource.includes('recuperation') || reheatEnergySource.includes('recovery') || reheatEnergySource.includes('passive')
   const usesHeatPumpReheat = reheatEnergySource.includes('thermopompe') || reheatEnergySource.includes('heat pump')
 
   const firstRecord = records[0]
@@ -188,6 +190,10 @@ export function calculateHourlySimulation(records, options) {
   let totalAtmosphericGasGES = 0
   let totalAdiabaticGES = 0
   let totalWaterKg = 0
+  let totalHumifogPumpKwh = 0
+  let totalHumifogReheatKwh = 0
+  let totalHumifogPumpCost = 0
+  let totalHumifogReheatCost = 0
 
   let hoursBelowZero = 0
   let hoursBelowMinusTen = 0
@@ -233,9 +239,13 @@ export function calculateHourlySimulation(records, options) {
     )
     const grossReheatKW = Math.max(0, grossHumifogPreheatKW - baseHvacHeatingThermalKW)
     const netReheatKW = grossReheatKW
-    const reheatEnergyKW = usesHeatPumpReheat
-      ? Number((netReheatKW / Math.max(heatPumpCOP, 0.1)).toFixed(2))
-      : Number((netReheatKW * (selectedReheatSystem?.facteur ?? 1)).toFixed(2))
+    const reheatEnergyKW = usesPassiveRecoveryReheat
+      ? 0
+      : usesHeatPumpReheat
+        ? Number((netReheatKW / Math.max(heatPumpCOP, 0.1)).toFixed(2))
+        : usesNaturalGasReheat
+          ? Number((netReheatKW / Math.max((Number(selectedReheatSystem?.rendement) || 88) / 100, 0.01)).toFixed(2))
+          : Number((netReheatKW * (selectedReheatSystem?.facteur ?? 1)).toFixed(2))
     const adiabaticEnergyKW = Number(Math.max(0, adiabaticPumpKW + reheatEnergyKW).toFixed(2))
     const naturalGasSteamInputKW = Math.round(steamEnergyKW / Math.max(steamBoilerEfficiency / 100, 0.01))
     const atmosphericGasHumidifierInputKW = Math.round(steamEnergyKW / Math.max(atmosphericGasHumidifierEfficiency / 100, 0.01))
@@ -243,7 +253,13 @@ export function calculateHourlySimulation(records, options) {
     const naturalGasM3PerHour = Number((naturalGasSteamInputKW / 10.35).toFixed(1))
     // Keep hourly costs as decimals; rounding each hour can zero-out valid annual costs.
     const steamCost = steamEnergyKW * electricityRate
-    const adiabaticCost = adiabaticEnergyKW * electricityRate
+    const humifogPumpCost = adiabaticPumpKW * electricityRate
+    const humifogReheatCost = usesNaturalGasReheat
+      ? (reheatEnergyKW / 10.35) * naturalGasRate
+      : usesPassiveRecoveryReheat
+        ? 0
+        : reheatEnergyKW * electricityRate
+    const adiabaticCost = humifogPumpCost + humifogReheatCost
     const gasCost = (naturalGasM3PerHour + atmosphericGasHumidifierM3PerHour) * naturalGasRate
     const naturalGasGES = Number(((naturalGasSteamInputKW * 0.182) / 1000).toFixed(6))
     const atmosphericGasHumidifierGES = Number(((atmosphericGasHumidifierInputKW * 0.182) / 1000).toFixed(6))
@@ -255,7 +271,11 @@ export function calculateHourlySimulation(records, options) {
     totalSteamKwh += steamEnergyKW
     totalGasKwh += naturalGasSteamInputKW + atmosphericGasHumidifierInputKW
     totalHumifogKwh += adiabaticEnergyKW
+    totalHumifogPumpKwh += adiabaticPumpKW
+    totalHumifogReheatKwh += reheatEnergyKW
     totalCost += adiabaticCost
+    totalHumifogPumpCost += humifogPumpCost
+    totalHumifogReheatCost += humifogReheatCost
     totalSteamCost += steamCost
     totalNaturalGasGES += naturalGasGES
     totalAtmosphericGasGES += atmosphericGasHumidifierGES
@@ -278,6 +298,10 @@ export function calculateHourlySimulation(records, options) {
     annualGasKwh: totalGasKwh,
     annualHumifogKwh: totalHumifogKwh,
     annualCost: totalCost,
+    annualHumifogPumpKwh: totalHumifogPumpKwh,
+    annualHumifogReheatKwh: totalHumifogReheatKwh,
+    annualHumifogPumpCost: totalHumifogPumpCost,
+    annualHumifogReheatCost: totalHumifogReheatCost,
     annualSavings: totalSteamCost - totalCost,
     annualGhgReduction: Math.max(0, totalNaturalGasGES + totalAtmosphericGasGES - totalAdiabaticGES),
     annualWaterConsumptionKg: totalWaterKg,
