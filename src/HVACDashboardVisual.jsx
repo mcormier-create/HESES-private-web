@@ -1391,7 +1391,6 @@ const REPORT_FR_REPLACEMENTS = [
   ['Critical BIN', 'BIN critique'],
   ['Not required', 'Non requis'],
   ['Yes', 'Oui'],
-  ['No', 'Non'],
   ['boiler efficiency', 'rendement chaudière'],
   ['gas humidifier efficiency', 'rendement humidificateur gaz'],
   ['Calculation Basis', 'Base de calcul'],
@@ -1423,6 +1422,8 @@ function localizeReportHtml(html, language) {
     (localized, [english, french]) => localized.split(english).join(french),
     html
   )
+
+  const localizedWithExactNo = localized.replace(/\bNo\b/g, 'Non')
 
   const frenchFinalCleanup = [
     ['Nonnm', 'Nom'],
@@ -1481,7 +1482,7 @@ function localizeReportHtml(html, language) {
 
   const cleaned = frenchFinalCleanup.reduce(
     (value, [from, to]) => value.split(from).join(to),
-    localized
+    localizedWithExactNo
   )
 
   return repairFrenchEncoding(cleaned)
