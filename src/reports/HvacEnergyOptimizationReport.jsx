@@ -2801,7 +2801,9 @@ function EnergyBreakdownGraph({ title, data }) {
 
 function HeatMap({ title, rows, units }) {
   const bins = rows[0]?.rows || []
-  const values = rows.flatMap((row) => (row.rows || []).map((bin) => bin.totalEnergyKwh))
+  const maxDisplayedColumns = 14
+  const groupedColumns = buildHeatmapColumns(bins, maxDisplayedColumns, units)
+  const values = rows.flatMap((row) => groupedColumns.map((column) => averageHeatmapValue(row.rows || [], column.start, column.end)))
   const minValue = Math.min(...values, 0)
   const maxValue = Math.max(...values, 1)
 
@@ -2812,27 +2814,87 @@ function HeatMap({ title, rows, units }) {
         <thead>
           <tr>
             <th>OA%</th>
-            {bins.map((bin) => <th key={`hm-head-${bin.tempC}`}>{formatTemp(bin.tempC, units)}</th>)}
+            {groupedColumns.map((column) => <th key={`hm-head-${column.key}`}>{column.label}</th>)}
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
             <tr key={`hm-row-${row.oaPercent}`}>
               <th>{formatNumber(row.oaPercent, 0)}%</th>
-              {(row.rows || []).map((bin) => (
+              {groupedColumns.map((column) => {
+                const averagedKwh = averageHeatmapValue(row.rows || [], column.start, column.end)
+                return (
                 <td
-                  key={`hm-${row.oaPercent}-${bin.tempC}`}
-                  style={{ backgroundColor: heatColor(bin.totalEnergyKwh, minValue, maxValue) }}
+                  key={`hm-${row.oaPercent}-${column.key}`}
+                  style={{ backgroundColor: heatColor(averagedKwh, minValue, maxValue) }}
                 >
-                  {formatNumber(bin.totalEnergyKwh, 0)}
+                  {formatNumber(averagedKwh, 0)}
                 </td>
-              ))}
+                )
+              })}
             </tr>
           ))}
         </tbody>
       </table>
     </div>
   )
+}
+
+function buildHeatmapColumns(bins, maxColumns, units) {
+  if (!Array.isArray(bins) || bins.length === 0) return []
+  if (bins.length <= maxColumns) {
+    return bins.map((bin, index) => ({
+      key: `${index}-${bin.tempC}`,
+      start: index,
+      end: index,
+      label: formatTemp(bin.tempC, units),
+    }))
+  }
+
+  const groupSize = Math.ceil(bins.length / maxColumns)
+  const columns = []
+
+  for (let start = 0; start < bins.length; start += groupSize) {
+    const end = Math.min(start + groupSize - 1, bins.length - 1)
+    const firstTemp = bins[start]?.tempC
+    const lastTemp = bins[end]?.tempC
+    columns.push({
+      key: `${start}-${end}`,
+      start,
+      end,
+      label: formatHeatmapTemperatureRange(firstTemp, lastTemp, units),
+    })
+  }
+
+  return columns
+}
+
+function averageHeatmapValue(rowBins, start, end) {
+  const slice = rowBins.slice(start, end + 1)
+  const numericValues = slice
+    .map((bin) => Number(bin?.totalEnergyKwh))
+    .filter((value) => Number.isFinite(value))
+
+  if (numericValues.length === 0) return 0
+  return numericValues.reduce((sum, value) => sum + value, 0) / numericValues.length
+}
+
+function formatHeatmapTemperatureRange(startTempC, endTempC, units) {
+  const startTemp = Number(startTempC)
+  const endTemp = Number(endTempC)
+  const displayStart = units === 'imperial' ? startTemp * 9 / 5 + 32 : startTemp
+  const displayEnd = units === 'imperial' ? endTemp * 9 / 5 + 32 : endTemp
+  const unitSymbol = units === 'imperial' ? '°F' : '°C'
+
+  if (!Number.isFinite(displayStart) || !Number.isFinite(displayEnd)) {
+    return unitSymbol
+  }
+
+  if (Math.abs(displayStart - displayEnd) < 0.01) {
+    return `${formatNumber(displayStart, 0, activeReportLanguage)} ${unitSymbol}`
+  }
+
+  return `${formatNumber(displayStart, 0, activeReportLanguage)}-${formatNumber(displayEnd, 0, activeReportLanguage)} ${unitSymbol}`
 }
 
 function formatPointLabel(label) {
