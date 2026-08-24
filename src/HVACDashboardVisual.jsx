@@ -7536,6 +7536,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                 <BarChart
                   data={[
                     { nom: language === 'fr' ? 'Vapeur' : 'Steam', valeur: steamEnergyKW },
+                    { nom: language === 'fr' ? 'Gaz nat.' : 'Nat. gas', valeur: naturalGasSteamInputKW },
                     { nom: language === 'fr' ? 'Gaz atm.' : 'Atm. gas', valeur: atmosphericGasHumidifierInputKW },
                     { nom: language === 'fr' ? 'Adiabatique' : 'Adiabatic', valeur: adiabaticEnergyKW },
                   ]}
