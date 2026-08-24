@@ -5468,7 +5468,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         : annualHumifogPumpEnergyKwhResolved,
       reheatKWh: isFreeCoolingMode
         ? freeCoolingHumifogAnnual.reheatEnergyKwh || 0
-        : annualHumifogElectricPreheatEnergyKwhResolved,
+        : annualHumifogSelectedPreheatEnergyKwhResolved,
       pumpKWh: isFreeCoolingMode
         ? freeCoolingHumifogAnnual.humidificationEnergyKwh || 0
         : annualHumifogPumpEnergyKwhResolved,
