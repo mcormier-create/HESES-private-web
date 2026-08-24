@@ -1067,11 +1067,27 @@ export default function HvacEnergyOptimizationReport({ data }) {
     const kilogramsPerHour = poundsPerHour * 0.45359237
     return `${formatNumber(kilogramsPerHour, 2)} kg/hr (${formatNumber(poundsPerHour, 2)} lb/hr)`
   }
+  const localizeOperatingHourBasis = (basis) => {
+    const value = String(basis || '').trim()
+    if (!value) return ''
+
+    if (value === 'mixed') return tr('Mixtes', 'Mixed')
+    if (value === 'Custom operating hours - EPW hourly simulation') {
+      return tr('Heures d’exploitation personnalisées - simulation EPW horaire', 'Custom operating hours - EPW hourly simulation')
+    }
+    if (value === 'EPW hourly simulation 8760') return tr('Simulation EPW horaire 8760', 'EPW hourly simulation 8760')
+    if (value === 'BIN hours adjusted to custom schedule') {
+      return tr('Heures BIN ajustées selon l’horaire personnalisé', 'BIN hours adjusted to custom schedule')
+    }
+    if (value === 'BIN hours') return tr('Heures BIN', 'BIN hours')
+
+    return value
+  }
   const reportInputValidationRows = [
     [tr('Emplacement du projet', 'Project location'), project.location || '-'],
     [tr('Mode du rapport', 'Report mode'), includesFreeCoolingAnalysis ? tr('Free Cooling', 'Free Cooling') : tr('100% air extérieur', '100% Outdoor Air')],
     [tr('Mode de ventilation sélectionné', 'Ventilation mode selected'), mode.ventilationModeName || '-'],
-    [tr('Base horaire utilisée', 'Operating-hour basis used'), mode.operatingHourBasis || (mode.selectedCalculationMethod?.toLowerCase().includes('hourly')
+    [tr('Base horaire utilisée', 'Operating-hour basis used'), localizeOperatingHourBasis(mode.operatingHourBasis) || (mode.selectedCalculationMethod?.toLowerCase().includes('hourly')
       ? tr('Simulation météo horaire 8760', 'Hourly weather simulation 8760')
       : mode.isCustomOperatingHours
         ? tr('Heures d’exploitation personnalisées', 'Custom operating hours')
@@ -1435,22 +1451,23 @@ export default function HvacEnergyOptimizationReport({ data }) {
         <KeyValueTable rows={[
           [tr('Systèmes HVAC actifs', 'Active HVAC systems'), `${projectSystems.length}`],
           [tr('Débit total du bâtiment', 'Total building airflow'), formatFlow(projectSystems.reduce((total, item) => total + Number(item.system?.supplyAirflowCfm || 0), 0), data.units)],
-          [tr('Base horaire du bâtiment', 'Building operating-hour basis'), projectEnergy.operatingHourBasis === 'mixed' ? tr('Mixtes', 'Mixed') : (projectEnergy.operatingHourBasis || '-')],
+          [tr('Base horaire du bâtiment', 'Building operating-hour basis'), localizeOperatingHourBasis(projectEnergy.operatingHourBasis) || '-'],
           [tr('Scénario de référence du bâtiment', 'Building Reference Scenario'), projectEnergy.referenceTechnology ? technologyNames[projectEnergy.referenceTechnology] : tr('Référence bâtiment sélectionnée par UTA', 'Mixed selected building reference')],
           [tr('Solutions Humifog sélectionnées', 'Humifog - Selected Solutions'), tr('Solution sélectionnée par UTA', 'Selected solution per HVAC system')],
           [tr('Énergie de référence totale', 'Total reference energy'), formatEnergy(buildingSavings.totals.referenceEnergy)],
           [tr('Énergie Humifog totale', 'Total Humifog energy'), formatEnergy(buildingSavings.totals.humifogEnergy)],
           [tr('Économies d’énergie totales', 'Total energy savings'), formatEnergy(buildingSavings.totals.energySavings)],
           [tr('Réduction d’énergie totale', 'Total energy reduction'), Number.isFinite(buildingSavings.totals.energyReductionPercent) ? `${formatNumber(buildingSavings.totals.energyReductionPercent, 1)}%` : tr('Non disponible', 'Not available')],
-          [tr('Coût de référence total', 'Total reference operating cost'), formatMoney(buildingSavings.totals.referenceCost)],
-          [tr('Coût Humifog total', 'Total Humifog operating cost'), formatMoney(buildingSavings.totals.humifogCost)],
+          [tr('Coût énergie de référence total', 'Total reference energy operating cost'), formatMoney(buildingSavings.totals.referenceCost)],
+          [tr('Coût énergie Humifog total', 'Total Humifog energy operating cost'), formatMoney(buildingSavings.totals.humifogCost)],
           [tr('Économies de coût annuelles totales', 'Total annual cost savings'), formatMoney(buildingSavings.totals.costSavings)],
+          [tr('Investissement Humifog total', 'Total Humifog installed investment'), formatMoney(projectEnergy.totals.humifogSelected.installedInvestmentCost)],
           [tr('Investissement incrémental total', 'Total incremental investment'), formatMoney(buildingSavings.totals.incrementalInvestment)],
           [tr('Retour simple total', 'Total simple payback'), projectPayback(buildingSavings.totals.simplePaybackYears, buildingSavings.totals.paybackStatus)],
           [tr('ROI annuel simple total', 'Total annual simple ROI'), Number.isFinite(buildingSavings.totals.simpleAnnualRoiPercent) ? `${formatNumber(buildingSavings.totals.simpleAnnualRoiPercent, 1)}%` : tr('Non disponible', 'Not available')],
         ]} />
         <h3>{tr('Bases horaires par système', 'Operating-hour basis by system')}</h3>
-        <KeyValueTable rows={projectEnergy.systemHourBases.map((entry) => [entry.name, entry.basis || '-'])} />
+        <KeyValueTable rows={projectEnergy.systemHourBases.map((entry) => [entry.name, localizeOperatingHourBasis(entry.basis) || '-'])} />
         <h3>{tr('Configuration Humifog par système', 'Humifog configuration by system')}</h3>
         <KeyValueTable rows={projectEnergy.systemHourBases.map((entry) => [entry.name, technologyNames[entry.humifogTechnology] || '-'])} />
         <h3>{tr('Totaux annuels du bâtiment', 'Building annual totals')}</h3>
@@ -2390,13 +2407,17 @@ export default function HvacEnergyOptimizationReport({ data }) {
               ? [
                 'Final ventilation minimum must be confirmed against applicable code and occupancy',
                 'Installed cost is required for final simple payback',
-                ...(showBinAnalysis ? ['BIN data should be validated against project-specific weather files'] : ['Custom operating hours are used for the annual energy calculation']),
+                ...(showBinAnalysis
+                  ? ['BIN data should be validated against project-specific weather files']
+                  : [tr('Les heures d’exploitation personnalisées sont utilisées pour le calcul énergétique annuel', 'Custom operating hours are used for the annual energy calculation')]),
                 'Field mixed air measurements should be used when available',
               ]
               : [
                 'Free Cooling savings are not calculated because the selected system is not a mixed air economizer',
                 'Installed cost is required for final simple payback',
-                ...(showBinAnalysis ? ['BIN data should be validated against project-specific weather files'] : ['Custom operating hours are used for the annual energy calculation']),
+                ...(showBinAnalysis
+                  ? ['BIN data should be validated against project-specific weather files']
+                  : [tr('Les heures d’exploitation personnalisées sont utilisées pour le calcul énergétique annuel', 'Custom operating hours are used for the annual energy calculation')]),
                 'Final equipment selection must be coordinated with manufacturer data',
               ]} />
           </div>
