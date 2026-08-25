@@ -5027,6 +5027,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const freeCoolingAtmosphericGasAnnualCost =
     freeCoolingCommonElectricKwh * electricityRate +
     (freeCoolingAtmosphericGasHumidificationKwh / 10.35) * naturalGasRate
+  const annualElectricHumidificationOnlyCost = annualElectricSteamHumidificationInputKwhResolved * electricityRate
   const technologyAnnualCosts = {
     electricSteam: isFreeCoolingMode ? freeCoolingSteamAnnual.annualCost || 0 : annualElectricHumidificationOnlyCost,
     naturalGasSteam: isFreeCoolingMode ? freeCoolingNaturalGasAnnualCost : annualNaturalGasHumidificationCostResolved,
@@ -5417,7 +5418,6 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const annualSteamCostDisplay = isHourlySimulationActive && hourlyWeatherSummary
     ? Math.round(annualSteamCostResolved)
     : Math.round(annualSteamCostResolved)
-  const annualElectricHumidificationOnlyCost = annualElectricSteamHumidificationInputKwhResolved * electricityRate
   const annualNaturalGasCostDisplay = Math.round(annualNaturalGasCostResolved)
   const annualAtmosphericGasHumidifierCostDisplay = Math.round(annualAtmosphericGasHumidifierCostResolved)
   const annualAdiabaticCostDisplay = isHourlySimulationActive && hourlyWeatherSummary
