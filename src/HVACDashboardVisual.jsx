@@ -4686,7 +4686,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       ? (annualHumifogSelectedPreheatEnergyKwhResolved / 10.35) * naturalGasRate
       : annualHumifogSelectedPreheatEnergyKwhResolved * electricityRate)
     : usesHourlyAnnualTotals
-      ? hourlyAnnualHumifogReheatCost
+      ? (selectedReheatUsesNaturalGas
+        ? (annualHumifogSelectedPreheatEnergyKwhResolved / 10.35) * naturalGasRate
+        : annualHumifogSelectedPreheatEnergyKwhResolved * electricityRate)
       : annualAdiabaticReheatCostRaw
   const annualAdiabaticCostResolved = usesBinAnnualTotals
     ? annualHumifogPumpCostResolved + annualHumifogSelectedPreheatCostResolved
@@ -5956,7 +5958,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     if (value === undefined || value === null || !Number.isFinite(Number(value))) {
       return language === 'fr' ? 'Non disponible' : 'Not available'
     }
-    return ['cost', 'humidificationOnlyCost', 'reheatCost', 'heatingOnlyCost'].includes(row.key)
+    return ['cost', 'humidificationCost', 'humidificationOnlyCost', 'reheatCost', 'heatingOnlyCost'].includes(row.key)
       ? formatAnnualCost(value)
       : formatAnnualEnergy(value)
   }
