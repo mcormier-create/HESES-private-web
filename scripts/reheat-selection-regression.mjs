@@ -49,7 +49,7 @@ console.log('Reheat selection regression checks passed.')
 console.table(results.map(({ key, metrics, label }) => ({
   key,
   label,
-  thermalReheatKw: metrics.grossReheatKWRaw,
-  inputReheatKw: metrics.reheatEnergyKWRaw,
-  pumpKw: metrics.adiabaticHumidificationKWRaw,
+  thermalReheatPowerKw: metrics.grossReheatKWRaw,
+  reheatInputPowerKw: metrics.reheatEnergyKWRaw,
+  pumpPowerKw: metrics.adiabaticHumidificationKWRaw,
 })))

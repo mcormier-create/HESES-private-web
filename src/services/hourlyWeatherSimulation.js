@@ -196,6 +196,7 @@ export function calculateHourlySimulation(records, options) {
   let totalAdiabaticGES = 0
   let totalWaterKg = 0
   let totalHumifogPumpKwh = 0
+  let totalHumifogThermalReheatKwh = 0
   let totalHumifogReheatKwh = 0
   let totalHumifogPumpCost = 0
   let totalHumifogReheatCost = 0
@@ -286,6 +287,7 @@ export function calculateHourlySimulation(records, options) {
     totalGasKwh += naturalGasSteamInputKW + atmosphericGasHumidifierInputKW
     totalHumifogKwh += adiabaticEnergyKW
     totalHumifogPumpKwh += adiabaticPumpKW
+    totalHumifogThermalReheatKwh += grossReheatKW
     totalHumifogReheatKwh += reheatEnergyKW
     totalCost += adiabaticCost
     totalHumifogPumpCost += humifogPumpCost
@@ -316,6 +318,7 @@ export function calculateHourlySimulation(records, options) {
     annualHumifogKwh: totalHumifogKwh,
     annualCost: totalCost,
     annualHumifogPumpKwh: totalHumifogPumpKwh,
+    annualHumifogThermalReheatKwh: totalHumifogThermalReheatKwh,
     annualHumifogReheatKwh: totalHumifogReheatKwh,
     annualHumifogPumpCost: totalHumifogPumpCost,
     annualHumifogReheatCost: totalHumifogReheatCost,
