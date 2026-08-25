@@ -7140,7 +7140,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     />
                   </td>
                   <td className="p-4 text-center text-slate-700">
-                    {language === 'fr' ? 'Vapeur électrique, Humifog et thermopompe' : 'Electric steam, Humifog and heat pump'}
+                    {language === 'fr'
+                      ? `Vapeur électrique, Humifog et ${selectedReheatSystemDisplayName}`
+                      : `Electric steam, Humifog and ${selectedReheatSystemDisplayName}`}
                   </td>
                 </tr>
 
