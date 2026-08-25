@@ -4873,7 +4873,13 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const chartPreheatDeltaHBtuLb = Math.max(0, (chartHeatingOutletState.h - chartHeatingInletState.h) * 0.429923)
   const chartPreheatBtuHr = 4.5 * effectiveOutsideAirCFM * chartPreheatDeltaHBtuLb
   const chartHeatingThermalKw = chartPreheatBtuHr / 3412
-  const chartHeatingHpKw = chartHeatingThermalKw / Math.max(heatPumpCOP, 0.1)
+  const chartHeatingInputKw = usesHeatPumpReheat
+    ? chartHeatingThermalKw / Math.max(Number(selectedReheatSystem?.cop ?? heatPumpCOP), 0.1)
+    : selectedReheatEnergySource.includes('gaz naturel') || selectedReheatEnergySource.includes('natural gas')
+      ? chartHeatingThermalKw / Math.max(Number(selectedReheatSystem?.rendement ?? 100) / 100, 0.01)
+      : selectedReheatEnergySource.includes('recuperation') || selectedReheatEnergySource.includes('recovery') || selectedReheatEnergySource.includes('passive')
+        ? 0
+        : chartHeatingThermalKw * (selectedReheatSystem?.facteur ?? 1)
   const chartOutdoorAirPercent = is100OA ? 100 : Math.min(100, Math.max(0, activeFraction * 100))
   const chartReturnAirPercent = Math.max(0, 100 - chartOutdoorAirPercent)
   const chartOutdoorAirFraction = chartOutdoorAirPercent / 100
@@ -5983,7 +5989,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     saTemp: `${displayTemp(displayedAfterHumifogTemp)}${tempUnit}`,
     saRh: `HR ${formatNumber(displayedAfterHumifogRh, 1)}%`,
     recoveryKw: `${formatNumber(chartRecoveryThermalKw, 1)} kW`,
-    heatingKw: `${formatNumber(chartHeatingHpKw, 1)} kW`,
+    heatingKw: `${formatNumber(chartHeatingInputKw, 1)} kW`,
+    reheatLabel: selectedReheatSystemDisplayName,
     humifogKw: `${formatNumber(chartHumifogPumpKw, 1)} kW`,
     airflow: totalAirflowDisplay,
     oaPercent: `${formatNumber(imageOutdoorAirPercent, 1)}%`,

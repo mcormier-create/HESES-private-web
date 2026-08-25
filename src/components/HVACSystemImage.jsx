@@ -352,7 +352,7 @@ export default function HVACSystemImage({
       ]
     : [
         { title: normalizedRecoveryType === 'none' ? text.noRecovery : text.recovery, value: data.recoveryKw ?? '-' },
-        { title: text.hpHeating, value: data.heatingKw ?? '-' },
+        { title: data.reheatLabel || text.afterHeating, value: data.heatingKw ?? '-' },
         { title: text.humifogPump, value: data.humifogKw ?? '-' },
         { title: text.oaAirflow, value: data.airflow ?? '-' },
       ]
