@@ -141,6 +141,7 @@ export function calculateHourlySimulation(records, options) {
     selectedReheatSystem,
     heatPumpCOP,
     steamBoilerEfficiency,
+    electricHumidifierEfficiency = 100,
     atmosphericGasHumidifierEfficiency,
     electricityRate,
     naturalGasRate,
@@ -247,13 +248,14 @@ export function calculateHourlySimulation(records, options) {
           ? Number((netReheatKW / Math.max((Number(selectedReheatSystem?.rendement) || 88) / 100, 0.01)).toFixed(2))
           : Number((netReheatKW * (selectedReheatSystem?.facteur ?? 1)).toFixed(2))
     const adiabaticEnergyKW = Number(Math.max(0, adiabaticPumpKW + reheatEnergyKW).toFixed(2))
+    const electricSteamInputEnergyKW = steamEnergyKW / Math.max(electricHumidifierEfficiency / 100, 0.01)
     const steamInputEnergyKW = steamEnergyKW / Math.max(steamBoilerEfficiency / 100, 0.01)
     const naturalGasSteamInputKW = Math.round(steamInputEnergyKW)
     const atmosphericGasHumidifierInputKW = Math.round(steamEnergyKW / Math.max(atmosphericGasHumidifierEfficiency / 100, 0.01))
     const atmosphericGasHumidifierM3PerHour = Number((atmosphericGasHumidifierInputKW / 10.35).toFixed(1))
     const naturalGasM3PerHour = Number((naturalGasSteamInputKW / 10.35).toFixed(1))
     // Keep hourly costs as decimals; rounding each hour can zero-out valid annual costs.
-    const steamCost = steamInputEnergyKW * electricityRate
+    const steamCost = electricSteamInputEnergyKW * electricityRate
     const humifogPumpCost = adiabaticPumpKW * electricityRate
     const humifogReheatCost = usesNaturalGasReheat
       ? (reheatEnergyKW / 10.35) * naturalGasRate

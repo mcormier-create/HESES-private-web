@@ -4062,6 +4062,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       selectedReheatSystemSignature,
       debouncedHeatPumpCOP,
       debouncedSteamBoilerEfficiency,
+      electricHumidifierEfficiency,
       debouncedAtmosphericGasHumidifierEfficiency,
       debouncedElectricityRate,
       debouncedNaturalGasRate,
@@ -4098,6 +4099,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       selectedReheatSystem,
       heatPumpCOP: debouncedHeatPumpCOP,
       steamBoilerEfficiency: debouncedSteamBoilerEfficiency,
+      electricHumidifierEfficiency,
       atmosphericGasHumidifierEfficiency: debouncedAtmosphericGasHumidifierEfficiency,
       electricityRate: debouncedElectricityRate,
       naturalGasRate: debouncedNaturalGasRate,
@@ -4192,6 +4194,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     selectedReheatSystemSignature,
     debouncedHeatPumpCOP,
     debouncedSteamBoilerEfficiency,
+    electricHumidifierEfficiency,
     debouncedAtmosphericGasHumidifierEfficiency,
     debouncedElectricityRate,
     debouncedNaturalGasRate,
@@ -8302,10 +8305,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                         <td className="p-4 text-center font-semibold text-slate-800">{item.originalHours} h</td>
                         <td className="p-4 text-center font-bold text-slate-800">{item.heures} h</td>
                         <td className="p-4 text-center text-red-700 font-bold">
-                          {Math.round(binEnergyRow?.steamTotalBinEnergyKwh || 0).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} kWh
+                          {Math.round(binEnergyRow?.steamBinEnergyKwh || 0).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} kWh
                         </td>
                         <td className="p-4 text-center text-cyan-700 font-bold">
-                          {Math.round(binEnergyRow?.adiabaticTotalBinEnergyKwh || 0).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} kWh
+                          {Math.round(binEnergyRow?.adiabaticBinEnergyKwh || 0).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} kWh
                         </td>
                       </tr>
                     )
