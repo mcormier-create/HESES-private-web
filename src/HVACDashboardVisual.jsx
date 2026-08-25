@@ -5387,6 +5387,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const annualSteamCostDisplay = isHourlySimulationActive && hourlyWeatherSummary
     ? Math.round(annualSteamCostResolved)
     : Math.round(annualSteamCostResolved)
+  const annualElectricHumidificationOnlyCost = annualElectricSteamHumidificationInputKwhResolved * electricityRate
   const annualNaturalGasCostDisplay = Math.round(annualNaturalGasCostResolved)
   const annualAtmosphericGasHumidifierCostDisplay = Math.round(annualAtmosphericGasHumidifierCostResolved)
   const annualAdiabaticCostDisplay = isHourlySimulationActive && hourlyWeatherSummary
@@ -7567,7 +7568,14 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                   )}
                   <tr className="bg-slate-50">
                     <td className="p-4 font-semibold">{t.annualCost}</td>
-                    <td className="p-4 text-center text-red-700 font-bold">{annualSteamCostDisplay.toLocaleString()} $</td>
+                    <td className="p-4 text-center text-red-700 font-bold">
+                      {annualSteamCostDisplay.toLocaleString()} $
+                      <div className="mt-1 text-xs font-semibold leading-relaxed">
+                        {language === 'fr'
+                          ? `Humidification seule : ${Math.round(annualElectricHumidificationOnlyCost).toLocaleString()} $/an`
+                          : `Humidification only: ${Math.round(annualElectricHumidificationOnlyCost).toLocaleString()} $/year`}
+                      </div>
+                    </td>
                     <td className="p-4 text-center text-yellow-700 font-bold">{annualNaturalGasCostDisplay.toLocaleString()} $</td>
                     <td className="p-4 text-center text-amber-700 font-bold">{annualAtmosphericGasHumidifierCostDisplay.toLocaleString()} $</td>
                     <td className="p-4 text-center text-cyan-700 font-bold">
