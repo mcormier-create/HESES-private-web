@@ -23,6 +23,7 @@ import {
 } from 'recharts'
 
 const WEATHER_PRODUCTION_MODE = false
+const BIN_WEEKS_PER_YEAR = 52.142857
 
 const monthlyFactors = [1, 0.95, 0.83, 0.64, 0.44, 0.28, 0.18, 0.2, 0.36, 0.58, 0.82, 0.96]
 const DEFAULT_SCHEDULE_CUSTOM_DAYS = {
