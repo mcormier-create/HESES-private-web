@@ -3351,10 +3351,23 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const [freeCoolingControlsInstalledCost, setFreeCoolingControlsInstalledCost] = useState(() => finiteSetting(initialProjectSettings, 'freeCoolingControlsInstalledCost', 18000))
   const [heatRecoveryInstalledCost, setHeatRecoveryInstalledCost] = useState(() => finiteSetting(initialProjectSettings, 'heatRecoveryInstalledCost', 45000))
 
-  const initialReheatSystem = reheatSystems[language].find((item) =>
-    item.energie === initialProjectSettings.selectedReheatEnergy ||
-    item.nom === initialProjectSettings.selectedReheatName
-  ) || reheatSystems[language][0]
+  const normalizeReheatValue = (value) => String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+
+  const initialReheatSystem = reheatSystems[language].find((item) => {
+    const savedEnergy = normalizeReheatValue(initialProjectSettings?.selectedReheatEnergy)
+    const savedName = normalizeReheatValue(initialProjectSettings?.selectedReheatName)
+    return (
+      normalizeReheatValue(item.energie) === savedEnergy ||
+      normalizeReheatValue(item.nom) === savedName
+    )
+  }) || reheatSystems[language].find((item) => {
+    const label = normalizeReheatValue(item.nom)
+    return label.includes('electri') || label.includes('electric')
+  }) || reheatSystems[language][0]
   const [selectedReheatSystem, setSelectedReheatSystem] = useState(initialReheatSystem)
   const [ventilationMode, setVentilationMode] = useState(() => getInitialVentilationMode(language, initialProjectSettings.ventilationModeType))
   const openVentilationMode = (mode) => {
@@ -4317,16 +4330,19 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   }
   const systemImageLabel = systemImageLabels[recoveryGroup] || systemImageLabels.WHEEL
   const selectedSystemDiagramLabel = systemImageLabel
-  const selectedReheatSystemDisplayName = selectedReheatEnergySource.includes('thermopompe') ||
-    selectedReheatEnergySource.includes('heat pump')
-    ? (language === 'fr' ? 'Thermopompe air/eau' : 'Air/Water Heat Pump')
-    : selectedReheatEnergySource.includes('gaz') || selectedReheatEnergySource.includes('natural gas')
-      ? (language === 'fr' ? 'Eau chaude gaz naturel' : 'Natural Gas Hot Water')
-      : selectedReheatEnergySource.includes('recuperation') ||
-          selectedReheatEnergySource.includes('recovery') ||
-          selectedReheatEnergySource.includes('passive')
-        ? (language === 'fr' ? 'Boucle récupération chaleur' : 'Heat Recovery Loop')
-        : (language === 'fr' ? 'Électrique' : 'Electric')
+  const selectedReheatSystemDisplayName = (() => {
+    const normalizedSelection = normalizeReheatValue(selectedReheatSystem?.energie || selectedReheatSystem?.nom || '')
+    if (normalizedSelection.includes('thermopompe') || normalizedSelection.includes('heat pump')) {
+      return language === 'fr' ? 'Thermopompe air/eau' : 'Air/Water Heat Pump'
+    }
+    if (normalizedSelection.includes('gaz') || normalizedSelection.includes('natural gas')) {
+      return language === 'fr' ? 'Eau chaude gaz naturel' : 'Natural Gas Hot Water'
+    }
+    if (normalizedSelection.includes('recuperation') || normalizedSelection.includes('recovery') || normalizedSelection.includes('passive')) {
+      return language === 'fr' ? 'Boucle récupération chaleur' : 'Heat Recovery Loop'
+    }
+    return language === 'fr' ? 'Électrique' : 'Electric'
+  })()
   const electricityEquipmentLabels = [
     Number(steamEnergyKW) > 0 ? (language === 'fr' ? 'Vapeur électrique' : 'Electric steam') : '',
     humidifierType === 'HUMIFOG' ? 'Humifog' : '',
@@ -4461,6 +4477,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const freeCoolingOptimizationWeatherData = useMemo(() => isHourlySimulationActive
     ? compactWeatherBins(freeCoolingWeatherData, 96)
     : freeCoolingWeatherData, [isHourlySimulationActive, freeCoolingWeatherData])
+  const selectedHeatPumpCOPForAnnual = Number.isFinite(Number(selectedReheatSystem?.cop))
+    ? Math.max(Number(selectedReheatSystem.cop), 0.1)
+    : Math.max(heatPumpCOP, 0.1)
   const binEnergyRows = selectedBinWeatherData.map((bin) => {
     const binMetrics = calculateHvacDashboardMetrics({
       outsideAirCFM,
@@ -4490,7 +4509,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     const additionalSelectedPreheatInputKW = Number(binMetrics.reheatEnergyKWRaw || binMetrics.reheatEnergyKW || 0)
     const additionalThermalPreheatKW = Number(binMetrics.grossReheatKWRaw || binMetrics.grossReheatKW || 0)
     const additionalElectricPreheatKW = additionalThermalPreheatKW
-    const additionalHeatPumpPowerKW = additionalThermalPreheatKW / Math.max(heatPumpCOP, 0.1)
+    const additionalHeatPumpPowerKW = additionalThermalPreheatKW / selectedHeatPumpCOPForAnnual
     const adiabaticTotalPowerKW = Number(binMetrics.adiabaticEnergyKWRaw || binMetrics.adiabaticEnergyKW || 0)
     const naturalGasSteamInputKWBin = Number(binMetrics.naturalGasSteamInputKWRaw || binMetrics.naturalGasSteamInputKW || 0)
     const atmosphericGasInputKWBin = Number(binMetrics.atmosphericGasHumidifierInputKWRaw || binMetrics.atmosphericGasHumidifierInputKW || 0)
@@ -4564,8 +4583,19 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
+  const selectedReheatUsesPassiveRecovery = selectedReheatEnergySourceNormalized.includes('recuperation') ||
+    selectedReheatEnergySourceNormalized.includes('recovery') ||
+    selectedReheatEnergySourceNormalized.includes('passive')
   const selectedReheatUsesNaturalGas = selectedReheatEnergySourceNormalized.includes('gaz naturel') ||
     selectedReheatEnergySourceNormalized.includes('natural gas')
+  const selectedReheatUsesHeatPump = selectedReheatEnergySourceNormalized.includes('thermopompe') ||
+    selectedReheatEnergySourceNormalized.includes('heat pump')
+  const selectedReheatEfficiencyPercent = Number.isFinite(Number(selectedReheatSystem?.rendement))
+    ? Number(selectedReheatSystem.rendement)
+    : 100
+  const selectedReheatEffectiveCOP = Number.isFinite(Number(selectedReheatSystem?.cop))
+    ? Number(selectedReheatSystem.cop)
+    : Math.max(heatPumpCOP, 0.1)
   const annualSteamEnergyKwhResolved = usesHourlyAnnualTotals
     ? hourlyAnnualSteamEnergyKwh
     : usesBinAnnualTotals
@@ -4601,16 +4631,20 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     : grossReheatKWRaw * annualHumidificationHoursRaw
   const annualHumifogHeatPumpPreheatEnergyKwhResolved = usesBinAnnualTotals
     ? binAnnualHumifogHeatPumpPreheatEnergyKwh
-    : (grossReheatKWRaw / Math.max(heatPumpCOP, 0.1)) * annualHumidificationHoursRaw
-  const annualHumifogElectricTotalEnergyKwhResolved = usesBinAnnualTotals
-    ? binAnnualHumifogElectricTotalEnergyKwh
-    : (adiabaticHumidificationKWRaw + grossReheatKWRaw) * annualHumidificationHoursRaw
-  const annualHumifogHeatPumpTotalEnergyKwhResolved = usesBinAnnualTotals
-    ? binAnnualHumifogHeatPumpTotalEnergyKwh
-    : (adiabaticHumidificationKWRaw + grossReheatKWRaw / Math.max(heatPumpCOP, 0.1)) * annualHumidificationHoursRaw
+    : (grossReheatKWRaw / selectedHeatPumpCOPForAnnual) * annualHumidificationHoursRaw
   const annualCommonHvacHeatingKwhResolved = usesBinAnnualTotals
     ? binAnnualCommonHvacHeatingKwh
     : commonHvacHeatingThermalKWRaw * annualHumidificationHoursRaw
+  const annualHumifogElectricTotalEnergyKwhResolved = usesBinAnnualTotals
+    ? annualCommonHvacHeatingKwhResolved + binAnnualHumifogElectricTotalEnergyKwh
+    : usesHourlyAnnualTotals
+      ? annualCommonHvacHeatingKwhResolved + hourlyAnnualHumifogEnergyKwh
+      : annualCommonHvacHeatingKwhResolved + (adiabaticHumidificationKWRaw + grossReheatKWRaw) * annualHumidificationHoursRaw
+  const annualHumifogHeatPumpTotalEnergyKwhResolved = usesBinAnnualTotals
+    ? annualCommonHvacHeatingKwhResolved + binAnnualHumifogHeatPumpTotalEnergyKwh
+    : usesHourlyAnnualTotals
+      ? annualCommonHvacHeatingKwhResolved + hourlyAnnualHumifogPumpEnergyKwh + (grossReheatKWRaw / selectedHeatPumpCOPForAnnual) * annualHumidificationHoursRaw
+      : annualCommonHvacHeatingKwhResolved + (adiabaticHumidificationKWRaw + grossReheatKWRaw / selectedHeatPumpCOPForAnnual) * annualHumidificationHoursRaw
   const annualCommonHvacHeatingCostResolved = annualCommonHvacHeatingKwhResolved * electricityRate
   const annualSteamCostResolved = usesBinAnnualTotals
     ? (annualCommonHvacHeatingKwhResolved + annualSteamEnergyKwhResolved) * electricityRate
@@ -4641,15 +4675,15 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     ? annualCommonHvacHeatingKwhResolved * electricityRate + (annualAtmosphericGasHumidifierEnergyKwhResolved / 10.35) * naturalGasRate
     : commonHvacHeatingThermalKWRaw * electricityRate * annualHumidificationHoursRaw + annualAtmosphericGasHumidifierCostRaw
   const annualHumifogElectricCostResolved = usesBinAnnualTotals
-    ? (annualCommonHvacHeatingKwhResolved + annualHumifogElectricTotalEnergyKwhResolved) * electricityRate
+    ? annualHumifogElectricTotalEnergyKwhResolved * electricityRate
     : usesHourlyAnnualTotals
-      ? Number(hourlyWeatherSummary?.annualCost || 0)
-      : (commonHvacHeatingThermalKWRaw + adiabaticHumidificationKWRaw + grossReheatKWRaw) * annualHumidificationHoursRaw * electricityRate
+      ? annualHumifogElectricTotalEnergyKwhResolved * electricityRate
+      : annualHumifogElectricTotalEnergyKwhResolved * electricityRate
   const annualHumifogHeatPumpCostResolved = usesBinAnnualTotals
-    ? (annualCommonHvacHeatingKwhResolved + annualHumifogHeatPumpTotalEnergyKwhResolved) * electricityRate
+    ? annualHumifogHeatPumpTotalEnergyKwhResolved * electricityRate
     : usesHourlyAnnualTotals
-      ? Number(hourlyWeatherSummary?.annualCost || 0) + annualCommonHvacHeatingCostResolved
-      : (commonHvacHeatingThermalKWRaw + adiabaticHumidificationKWRaw + grossReheatKWRaw / Math.max(heatPumpCOP, 0.1)) * annualHumidificationHoursRaw * electricityRate
+      ? annualCommonHvacHeatingCostResolved + Number(hourlyWeatherSummary?.annualCost || 0)
+      : annualHumifogHeatPumpTotalEnergyKwhResolved * electricityRate
   const annualSavingsPercentResolved = annualSteamEnergyKwhResolved > 0
     ? Math.round((1 - annualAdiabaticEnergyKwhResolved / annualSteamEnergyKwhResolved) * 100)
     : 0
@@ -5487,7 +5521,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       hoursBasis: annualHoursBasis,
     },
     humifogHeatPump: {
-      annualEnergyKWh: annualCommonHvacHeatingKwhResolved + annualHumifogHeatPumpTotalEnergyKwhResolved,
+      annualEnergyKWh: annualHumifogHeatPumpTotalEnergyKwhResolved,
       annualOperatingCost: annualHumifogHeatPumpCostResolved,
       heatingKWh: annualCommonHvacHeatingKwhResolved,
       humidificationKWh: null,
@@ -6628,13 +6662,25 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                       />
                       <div className="font-bold text-slate-800 text-lg">{item.nom}</div>
                       <div className="text-slate-500 text-sm mt-2">{item.type}</div>
-                      <div className="mt-5 flex justify-between items-center">
-                        <div className="text-sm text-slate-500">{t.designRecoveryEfficiency}</div>
-                        <div className="text-3xl font-bold text-cyan-700">
-                          {activeSelectedRecoveries.some(r => r.nom === item.nom)
-                            ? `${Math.round(effectiveSensibleRecoveryEfficiency)}%`
-                            : `${Math.round(defaultSensibleRecoveryEfficiency(item))}%`}
+                      <div className="mt-5 space-y-2">
+                        <div className="flex justify-between items-center gap-3">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t.sensibleEfficiency}</div>
+                          <div className="text-lg font-bold text-cyan-700">
+                            {activeSelectedRecoveries.some(r => r.nom === item.nom)
+                              ? `${Math.round(effectiveSensibleRecoveryEfficiency)}%`
+                              : `${Math.round(defaultSensibleRecoveryEfficiency(item))}%`}
+                          </div>
                         </div>
+                        {(supportsLatentRecovery(item) || (activeSelectedRecoveries.some(r => r.nom === item.nom) && selectedRecoverySupportsLatent)) && (
+                          <div className="flex justify-between items-center gap-3">
+                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t.latentEfficiency}</div>
+                            <div className="text-lg font-bold text-cyan-700">
+                              {activeSelectedRecoveries.some(r => r.nom === item.nom)
+                                ? `${Math.round(effectiveLatentRecoveryEfficiency)}%`
+                                : `${Math.round(defaultLatentRecoveryEfficiency(item))}%`}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
