@@ -3341,6 +3341,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const initialCity = climateCities.find((city) => city.nom === initialProjectSettings.selectedCityName) || climateCities[0]
   const [selectedCity, setSelectedCity] = useState(initialCity)
   const [electricityRate, setElectricityRate] = useState(() => finiteSetting(initialProjectSettings, 'electricityRate', 0.12))
+  const [electricHumidifierEfficiency, setElectricHumidifierEfficiency] = useState(() => finiteSetting(initialProjectSettings, 'electricHumidifierEfficiency', 100))
   const [naturalGasRate, setNaturalGasRate] = useState(() => finiteSetting(initialProjectSettings, 'naturalGasRate', 0.45))
   const [steamBoilerEfficiency, setSteamBoilerEfficiency] = useState(() => finiteSetting(initialProjectSettings, 'steamBoilerEfficiency', 82))
   const [atmosphericGasHumidifierEfficiency, setAtmosphericGasHumidifierEfficiency] = useState(() => finiteSetting(initialProjectSettings, 'atmosphericGasHumidifierEfficiency', 82))
@@ -3490,6 +3491,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     recoveryLatentEfficiency: latentRecoveryEfficiency,
     selectedCityName: selectedCity.nom,
     electricityRate,
+    electricHumidifierEfficiency,
     naturalGasRate,
     steamBoilerEfficiency,
     atmosphericGasHumidifierEfficiency,
@@ -3550,6 +3552,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     latentRecoveryEfficiency,
     selectedCity,
     electricityRate,
+    electricHumidifierEfficiency,
     naturalGasRate,
     steamBoilerEfficiency,
     atmosphericGasHumidifierEfficiency,
@@ -4635,6 +4638,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const annualCommonHvacHeatingKwhResolved = usesBinAnnualTotals
     ? binAnnualCommonHvacHeatingKwh
     : commonHvacHeatingThermalKWRaw * annualHumidificationHoursRaw
+  const electricHumidifierEfficiencyFactor = Math.max(Number(electricHumidifierEfficiency) / 100, 0.01)
+  const annualElectricSteamHumidificationInputKwhResolved = annualSteamEnergyKwhResolved / electricHumidifierEfficiencyFactor
   const annualHumifogElectricTotalEnergyKwhResolved = usesBinAnnualTotals
     ? annualCommonHvacHeatingKwhResolved + binAnnualHumifogElectricTotalEnergyKwh
     : usesHourlyAnnualTotals
@@ -4647,10 +4652,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       : annualCommonHvacHeatingKwhResolved + (adiabaticHumidificationKWRaw + grossReheatKWRaw / selectedHeatPumpCOPForAnnual) * annualHumidificationHoursRaw
   const annualCommonHvacHeatingCostResolved = annualCommonHvacHeatingKwhResolved * electricityRate
   const annualSteamCostResolved = usesBinAnnualTotals
-    ? (annualCommonHvacHeatingKwhResolved + annualSteamEnergyKwhResolved) * electricityRate
+    ? (annualCommonHvacHeatingKwhResolved + annualElectricSteamHumidificationInputKwhResolved) * electricityRate
     : usesHourlyAnnualTotals
-      ? annualSteamEnergyKwhResolved * electricityRate
-      : (commonHvacHeatingThermalKWRaw + steamEnergyKWRaw) * electricityRate * annualHumidificationHoursRaw
+      ? (annualCommonHvacHeatingKwhResolved + annualElectricSteamHumidificationInputKwhResolved) * electricityRate
+      : (annualCommonHvacHeatingKwhResolved + annualElectricSteamHumidificationInputKwhResolved) * electricityRate
   const annualHumifogPumpCostResolved = usesBinAnnualTotals
     ? annualHumifogPumpEnergyKwhResolved * electricityRate
     : usesHourlyAnnualTotals
@@ -5463,7 +5468,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     electricSteam: {
       annualEnergyKWh: isFreeCoolingMode
         ? freeCoolingSteamAnnual.totalEnergyKwh || 0
-        : annualCommonHvacHeatingKwhResolved + (energySummary.steam.annualEnergyKwh || 0),
+        : annualCommonHvacHeatingKwhResolved + annualElectricSteamHumidificationInputKwhResolved,
       annualOperatingCost: isFreeCoolingMode ? freeCoolingSteamAnnual.annualCost || 0 : annualSteamCostResolved,
       heatingKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.heatingEnergyKwh || 0 : annualCommonHvacHeatingKwhResolved,
       humidificationKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.humidificationEnergyKwh || 0 : energySummary.steam.annualEnergyKwh || 0,
@@ -7127,6 +7132,25 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                   </td>
                   <td className="p-4 text-center text-slate-700">
                     {language === 'fr' ? 'Vapeur électrique, Humifog et thermopompe' : 'Electric steam, Humifog and heat pump'}
+                  </td>
+                </tr>
+
+                <tr className="border-b border-slate-200 bg-slate-50">
+                  <td className="p-4 font-semibold text-slate-800">{language === 'fr' ? 'Rendement humidificateur électrique' : 'Electric humidifier efficiency'}</td>
+                  <td className="p-4 text-center font-bold text-slate-800">{electricHumidifierEfficiency}%</td>
+                  <td className="p-4">
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      step="1"
+                      value={electricHumidifierEfficiency}
+                      onChange={(e) => setElectricHumidifierEfficiency(clampValue(Number(e.target.value), 1, 100))}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2 text-right font-semibold text-slate-800"
+                    />
+                  </td>
+                  <td className="p-4 text-center text-red-700 font-semibold">
+                    {formatAnnualEnergy(annualCommonHvacHeatingKwhResolved + annualElectricSteamHumidificationInputKwhResolved)} / {annualSteamCostDisplay.toLocaleString()} $/an
                   </td>
                 </tr>
 
