@@ -5486,6 +5486,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         ? freeCoolingSteamAnnual.totalEnergyKwh || 0
         : annualCommonHvacHeatingKwhResolved + annualElectricSteamHumidificationInputKwhResolved,
       annualOperatingCost: isFreeCoolingMode ? freeCoolingSteamAnnual.annualCost || 0 : annualSteamCostResolved,
+      heatingOnlyCost: isFreeCoolingMode ? null : annualCommonHvacHeatingCostResolved,
       humidificationOnlyCost: isFreeCoolingMode ? null : annualElectricHumidificationOnlyCost,
       reheatCost: 0,
       heatingKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.heatingEnergyKwh || 0 : annualCommonHvacHeatingKwhResolved,
@@ -5498,6 +5499,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     naturalGasSteam: {
       annualEnergyKWh: isFreeCoolingMode ? freeCoolingCommonElectricKwh + freeCoolingNaturalGasHumidificationKwh : annualCommonHvacHeatingKwhResolved + (energySummary.naturalGasSteam.annualEnergyKwh || 0),
       annualOperatingCost: isFreeCoolingMode ? freeCoolingNaturalGasAnnualCost : annualNaturalGasCostResolved,
+      heatingOnlyCost: isFreeCoolingMode ? null : annualCommonHvacHeatingCostResolved,
       humidificationOnlyCost: isFreeCoolingMode ? null : (annualNaturalGasSteamEnergyKwhResolved / 10.35) * naturalGasRate,
       reheatCost: 0,
       heatingKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.heatingEnergyKwh || 0 : annualCommonHvacHeatingKwhResolved,
@@ -5510,6 +5512,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     atmosphericGas: {
       annualEnergyKWh: isFreeCoolingMode ? freeCoolingCommonElectricKwh + freeCoolingAtmosphericGasHumidificationKwh : annualCommonHvacHeatingKwhResolved + (energySummary.atmosphericGasHumidifier.annualEnergyKwh || 0),
       annualOperatingCost: isFreeCoolingMode ? freeCoolingAtmosphericGasAnnualCost : annualAtmosphericGasHumidifierCostResolved,
+      heatingOnlyCost: isFreeCoolingMode ? null : annualCommonHvacHeatingCostResolved,
       humidificationOnlyCost: isFreeCoolingMode ? null : (annualAtmosphericGasHumidifierEnergyKwhResolved / 10.35) * naturalGasRate,
       reheatCost: 0,
       heatingKWh: isFreeCoolingMode ? freeCoolingSteamAnnual.heatingEnergyKwh || 0 : annualCommonHvacHeatingKwhResolved,
@@ -5526,6 +5529,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       annualOperatingCost: isFreeCoolingMode
         ? freeCoolingHumifogAnnual.annualCost || 0
         : annualHumifogElectricCostResolved,
+      heatingOnlyCost: isFreeCoolingMode ? null : annualCommonHvacHeatingCostResolved,
       humidificationOnlyCost: isFreeCoolingMode ? null : annualHumifogPumpCostResolved,
       reheatCost: isFreeCoolingMode ? null : annualHumifogSelectedPreheatCostResolved,
       heatingKWh: isFreeCoolingMode ? freeCoolingHumifogAnnual.heatingEnergyKwh || 0 : annualCommonHvacHeatingKwhResolved,
@@ -5550,6 +5554,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     humifogHeatPump: {
       annualEnergyKWh: annualHumifogHeatPumpTotalEnergyKwhResolved,
       annualOperatingCost: annualHumifogHeatPumpCostResolved,
+      heatingOnlyCost: annualCommonHvacHeatingCostResolved,
       humidificationOnlyCost: annualHumifogPumpCostResolved,
       reheatCost: annualHumifogSelectedPreheatCostResolved,
       heatingKWh: annualCommonHvacHeatingKwhResolved,
@@ -5782,6 +5787,12 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       format: formatAnnualCostIfComplete,
     },
     {
+      key: 'heatingOnlyCost',
+      label: language === 'fr' ? 'Coût chauffage commun seul' : 'Common heating-only cost',
+      value: (option) => option.heatingOnlyCost,
+      format: (value) => value === null ? (language === 'fr' ? 'Non applicable' : 'Not applicable') : formatAnnualCostIfComplete(value),
+    },
+    {
       key: 'humidificationOnlyCost',
       label: language === 'fr' ? 'Coût humidification seule' : 'Humidification-only cost',
       value: (option) => option.humidificationOnlyCost,
@@ -5844,7 +5855,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     if (value === undefined || value === null || !Number.isFinite(Number(value))) {
       return language === 'fr' ? 'Non disponible' : 'Not available'
     }
-    return row.key === 'cost' ? formatAnnualCost(value) : formatAnnualEnergy(value)
+    return ['cost', 'humidificationOnlyCost', 'reheatCost', 'heatingOnlyCost'].includes(row.key)
+      ? formatAnnualCost(value)
+      : formatAnnualEnergy(value)
   }
   const formatOaReductionText = (steamOa, humifogOa) => {
     const difference = Number(steamOa || 0) - Number(humifogOa || 0)
