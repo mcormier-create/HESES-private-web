@@ -4582,7 +4582,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const usesHourlyAnnualTotals = isHourlySimulationActive && !isFreeCoolingMode
   const hourlyAnnualSteamEnergyKwh = Number(hourlyWeatherSummary?.annualSteamKwh || 0)
   const hourlyAnnualCommonHvacHeatingKwh = Number(hourlyWeatherSummary?.annualCommonHvacHeatingKwh || 0)
-  const hourlyAnnualGasEnergyKwh = Number(hourlyWeatherSummary?.annualGasKwh || 0)
+  const hourlyAnnualNaturalGasSteamEnergyKwh = Number(hourlyWeatherSummary?.annualNaturalGasSteamKwh || 0)
+  const hourlyAnnualAtmosphericGasEnergyKwh = Number(hourlyWeatherSummary?.annualAtmosphericGasKwh || 0)
   const hourlyAnnualHumifogPumpEnergyKwh = Number(hourlyWeatherSummary?.annualHumifogPumpKwh || 0)
   const hourlyAnnualHumifogReheatEnergyKwh = Number(hourlyWeatherSummary?.annualHumifogReheatKwh || 0)
   const hourlyAnnualHumifogEnergyKwh = hourlyAnnualHumifogPumpEnergyKwh + hourlyAnnualHumifogReheatEnergyKwh
@@ -4616,12 +4617,12 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       ? binAnnualAdiabaticEquipmentKwh
       : adiabaticEnergyKWRaw * annualHumidificationHoursRaw
   const annualNaturalGasSteamEnergyKwhResolved = usesHourlyAnnualTotals
-    ? hourlyAnnualGasEnergyKwh
+    ? hourlyAnnualNaturalGasSteamEnergyKwh
     : usesBinAnnualTotals
       ? binAnnualNaturalGasSteamEnergyKwh
       : naturalGasSteamInputKWRaw * annualHumidificationHoursRaw
   const annualAtmosphericGasHumidifierEnergyKwhResolved = usesHourlyAnnualTotals
-    ? hourlyAnnualGasEnergyKwh
+    ? hourlyAnnualAtmosphericGasEnergyKwh
     : usesBinAnnualTotals
       ? binAnnualAtmosphericGasEnergyKwh
       : atmosphericGasHumidifierInputKWRaw * annualHumidificationHoursRaw
@@ -4650,16 +4651,26 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const electricHumidifierEfficiencyFactor = Math.max(Number(electricHumidifierEfficiency) / 100, 0.01)
   const annualElectricSteamHumidificationInputKwhResolved = annualSteamEnergyKwhResolved / electricHumidifierEfficiencyFactor
   const annualHumifogElectricTotalEnergyKwhResolved = usesBinAnnualTotals
-    ? annualCommonHvacHeatingKwhResolved + binAnnualHumifogElectricTotalEnergyKwh
+    ? binAnnualHumifogElectricTotalEnergyKwh
     : usesHourlyAnnualTotals
-      ? annualCommonHvacHeatingKwhResolved + hourlyAnnualHumifogEnergyKwh
-      : annualCommonHvacHeatingKwhResolved + (adiabaticHumidificationKWRaw + grossReheatKWRaw) * annualHumidificationHoursRaw
+      ? hourlyAnnualHumifogEnergyKwh
+      : (adiabaticHumidificationKWRaw + grossReheatKWRaw) * annualHumidificationHoursRaw
   const annualHumifogHeatPumpTotalEnergyKwhResolved = usesBinAnnualTotals
-    ? annualCommonHvacHeatingKwhResolved + binAnnualHumifogHeatPumpTotalEnergyKwh
+    ? binAnnualHumifogHeatPumpTotalEnergyKwh
     : usesHourlyAnnualTotals
-      ? annualCommonHvacHeatingKwhResolved + hourlyAnnualHumifogPumpEnergyKwh + (grossReheatKWRaw / selectedHeatPumpCOPForAnnual) * annualHumidificationHoursRaw
-      : annualCommonHvacHeatingKwhResolved + (adiabaticHumidificationKWRaw + grossReheatKWRaw / selectedHeatPumpCOPForAnnual) * annualHumidificationHoursRaw
+      ? hourlyAnnualHumifogPumpEnergyKwh + (grossReheatKWRaw / selectedHeatPumpCOPForAnnual) * annualHumidificationHoursRaw
+      : (adiabaticHumidificationKWRaw + grossReheatKWRaw / selectedHeatPumpCOPForAnnual) * annualHumidificationHoursRaw
   const annualCommonHvacHeatingCostResolved = annualCommonHvacHeatingKwhResolved * electricityRate
+  const annualNaturalGasHumidificationCostResolved = usesBinAnnualTotals
+    ? (annualNaturalGasSteamEnergyKwhResolved / 10.35) * naturalGasRate
+    : usesHourlyAnnualTotals
+      ? (annualNaturalGasSteamEnergyKwhResolved / 10.35) * naturalGasRate
+      : annualNaturalGasCostRaw
+  const annualAtmosphericGasHumidificationCostResolved = usesBinAnnualTotals
+    ? (annualAtmosphericGasHumidifierEnergyKwhResolved / 10.35) * naturalGasRate
+    : usesHourlyAnnualTotals
+      ? (annualAtmosphericGasHumidifierEnergyKwhResolved / 10.35) * naturalGasRate
+      : annualAtmosphericGasHumidifierCostRaw
   const annualSteamCostResolved = usesBinAnnualTotals
     ? (annualCommonHvacHeatingKwhResolved + annualElectricSteamHumidificationInputKwhResolved) * electricityRate
     : usesHourlyAnnualTotals
@@ -4683,10 +4694,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       ? Number(hourlyWeatherSummary?.annualCost || 0)
       : annualAdiabaticCostRaw
   const annualNaturalGasCostResolved = usesBinAnnualTotals
-    ? annualCommonHvacHeatingKwhResolved * electricityRate + (annualNaturalGasSteamEnergyKwhResolved / 10.35) * naturalGasRate
+    ? annualCommonHvacHeatingCostResolved + annualNaturalGasHumidificationCostResolved
     : commonHvacHeatingThermalKWRaw * electricityRate * annualHumidificationHoursRaw + annualNaturalGasCostRaw
   const annualAtmosphericGasHumidifierCostResolved = usesBinAnnualTotals
-    ? annualCommonHvacHeatingKwhResolved * electricityRate + (annualAtmosphericGasHumidifierEnergyKwhResolved / 10.35) * naturalGasRate
+    ? annualCommonHvacHeatingCostResolved + annualAtmosphericGasHumidificationCostResolved
     : commonHvacHeatingThermalKWRaw * electricityRate * annualHumidificationHoursRaw + annualAtmosphericGasHumidifierCostRaw
   const annualHumifogElectricCostResolved = usesBinAnnualTotals
     ? annualHumifogElectricTotalEnergyKwhResolved * electricityRate
@@ -5484,8 +5495,12 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     electricSteam: {
       annualEnergyKWh: isFreeCoolingMode
         ? freeCoolingSteamAnnual.totalEnergyKwh || 0
-        : annualCommonHvacHeatingKwhResolved + annualElectricSteamHumidificationInputKwhResolved,
-      annualOperatingCost: isFreeCoolingMode ? freeCoolingSteamAnnual.annualCost || 0 : annualSteamCostResolved,
+        : annualElectricSteamHumidificationInputKwhResolved,
+      annualOperatingCost: isFreeCoolingMode ? freeCoolingSteamAnnual.annualCost || 0 : annualElectricHumidificationOnlyCost,
+      commonHeatingKWh: isFreeCoolingMode ? null : annualCommonHvacHeatingKwhResolved,
+      commonHeatingCost: isFreeCoolingMode ? null : annualCommonHvacHeatingCostResolved,
+      totalHVACEnergyKWh: isFreeCoolingMode ? null : annualCommonHvacHeatingKwhResolved + annualElectricSteamHumidificationInputKwhResolved,
+      totalHVACCost: isFreeCoolingMode ? null : annualSteamCostResolved,
       heatingOnlyCost: isFreeCoolingMode ? null : annualCommonHvacHeatingCostResolved,
       humidificationOnlyCost: isFreeCoolingMode ? null : annualElectricHumidificationOnlyCost,
       reheatCost: 0,
@@ -5497,8 +5512,12 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       hoursBasis: annualHoursBasis,
     },
     naturalGasSteam: {
-      annualEnergyKWh: isFreeCoolingMode ? freeCoolingCommonElectricKwh + freeCoolingNaturalGasHumidificationKwh : annualCommonHvacHeatingKwhResolved + (energySummary.naturalGasSteam.annualEnergyKwh || 0),
-      annualOperatingCost: isFreeCoolingMode ? freeCoolingNaturalGasAnnualCost : annualNaturalGasCostResolved,
+      annualEnergyKWh: isFreeCoolingMode ? freeCoolingCommonElectricKwh + freeCoolingNaturalGasHumidificationKwh : annualNaturalGasSteamEnergyKwhResolved,
+      annualOperatingCost: isFreeCoolingMode ? freeCoolingNaturalGasAnnualCost : annualNaturalGasHumidificationCostResolved,
+      commonHeatingKWh: isFreeCoolingMode ? null : annualCommonHvacHeatingKwhResolved,
+      commonHeatingCost: isFreeCoolingMode ? null : annualCommonHvacHeatingCostResolved,
+      totalHVACEnergyKWh: isFreeCoolingMode ? null : annualCommonHvacHeatingKwhResolved + annualNaturalGasSteamEnergyKwhResolved,
+      totalHVACCost: isFreeCoolingMode ? null : annualNaturalGasCostResolved,
       heatingOnlyCost: isFreeCoolingMode ? null : annualCommonHvacHeatingCostResolved,
       humidificationOnlyCost: isFreeCoolingMode ? null : (annualNaturalGasSteamEnergyKwhResolved / 10.35) * naturalGasRate,
       reheatCost: 0,
@@ -5510,8 +5529,12 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       hoursBasis: annualHoursBasis,
     },
     atmosphericGas: {
-      annualEnergyKWh: isFreeCoolingMode ? freeCoolingCommonElectricKwh + freeCoolingAtmosphericGasHumidificationKwh : annualCommonHvacHeatingKwhResolved + (energySummary.atmosphericGasHumidifier.annualEnergyKwh || 0),
-      annualOperatingCost: isFreeCoolingMode ? freeCoolingAtmosphericGasAnnualCost : annualAtmosphericGasHumidifierCostResolved,
+      annualEnergyKWh: isFreeCoolingMode ? freeCoolingCommonElectricKwh + freeCoolingAtmosphericGasHumidificationKwh : annualAtmosphericGasHumidifierEnergyKwhResolved,
+      annualOperatingCost: isFreeCoolingMode ? freeCoolingAtmosphericGasAnnualCost : annualAtmosphericGasHumidificationCostResolved,
+      commonHeatingKWh: isFreeCoolingMode ? null : annualCommonHvacHeatingKwhResolved,
+      commonHeatingCost: isFreeCoolingMode ? null : annualCommonHvacHeatingCostResolved,
+      totalHVACEnergyKWh: isFreeCoolingMode ? null : annualCommonHvacHeatingKwhResolved + annualAtmosphericGasHumidifierEnergyKwhResolved,
+      totalHVACCost: isFreeCoolingMode ? null : annualAtmosphericGasHumidifierCostResolved,
       heatingOnlyCost: isFreeCoolingMode ? null : annualCommonHvacHeatingCostResolved,
       humidificationOnlyCost: isFreeCoolingMode ? null : (annualAtmosphericGasHumidifierEnergyKwhResolved / 10.35) * naturalGasRate,
       reheatCost: 0,
@@ -5525,14 +5548,18 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     humifogElectric: {
       annualEnergyKWh: isFreeCoolingMode
         ? freeCoolingHumifogAnnual.totalEnergyKwh || 0
-        : annualCommonHvacHeatingKwhResolved + (energySummary.humifog.annualEnergyKwh || 0),
+        : annualHumifogElectricTotalEnergyKwhResolved,
       annualOperatingCost: isFreeCoolingMode
         ? freeCoolingHumifogAnnual.annualCost || 0
         : annualHumifogElectricCostResolved,
-      heatingOnlyCost: isFreeCoolingMode ? null : annualCommonHvacHeatingCostResolved,
+      commonHeatingKWh: isFreeCoolingMode ? null : annualCommonHvacHeatingKwhResolved,
+      commonHeatingCost: isFreeCoolingMode ? null : annualCommonHvacHeatingCostResolved,
+      totalHVACEnergyKWh: isFreeCoolingMode ? null : annualCommonHvacHeatingKwhResolved + annualHumifogElectricTotalEnergyKwhResolved,
+      totalHVACCost: isFreeCoolingMode ? null : annualCommonHvacHeatingCostResolved + annualHumifogElectricCostResolved,
+      heatingOnlyCost: isFreeCoolingMode ? null : 0,
       humidificationOnlyCost: isFreeCoolingMode ? null : annualHumifogPumpCostResolved,
       reheatCost: isFreeCoolingMode ? null : annualHumifogSelectedPreheatCostResolved,
-      heatingKWh: isFreeCoolingMode ? freeCoolingHumifogAnnual.heatingEnergyKwh || 0 : annualCommonHvacHeatingKwhResolved,
+      heatingKWh: isFreeCoolingMode ? freeCoolingHumifogAnnual.heatingEnergyKwh || 0 : 0,
       humidificationKWh: isFreeCoolingMode
         ? freeCoolingHumifogAnnual.humidificationEnergyKwh || 0
         : null,
@@ -5554,10 +5581,14 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     humifogHeatPump: {
       annualEnergyKWh: annualHumifogHeatPumpTotalEnergyKwhResolved,
       annualOperatingCost: annualHumifogHeatPumpCostResolved,
-      heatingOnlyCost: annualCommonHvacHeatingCostResolved,
+      commonHeatingKWh: annualCommonHvacHeatingKwhResolved,
+      commonHeatingCost: annualCommonHvacHeatingCostResolved,
+      totalHVACEnergyKWh: annualCommonHvacHeatingKwhResolved + annualHumifogHeatPumpTotalEnergyKwhResolved,
+      totalHVACCost: annualCommonHvacHeatingCostResolved + annualHumifogHeatPumpCostResolved,
+      heatingOnlyCost: 0,
       humidificationOnlyCost: annualHumifogPumpCostResolved,
       reheatCost: annualHumifogSelectedPreheatCostResolved,
-      heatingKWh: annualCommonHvacHeatingKwhResolved,
+      heatingKWh: 0,
       humidificationKWh: null,
       reheatKWh: annualHumifogHeatPumpPreheatEnergyKwhResolved,
       pumpKWh: annualHumifogPumpEnergyKwhResolved,
@@ -5579,6 +5610,32 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       hoursBasis: annualHoursBasis,
     },
   }
+  const annualTechnologyCostAudit = Object.fromEntries(Object.entries(annualTechnologyResults).map(([key, result]) => {
+    const commonHeatingEnergy = Number(result.commonHeatingKWh || 0)
+    const commonHeatingCost = Number(result.commonHeatingCost || 0)
+    const technologyEnergy = Number(result.annualEnergyKWh || 0)
+    const technologyCost = Number(result.annualOperatingCost || 0)
+    const incrementalReheatEnergy = Number(result.reheatKWh || 0)
+    const incrementalReheatCost = Number(result.reheatCost || 0)
+    const pumpEnergy = Number(result.pumpKWh || 0)
+    const pumpCost = key.startsWith('humifog') ? Number(result.humidificationOnlyCost || 0) : 0
+    return [key, {
+      commonHeatingEnergy,
+      commonHeatingCost,
+      technologyHumidificationEnergy: technologyEnergy,
+      technologyHumidificationCost: technologyCost,
+      incrementalReheatEnergy,
+      incrementalReheatCost,
+      pumpEnergy,
+      pumpCost,
+      calculatedTotalEnergy: commonHeatingEnergy + technologyEnergy,
+      calculatedTotalCost: commonHeatingCost + technologyCost,
+    }]
+  }))
+  const annualTechnologyCostAuditSerialized = JSON.stringify(annualTechnologyCostAudit)
+  useEffect(() => {
+    console.table(annualTechnologyCostAudit)
+  }, [annualTechnologyCostAuditSerialized])
   Object.values(annualTechnologyResults).forEach((result) => {
     result.humidificationLoadLbHr = Number(metrics.correctedHumidificationLoadRaw ?? correctedHumidificationLoad ?? 0)
   })
@@ -5752,13 +5809,13 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const freeCoolingAnnualTechnologyRows = [
     {
       key: 'heating',
-      label: language === 'fr' ? 'Energie annuelle chauffage' : 'Annual heating energy',
-      value: (option) => option.heatingKWh,
+      label: language === 'fr' ? 'Énergie chauffage commun de l’UTA' : 'Common AHU heating energy',
+      value: (option) => option.commonHeatingKWh,
       format: formatAnnualEnergyIfComplete,
     },
     {
       key: 'reheat',
-      label: language === 'fr' ? 'Energie annuelle rechauffage' : 'Annual reheat energy',
+      label: language === 'fr' ? 'Énergie réchauffage supplémentaire Humifog' : 'Additional Humifog reheat energy',
       value: (option) => option.reheatKWh,
       format: formatAnnualEnergyIfComplete,
     },
@@ -5800,9 +5857,53 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     },
     {
       key: 'reheatCost',
-      label: language === 'fr' ? 'Coût annuel réchauffage' : 'Annual reheat cost',
+      label: language === 'fr' ? 'Coût réchauffage supplémentaire Humifog' : 'Additional Humifog reheat cost',
       value: (option) => option.reheatCost,
       format: (value) => value === null ? (language === 'fr' ? 'Non applicable' : 'Not applicable') : formatAnnualCostIfComplete(value),
+    },
+  ]
+  const humidificationAnnualTechnologyRows = [
+    {
+      key: 'technologyEnergy',
+      label: language === 'fr' ? 'Énergie humidification / énergie spécifique' : 'Humidification / technology-specific energy',
+      value: (option) => option.key.startsWith('humifog') ? null : option.totalKwh,
+      format: (value) => value === null ? (language === 'fr' ? 'Non applicable' : 'Not applicable') : formatAnnualEnergyIfComplete(value),
+    },
+    {
+      key: 'pump',
+      label: language === 'fr' ? 'Énergie pompe Humifog' : 'Humifog pump energy',
+      value: (option) => option.key.startsWith('humifog') ? option.pumpKwh : null,
+      format: (value) => value === null ? (language === 'fr' ? 'Non applicable' : 'Not applicable') : formatAnnualEnergyIfComplete(value),
+    },
+    {
+      key: 'reheat',
+      label: language === 'fr' ? 'Énergie réchauffage additionnel Humifog' : 'Additional Humifog reheat energy',
+      value: (option) => option.key.startsWith('humifog') ? option.reheatKWh : null,
+      format: (value) => value === null ? (language === 'fr' ? 'Non applicable' : 'Not applicable') : formatAnnualEnergyIfComplete(value),
+    },
+    {
+      key: 'total',
+      label: language === 'fr' ? 'Énergie totale technologie' : 'Total technology energy',
+      value: (option) => option.totalKwh,
+      format: formatAnnualEnergyIfComplete,
+    },
+    {
+      key: 'humidificationCost',
+      label: language === 'fr' ? 'Coût humidification / coût spécifique' : 'Humidification / technology-specific cost',
+      value: (option) => option.humidificationOnlyCost,
+      format: (value) => value === null ? (language === 'fr' ? 'Non disponible' : 'Not available') : formatAnnualCostIfComplete(value),
+    },
+    {
+      key: 'reheatCost',
+      label: language === 'fr' ? 'Coût réchauffage additionnel Humifog' : 'Additional Humifog reheat cost',
+      value: (option) => option.key.startsWith('humifog') ? option.reheatCost : null,
+      format: (value) => value === null ? (language === 'fr' ? 'Non applicable' : 'Not applicable') : formatAnnualCostIfComplete(value),
+    },
+    {
+      key: 'cost',
+      label: language === 'fr' ? 'Coût total technologie' : 'Total technology cost',
+      value: (option) => option.annualCost,
+      format: formatAnnualCostIfComplete,
     },
   ]
   const selectedHumifogKey = selectedHumifogTechnology({ mode: reportData.mode, system: reportData.system })
@@ -8411,7 +8512,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     </tr>
                   </thead>
                   <tbody>
-                    {freeCoolingAnnualTechnologyRows.map((row) => (
+                    {humidificationAnnualTechnologyRows.map((row) => (
                       <tr key={row.label} className="border-b border-slate-100 last:border-b-0">
                         <td className="p-3 font-semibold text-slate-700">{row.label}</td>
                         {annualTechnologyOptions.map((option) => (

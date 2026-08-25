@@ -166,6 +166,7 @@ export function calculateHourlySimulation(records, options) {
   const usesNaturalGasReheat = reheatEnergySource.includes('gaz') || reheatEnergySource.includes('natural gas')
   const usesPassiveRecoveryReheat = reheatEnergySource.includes('recuperation') || reheatEnergySource.includes('recovery') || reheatEnergySource.includes('passive')
   const usesHeatPumpReheat = reheatEnergySource.includes('thermopompe') || reheatEnergySource.includes('heat pump')
+  const selectedReheatCOP = Math.max(Number(selectedReheatSystem?.cop || heatPumpCOP), 0.1)
 
   const firstRecord = records[0]
   const lastRecord = records[records.length - 1]
@@ -183,6 +184,8 @@ export function calculateHourlySimulation(records, options) {
   let maxOutdoorTemp = Number.NEGATIVE_INFINITY
 
   let totalSteamKwh = 0
+  let totalNaturalGasSteamKwh = 0
+  let totalAtmosphericGasKwh = 0
   let totalCommonHvacHeatingKwh = 0
   let totalGasKwh = 0
   let totalHumifogKwh = 0
@@ -248,7 +251,7 @@ export function calculateHourlySimulation(records, options) {
     const reheatEnergyKW = usesPassiveRecoveryReheat
       ? 0
       : usesHeatPumpReheat
-        ? Number((netReheatKW / Math.max(heatPumpCOP, 0.1)).toFixed(2))
+        ? Number((netReheatKW / selectedReheatCOP).toFixed(2))
         : usesNaturalGasReheat
           ? Number((netReheatKW / Math.max((Number(selectedReheatSystem?.rendement) || 88) / 100, 0.01)).toFixed(2))
           : Number((netReheatKW * (selectedReheatSystem?.facteur ?? 1)).toFixed(2))
@@ -277,6 +280,8 @@ export function calculateHourlySimulation(records, options) {
     if (steamEnergyKW > 0) hoursWithHumidificationRequired += 1
 
     totalSteamKwh += steamEnergyKW
+    totalNaturalGasSteamKwh += naturalGasSteamInputKW
+    totalAtmosphericGasKwh += atmosphericGasHumidifierInputKW
     totalCommonHvacHeatingKwh += commonHvacHeatingKW
     totalGasKwh += naturalGasSteamInputKW + atmosphericGasHumidifierInputKW
     totalHumifogKwh += adiabaticEnergyKW
@@ -304,6 +309,8 @@ export function calculateHourlySimulation(records, options) {
     maxOutdoorTemp: operatingCount ? maxOutdoorTemp : 0,
     averageOutdoorRh: operatingCount ? outdoorRhSum / operatingCount : 0,
     annualSteamKwh: totalSteamKwh,
+    annualNaturalGasSteamKwh: totalNaturalGasSteamKwh,
+    annualAtmosphericGasKwh: totalAtmosphericGasKwh,
     annualCommonHvacHeatingKwh: totalCommonHvacHeatingKwh,
     annualGasKwh: totalGasKwh,
     annualHumifogKwh: totalHumifogKwh,
