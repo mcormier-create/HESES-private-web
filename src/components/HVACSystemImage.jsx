@@ -215,8 +215,9 @@ export default function HVACSystemImage({
   schematicId = '',
   recoveryType = 'enthalpy',
   recoveryLabel = '',
+  reheatLabel = '',
   location = 'Montreal - Zone 6',
-  systemDescription = 'AHU - Thermal wheel - Humifog - HP coil',
+  systemDescription = 'AHU - Thermal wheel - Humifog - Electric reheat',
   isFreeCoolingMode = false,
   language = 'fr',
   outdoorAirPercent,
@@ -540,7 +541,7 @@ export default function HVACSystemImage({
 
         <OverlayLabel
           className={labelPositions.afterHeating}
-          title={text.afterHeating}
+          title={reheatLabel || text.afterHeating}
           value={data.afterHeatingTemp ?? '-'}
           sub={localizeHumidityText(data.afterHeatingRh, lang)}
           color="red"

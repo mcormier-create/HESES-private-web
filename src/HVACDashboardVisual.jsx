@@ -5373,7 +5373,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     return rounded < 0 ? `-${formatted}` : formatted
   }
   const annualSteamCostDisplay = isHourlySimulationActive && hourlyWeatherSummary
-    ? Math.round((hourlyWeatherSummary.annualSteamKwh || 0) * electricityRate)
+    ? Math.round(annualSteamCostResolved)
     : Math.round(annualSteamCostResolved)
   const annualNaturalGasCostDisplay = Math.round(annualNaturalGasCostResolved)
   const annualAtmosphericGasHumidifierCostDisplay = Math.round(annualAtmosphericGasHumidifierCostResolved)
@@ -5498,9 +5498,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         : annualCommonHvacHeatingKwhResolved + (energySummary.humifog.annualEnergyKwh || 0),
       annualOperatingCost: isFreeCoolingMode
         ? freeCoolingHumifogAnnual.annualCost || 0
-        : usesHourlyAnnualTotals
-          ? annualCommonHvacHeatingCostResolved + annualHumifogElectricCostResolved
-          : annualHumifogElectricCostResolved,
+        : annualHumifogElectricCostResolved,
       heatingKWh: isFreeCoolingMode ? freeCoolingHumifogAnnual.heatingEnergyKwh || 0 : annualCommonHvacHeatingKwhResolved,
       humidificationKWh: isFreeCoolingMode
         ? freeCoolingHumifogAnnual.humidificationEnergyKwh || 0
@@ -7043,6 +7041,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
               recoveryLabel={isFreeCoolingMode
                 ? (language === 'fr' ? 'Aucune récupération thermique' : 'No heat recovery')
                 : selectedSystemDiagramLabel}
+              reheatLabel={selectedReheatSystemDisplayName}
               location={`${selectedCity?.nom} - ${selectedCity?.zone}`}
               systemDescription={isFreeCoolingMode
                 ? (language === 'fr'
