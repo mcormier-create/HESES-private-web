@@ -240,14 +240,18 @@ export function calculateHourlySimulation(records, options) {
     const preheatBtuPerHr = Math.max(0, 4.5 * effectiveOutsideAirCFM * (indoorEnthalpy - enteringHumifogEnthalpy))
     const grossHumifogPreheatKW = Math.round(preheatBtuPerHr / 3412)
     const preheatTargetTempC = calculateAutomaticPreHumifogTemperature(indoorEnthalpy, recoveredHumidityRatio)
-    const baseHvacHeatingThermalKW = Math.round(
-      sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, preheatTargetTempC - recoveredDryBulbC))
+    const totalHumifogHeatingThermalKW = sensibleHeatingKw(
+      effectiveOutsideAirCFM,
+      Math.max(0, preheatTargetTempC - recoveredDryBulbC)
     )
-    const grossReheatKW = Math.max(0, grossHumifogPreheatKW - baseHvacHeatingThermalKW)
     const commonHvacHeatingKW = sensibleHeatingKw(
       effectiveOutsideAirCFM,
       Math.max(0, supplyAirTemperature - recoveredDryBulbC)
     )
+    const baseHvacHeatingThermalKW = Math.round(
+      sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, preheatTargetTempC - recoveredDryBulbC))
+    )
+    const grossReheatKW = Math.max(0, totalHumifogHeatingThermalKW - commonHvacHeatingKW)
     const netReheatKW = grossReheatKW
     const reheatEnergyKW = usesPassiveRecoveryReheat
       ? 0

@@ -85,12 +85,11 @@ export function calculateHvacDashboardMetrics({
   const leavingAirTemperatureRaw = afterHumifogTempRaw
   const reheatDeltaTRaw = Math.max(0, preheatTargetTempRaw - leavingAirTemperatureRaw)
   const grossHumifogPreheatKWRaw = hasActiveHumidification ? (preheatBtuPerHrRaw / 3412) : 0
-  const baseHvacHeatingThermalKWRaw = sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, preheatTargetTempRaw - afterWheelTempRaw))
+  const totalHumifogHeatingThermalKWRaw = sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, preheatTargetTempRaw - afterWheelTempRaw))
   const commonHvacHeatingThermalKWRaw = sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, finalSupplyTemperature - afterWheelTempRaw))
+  const baseHvacHeatingThermalKWRaw = totalHumifogHeatingThermalKWRaw
   const grossReheatKWRaw = hasActiveHumidification
-    ? is100OA
-      ? sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, preheatTargetTempRaw - finalSupplyTemperature))
-      : Math.max(0, grossHumifogPreheatKWRaw - baseHvacHeatingThermalKWRaw)
+    ? Math.max(0, totalHumifogHeatingThermalKWRaw - commonHvacHeatingThermalKWRaw)
     : 0
 
   const cassetteBoostFactor = isEnthalpyCassette(selectedRecovery) ? 1.18 : 1
@@ -288,6 +287,7 @@ export function calculateHvacDashboardMetrics({
     preheatBtuPerHrRaw,
     grossHumifogPreheatKWRaw,
     baseHvacHeatingThermalKWRaw,
+    totalHumifogHeatingThermalKWRaw,
     grossReheatKWRaw,
     recoveryEnergyReductionKWRaw,
     steamEnergyKWRaw,
