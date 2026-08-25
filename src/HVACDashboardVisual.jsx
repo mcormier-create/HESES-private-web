@@ -4576,10 +4576,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const usesBinAnnualTotals = calculationMethod === 'bin' && !isFreeCoolingMode
   const usesHourlyAnnualTotals = isHourlySimulationActive && !isFreeCoolingMode
   const hourlyAnnualSteamEnergyKwh = Number(hourlyWeatherSummary?.annualSteamKwh || 0)
-  const hourlyAnnualHumifogEnergyKwh = Number(hourlyWeatherSummary?.annualHumifogKwh || 0)
   const hourlyAnnualGasEnergyKwh = Number(hourlyWeatherSummary?.annualGasKwh || 0)
   const hourlyAnnualHumifogPumpEnergyKwh = Number(hourlyWeatherSummary?.annualHumifogPumpKwh || 0)
   const hourlyAnnualHumifogReheatEnergyKwh = Number(hourlyWeatherSummary?.annualHumifogReheatKwh || 0)
+  const hourlyAnnualHumifogEnergyKwh = hourlyAnnualHumifogPumpEnergyKwh + hourlyAnnualHumifogReheatEnergyKwh
   const hourlyAnnualHumifogPumpCost = Number(hourlyWeatherSummary?.annualHumifogPumpCost || 0)
   const hourlyAnnualHumifogReheatCost = Number(hourlyWeatherSummary?.annualHumifogReheatCost || 0)
   const selectedReheatEnergySourceNormalized = String(selectedReheatSystem?.energie || '')
@@ -4638,6 +4638,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const annualCommonHvacHeatingKwhResolved = usesBinAnnualTotals
     ? binAnnualCommonHvacHeatingKwh
     : commonHvacHeatingThermalKWRaw * annualHumidificationHoursRaw
+  const hourlyAnnualHumifogSystemEnergyKwh = annualCommonHvacHeatingKwhResolved + hourlyAnnualHumifogEnergyKwh
   const electricHumidifierEfficiencyFactor = Math.max(Number(electricHumidifierEfficiency) / 100, 0.01)
   const annualElectricSteamHumidificationInputKwhResolved = annualSteamEnergyKwhResolved / electricHumidifierEfficiencyFactor
   const annualHumifogElectricTotalEnergyKwhResolved = usesBinAnnualTotals
@@ -7880,7 +7881,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                               <div>{language === 'fr' ? 'Humidité relative extérieure moyenne' : 'Average outdoor RH'}: <strong>{formatNumber(hourlyWeatherSummary.averageOutdoorRh, 1)}%</strong></div>
                               <div>{language === 'fr' ? 'Énergie annuelle vapeur' : 'Annual steam kWh'}: <strong>{formatNumber(hourlyWeatherSummary.annualSteamKwh, 0)} kWh</strong></div>
                               <div>{language === 'fr' ? 'Énergie annuelle gaz' : 'Annual gas kWh'}: <strong>{formatNumber(hourlyWeatherSummary.annualGasKwh, 0)} kWh</strong></div>
-                              <div>{language === 'fr' ? 'Énergie annuelle Humifog' : 'Annual Humifog kWh'}: <strong>{formatNumber(hourlyWeatherSummary.annualHumifogKwh, 0)} kWh</strong></div>
+                              <div>{language === 'fr' ? 'Énergie annuelle Humifog (pompe + réchauffage)' : 'Annual Humifog energy (pump + reheat)'}: <strong>{formatNumber(hourlyAnnualHumifogEnergyKwh, 0)} kWh</strong></div>
+                              <div>{language === 'fr' ? 'Énergie annuelle chauffage commun' : 'Annual common heating energy'}: <strong>{formatNumber(annualCommonHvacHeatingKwhResolved, 0)} kWh</strong></div>
+                              <div>{language === 'fr' ? 'Énergie annuelle totale Humifog' : 'Total annual Humifog system energy'}: <strong>{formatNumber(hourlyAnnualHumifogSystemEnergyKwh, 0)} kWh</strong></div>
                               <div>{language === 'fr' ? 'Coût annuel' : 'Annual cost'}: <strong>{formatNumber(hourlyWeatherSummary.annualCost, 0)} $</strong></div>
                               <div>{language === 'fr' ? 'Économies annuelles' : 'Annual savings'}: <strong>{formatNumber(hourlyWeatherSummary.annualSavings, 0)} $</strong></div>
                               <div>{language === 'fr' ? 'Réduction annuelle de GES' : 'Annual GHG reduction'}: <strong>{formatNumber(hourlyWeatherSummary.annualGhgReduction, 3)} tCO2e</strong></div>
