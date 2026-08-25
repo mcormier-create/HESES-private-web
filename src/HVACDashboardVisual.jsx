@@ -5950,8 +5950,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     },
     {
       key: 'heating',
-      label: language === 'fr' ? 'Prechauffage HP' : 'HP preheat',
-      value: `${formatNumber(chartHeatingHpKw, 1)} kW`,
+      label: selectedReheatSystemDisplayName,
+      value: `${formatNumber(chartHeatingInputKw, 1)} kW`,
     },
     {
       key: 'humidification',
