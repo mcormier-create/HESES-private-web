@@ -183,6 +183,7 @@ export function calculateHourlySimulation(records, options) {
   let maxOutdoorTemp = Number.NEGATIVE_INFINITY
 
   let totalSteamKwh = 0
+  let totalCommonHvacHeatingKwh = 0
   let totalGasKwh = 0
   let totalHumifogKwh = 0
   let totalCost = 0
@@ -239,6 +240,10 @@ export function calculateHourlySimulation(records, options) {
       sensibleHeatingKw(effectiveOutsideAirCFM, Math.max(0, preheatTargetTempC - recoveredDryBulbC))
     )
     const grossReheatKW = Math.max(0, grossHumifogPreheatKW - baseHvacHeatingThermalKW)
+    const commonHvacHeatingKW = sensibleHeatingKw(
+      effectiveOutsideAirCFM,
+      Math.max(0, supplyAirTemperature - recoveredDryBulbC)
+    )
     const netReheatKW = grossReheatKW
     const reheatEnergyKW = usesPassiveRecoveryReheat
       ? 0
@@ -272,6 +277,7 @@ export function calculateHourlySimulation(records, options) {
     if (steamEnergyKW > 0) hoursWithHumidificationRequired += 1
 
     totalSteamKwh += steamEnergyKW
+    totalCommonHvacHeatingKwh += commonHvacHeatingKW
     totalGasKwh += naturalGasSteamInputKW + atmosphericGasHumidifierInputKW
     totalHumifogKwh += adiabaticEnergyKW
     totalHumifogPumpKwh += adiabaticPumpKW
@@ -298,6 +304,7 @@ export function calculateHourlySimulation(records, options) {
     maxOutdoorTemp: operatingCount ? maxOutdoorTemp : 0,
     averageOutdoorRh: operatingCount ? outdoorRhSum / operatingCount : 0,
     annualSteamKwh: totalSteamKwh,
+    annualCommonHvacHeatingKwh: totalCommonHvacHeatingKwh,
     annualGasKwh: totalGasKwh,
     annualHumifogKwh: totalHumifogKwh,
     annualCost: totalCost,
