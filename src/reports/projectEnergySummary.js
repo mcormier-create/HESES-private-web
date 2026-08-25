@@ -319,3 +319,20 @@ function number(value) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : 0
 }
+
+export function humifogReheatLabel(system = {}, language = 'fr') {
+  const source = String(system.system?.reheatEnergySource || system.reheatEnergySource || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+  if (source.includes('gaz') || source.includes('natural gas')) {
+    return language === 'fr' ? 'Humifog + réchauffage gaz naturel' : 'Humifog + Natural Gas Reheat'
+  }
+  if (source.includes('thermopompe') || source.includes('heat pump')) {
+    return language === 'fr' ? 'Humifog + thermopompe' : 'Humifog + Heat Pump'
+  }
+  if (source.includes('recuperation') || source.includes('recovery') || source.includes('passive')) {
+    return language === 'fr' ? 'Humifog + récupération passive' : 'Humifog + Passive Heat Recovery'
+  }
+  return language === 'fr' ? 'Humifog + réchauffage électrique' : 'Humifog + Electric Reheat'
+}

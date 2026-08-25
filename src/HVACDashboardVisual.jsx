@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import HVACSystemImage from './components/HVACSystemImage'
 import PsychrometricChart from './components/PsychrometricChart'
 import HvacEnergyOptimizationReport from './reports/HvacEnergyOptimizationReport'
-import { BASELINE_TECHNOLOGIES, selectedHumifogTechnology } from './reports/projectEnergySummary'
+import { BASELINE_TECHNOLOGIES, humifogReheatLabel, selectedHumifogTechnology } from './reports/projectEnergySummary'
 import { calculateFreeCoolingHumifogComparison } from './services/freeCoolingHumifogService'
 import { calculateHvacDashboardMetrics } from './services/hvacEngineeringService'
 import { epwTextToRecords as parseHourlyEpwText, calculateHourlySimulation as simulateHourlyWeather, isEpwRecordOperating } from './services/hourlyWeatherSimulation'
@@ -962,7 +962,7 @@ function BuildingSummary({ systems, onSelectSystem, language = 'fr' }) {
             <thead><tr className="border-b border-slate-200 text-left"><th className="p-3">{language === 'en' ? 'System' : 'Système'}</th><th className="p-3">{language === 'en' ? 'Selected Humifog' : 'Humifog sélectionné'}</th>{technologyKeys.map((key) => <th key={key} className="p-3 text-right">{technologyLabels[key]}</th>)}</tr></thead>
             <tbody>
               {systems.map((system) => (
-                <tr key={system.id} className="border-b border-slate-100"><td className="p-3 font-bold">{system.name}</td><td className="p-3">{humifogLabels[selectedHumifogTechnology(system.reportSnapshot || system)]}</td>{technologyKeys.map((key) => { const result = resultForTechnology(system, key); return <td key={key} className="p-3 text-right">{result ? `${Math.round(result.annualEnergyKWh).toLocaleString()} kWh` : (language === 'en' ? 'Pending' : 'En attente')}</td> })}</tr>
+                <tr key={system.id} className="border-b border-slate-100"><td className="p-3 font-bold">{system.name}</td><td className="p-3">{humifogReheatLabel(system.reportSnapshot || system, language)}</td>{technologyKeys.map((key) => { const result = resultForTechnology(system, key); return <td key={key} className="p-3 text-right">{result ? `${Math.round(result.annualEnergyKWh).toLocaleString()} kWh` : (language === 'en' ? 'Pending' : 'En attente')}</td> })}</tr>
               ))}
               <tr className="bg-slate-50 font-black"><td className="p-3">{language === 'en' ? 'TOTAL BUILDING' : 'TOTAL BÂTIMENT'}</td><td className="p-3">-</td>{technologyKeys.map((key) => <td key={key} className="p-3 text-right">{buildingTotals[key].toLocaleString()} kWh</td>)}</tr>
             </tbody>
@@ -3717,7 +3717,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       .map((item) => `${item?.nom || ''}|${item?.type || ''}|${Boolean(item?.noRecovery)}`)
       .join('||')
   ), [activeSelectedRecoveries])
-  const selectedReheatSystemSignature = `${selectedReheatSystem?.nom || ''}|${selectedReheatSystem?.energie || ''}|${selectedReheatSystem?.facteur ?? ''}`
+  const selectedReheatSystemSignature = `${selectedReheatSystem?.nom || ''}|${selectedReheatSystem?.energie || ''}|${selectedReheatSystem?.facteur ?? ''}|${selectedReheatSystem?.rendement ?? ''}|${selectedReheatSystem?.cop ?? ''}`
   const selectedReheatEnergySource = String(selectedReheatSystem?.energie || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -5791,7 +5791,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     },
     {
       key: 'humifogElectric',
-      label: language === 'fr' ? 'Humifog + réchauffage électrique' : 'Humifog + Electric Reheat',
+      label: humifogReheatLabel(reportData, language),
       color: 'sky',
       ...annualTechnologyResults.humifogElectric,
       pumpKwh: annualTechnologyResults.humifogElectric.pumpKWh,
