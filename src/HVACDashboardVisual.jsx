@@ -4585,6 +4585,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const hourlyAnnualNaturalGasSteamEnergyKwh = Number(hourlyWeatherSummary?.annualNaturalGasSteamKwh || 0)
   const hourlyAnnualAtmosphericGasEnergyKwh = Number(hourlyWeatherSummary?.annualAtmosphericGasKwh || 0)
   const hourlyAnnualHumifogPumpEnergyKwh = Number(hourlyWeatherSummary?.annualHumifogPumpKwh || 0)
+  const hourlyAnnualHumifogReheatEnergyKwh = Number(hourlyWeatherSummary?.annualHumifogReheatKwh || 0)
   const hourlyAnnualHumifogEnergyKwh = hourlyAnnualHumifogPumpEnergyKwh + hourlyAnnualHumifogReheatEnergyKwh
   const hourlyAnnualHumifogPumpCost = Number(hourlyWeatherSummary?.annualHumifogPumpCost || 0)
   const hourlyAnnualHumifogReheatCost = Number(hourlyWeatherSummary?.annualHumifogReheatCost || 0)
