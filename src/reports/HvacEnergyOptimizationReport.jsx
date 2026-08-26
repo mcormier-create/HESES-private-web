@@ -906,6 +906,13 @@ export default function HvacEnergyOptimizationReport({ data }) {
     : (energySummary.humifog?.annualEnergyKwh || 0)
   const noRecoveryAnnualEnergy = selectedAnnualEnergy + recoveredAnnualEnergy
   const roiRows = economics.roiRows || []
+  const roiReferenceRow = roiRows.find((row) => row.reference) || null
+  const roiSelectedSolution = economics.selectedRoi || null
+  const roiInstalledCostBreakdown = economics.installedCostBreakdown?.humifog || null
+  const roiAnnualRoiPercent = Number.isFinite(roiSelectedSolution?.incrementalCost) && roiSelectedSolution.incrementalCost > 0
+    && Number.isFinite(roiSelectedSolution?.annualSavings) && roiSelectedSolution.annualSavings > 0
+    ? (roiSelectedSolution.annualSavings / roiSelectedSolution.incrementalCost) * 100
+    : null
   const tenYearSavings = Number.isFinite(economics.tenYearSavings)
     ? economics.tenYearSavings
     : (annual.annualSavings || 0) * 10
@@ -2338,6 +2345,47 @@ export default function HvacEnergyOptimizationReport({ data }) {
                 ))}
               </tbody>
             </table>
+          </>
+        )}
+        {roiSelectedSolution && (
+          <>
+            <h3>{tr('Méthode de calcul du retour sur investissement', 'How the Return on Investment Is Calculated')}</h3>
+            <KeyValueTable rows={[
+              [tr('Technologie de référence sélectionnée', 'Selected reference technology'), roiReferenceRow?.label || '-'],
+              [tr('Coût installé de la référence', 'Reference installed cost'), formatMoney(roiReferenceRow?.installedCost)],
+              [tr('Coût installé de la solution analysée', 'Analyzed solution installed cost'), formatMoney(roiInstalledCostBreakdown?.base)],
+              [tr('Ajustements/options CAPEX applicables', 'Applicable CAPEX adjustments/options'), [
+                roiInstalledCostBreakdown?.heatRecoveryAdder > 0 ? `${tr('Récupération', 'Heat recovery')}: ${formatMoney(roiInstalledCostBreakdown.heatRecoveryAdder)}` : '',
+                roiInstalledCostBreakdown?.freeCoolingControlsAdder > 0 ? `${tr('Volets Free Cooling', 'Free Cooling dampers')}: ${formatMoney(roiInstalledCostBreakdown.freeCoolingControlsAdder)}` : '',
+              ].filter(Boolean).join(' / ') || tr('Aucun', 'None')],
+              [tr('Coût effectif de la solution', 'Effective solution cost'), formatMoney(roiSelectedSolution.installedCost)],
+              [tr('Coût additionnel vs référence', 'Incremental cost vs reference'), formatSignedMoney(roiSelectedSolution.incrementalCost)],
+              [tr('Coût annuel de la référence', 'Reference annual cost'), formatMoney(roiReferenceRow?.annualCost)],
+              [tr('Coût annuel de la solution', 'Solution annual cost'), formatMoney(roiSelectedSolution.annualCost)],
+              [tr('Économies annuelles', 'Annual savings'), formatSignedMoney(roiSelectedSolution.annualSavings)],
+              [tr('Retour simple', 'Simple payback'), formatPayback(roiSelectedSolution)],
+              [tr('ROI annuel simple', 'Simple annual ROI'), projectRoi(roiAnnualRoiPercent)],
+              [tr('Gain net 10 ans', '10-year net gain'), formatSignedMoney(tenYearSavings)],
+              [tr('Gain net 20 ans', '20-year net gain'), formatSignedMoney(twentyYearSavings)],
+            ]} />
+            <p className="report-text">
+              {tr(
+                'Retour simple = Coût additionnel / Économies annuelles. ROI annuel simple = Économies annuelles / Coût additionnel × 100. Gain net sur N années = Économies annuelles × N - Coût additionnel. Ces formules sont affichées à titre explicatif seulement; elles ne recalculent pas les valeurs présentées.',
+                'Simple payback = Incremental cost / Annual savings. Simple annual ROI = Annual savings / Incremental cost × 100. Net gain over N years = Annual savings × N - Incremental cost. These formulas are shown for explanatory purposes only; they do not recompute the values presented.'
+              )}
+            </p>
+            <p className="report-text">
+              {tr(
+                'Le retour simple compare l’investissement additionnel de la solution analysée par rapport à la technologie de référence sélectionnée avec les économies annuelles d’exploitation. Il ne tient pas compte de l’inflation, de l’actualisation, des coûts d’entretien ou de l’évolution future des tarifs énergétiques, sauf indication contraire.',
+                'Simple payback compares the additional investment of the analyzed solution against the selected reference technology with the annual operating savings. It does not account for inflation, discounting, maintenance costs, or future energy rate changes unless stated otherwise.'
+              )}
+            </p>
+            <p className="report-text">
+              {tr(
+                'Les calculs utilisent les valeurs non arrondies; les valeurs affichées peuvent présenter de légers écarts dus à l’arrondissement.',
+                'Calculations use unrounded values; displayed figures may show slight differences due to rounding.'
+              )}
+            </p>
           </>
         )}
       </ReportSection>

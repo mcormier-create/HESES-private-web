@@ -2868,7 +2868,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       bodyHtml: buildPrintableReportMarkup(),
     })
     window.sessionStorage.setItem(HESES_PRINT_REPORT_STORAGE_KEY, reportHtml)
-    const popup = window.open('/heses-report-print', '_blank', 'popup,width=1200,height=900')
+    // Build with the current origin explicitly so the popup never targets a stale dev-server port.
+    const printableReportUrl = `${window.location.origin}/heses-report-print`
+    const popup = window.open(printableReportUrl, '_blank', 'popup,width=1200,height=900')
     if (!popup) {
       setReportStatus(language === 'fr'
         ? 'Autorisez les fenêtres contextuelles pour imprimer le rapport.'
@@ -3378,10 +3380,11 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const [economizerTargetTemp, setEconomizerTargetTemp] = useState(() => finiteSetting(initialProjectSettings, 'economizerTargetTemp', 18))
   const [minimumOutsideAirPercent, setMinimumOutsideAirPercent] = useState(() => finiteSetting(initialProjectSettings, 'minimumOutsideAirPercent', 20))
   const [annualComparisonReference, setAnnualComparisonReference] = useState(() => (
-    BASELINE_TECHNOLOGIES.includes(initialProjectSettings.annualComparisonReference)
+    BASELINE_TECHNOLOGIES.includes(initialProjectSettings.annualComparisonReference) || initialProjectSettings.annualComparisonReference === 'humifog'
       ? initialProjectSettings.annualComparisonReference
       : 'electricSteam'
   ))
+  const [showRoiExplanation, setShowRoiExplanation] = useState(false)
   const [scheduleMode, setScheduleMode] = useState(() => {
     const saved = initialProjectSettings.scheduleMode
     return saved === '24-7' ? '24-7' : 'custom'
@@ -5037,22 +5040,26 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const referenceRoiKey = annualComparisonReference === 'atmosphericGas'
     ? 'atmosphericGasHumidifier'
     : annualComparisonReference
-  const referenceAnnualCost = isFreeCoolingMode
-    ? referenceRoiKey === 'naturalGasSteam'
-      ? freeCoolingNaturalGasAnnualCost
-      : referenceRoiKey === 'atmosphericGasHumidifier'
-        ? freeCoolingAtmosphericGasAnnualCost
-        : freeCoolingHumifogAnalysis.annualComparison.freeCooling.annualCost
+  const referenceAnnualCost = referenceRoiKey === 'humifog'
+    ? technologyAnnualCosts.humifog
+    : isFreeCoolingMode
+      ? referenceRoiKey === 'naturalGasSteam'
+        ? freeCoolingNaturalGasAnnualCost
+        : referenceRoiKey === 'atmosphericGasHumidifier'
+          ? freeCoolingAtmosphericGasAnnualCost
+          : freeCoolingHumifogAnalysis.annualComparison.freeCooling.annualCost
+      : referenceRoiKey === 'naturalGasSteam'
+        ? technologyAnnualCosts.naturalGasSteam
+        : referenceRoiKey === 'atmosphericGasHumidifier'
+          ? technologyAnnualCosts.atmosphericGas
+          : technologyAnnualCosts.electricSteam
+  const referenceInstalledCost = referenceRoiKey === 'humifog'
+    ? installedCostInputs.humifog
     : referenceRoiKey === 'naturalGasSteam'
-      ? technologyAnnualCosts.naturalGasSteam
+      ? installedCostInputs.naturalGasSteam
       : referenceRoiKey === 'atmosphericGasHumidifier'
-        ? technologyAnnualCosts.atmosphericGas
-        : technologyAnnualCosts.electricSteam
-  const referenceInstalledCost = referenceRoiKey === 'naturalGasSteam'
-    ? installedCostInputs.naturalGasSteam
-    : referenceRoiKey === 'atmosphericGasHumidifier'
-      ? installedCostInputs.atmosphericGasHumidifier
-      : installedCostInputs.electricSteam
+        ? installedCostInputs.atmosphericGasHumidifier
+        : installedCostInputs.electricSteam
   const roiOptions = [
     {
       key: 'electricSteam',
@@ -5082,8 +5089,13 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         : (language === 'fr' ? 'Humifog adiabatique' : 'Humifog adiabatic'),
       installedCost: installedCostInputs.humifog,
       annualCost: technologyAnnualCosts.humifog,
+      reference: referenceRoiKey === 'humifog',
     },
   ]
+  const roiReferenceSelectOptions = roiOptions.map((option) => ({
+    value: option.key === 'atmosphericGasHumidifier' ? 'atmosphericGas' : option.key,
+    label: option.label,
+  }))
   const roiRows = roiOptions.map((option) => {
     const annualSavings = Math.round(referenceAnnualCost - option.annualCost)
     const incrementalCost = Math.round(option.installedCost - referenceInstalledCost)
@@ -5106,6 +5118,11 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       : `${selectedRoiRow.paybackYears.toFixed(1)} ${language === 'fr' ? 'ans' : 'years'}`
   const tenYearSavings = Math.round((selectedRoiRow?.annualSavings || 0) * 10 - Math.max(0, selectedRoiRow?.incrementalCost || 0))
   const twentyYearSavings = Math.round((selectedRoiRow?.annualSavings || 0) * 20 - Math.max(0, selectedRoiRow?.incrementalCost || 0))
+  // Explanation panel reads the same values already computed above; it derives no new economics.
+  const roiExplanationReferenceRow = roiRows.find((row) => row.reference) || roiRows[0]
+  const roiExplanationAnnualRoiPercent = Number.isFinite(selectedRoiRow?.incrementalCost) && selectedRoiRow.incrementalCost > 0 && Number.isFinite(selectedRoiRow?.annualSavings) && selectedRoiRow.annualSavings > 0
+    ? (selectedRoiRow.annualSavings / selectedRoiRow.incrementalCost) * 100
+    : null
   const reportProjectName = projectProfile.name.trim() || (language === 'fr' ? 'Optimisation énergétique HVAC' : 'HVAC Energy Optimization')
   const reportPreparedFor = projectProfile.owner.trim() || (language === 'fr' ? 'Propriétaire / équipe d’ingénierie' : 'Project Owner / Engineering Team')
   const reportPreparedBy = projectProfile.engineer.trim() || 'Enersol / Carel'
@@ -7398,8 +7415,22 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     : 'Enter installed costs to calculate simple payback from annual savings.'}
                 </p>
               </div>
-              <div className="bg-emerald-100 text-emerald-700 px-4 py-2 rounded-full text-sm font-semibold">
-                {language === 'fr' ? 'ROI utilisateur' : 'User ROI'}
+              <div className="flex flex-col items-end gap-2">
+                <div className="bg-emerald-100 text-emerald-700 px-4 py-2 rounded-full text-sm font-semibold">
+                  {language === 'fr' ? 'ROI utilisateur' : 'User ROI'}
+                </div>
+                <label className="text-sm font-semibold text-slate-700">
+                  {language === 'fr' ? 'Technologie de référence' : 'Reference technology'}
+                  <select
+                    value={annualComparisonReference}
+                    onChange={(event) => setAnnualComparisonReference(event.target.value)}
+                    className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2 font-bold text-slate-800"
+                  >
+                    {roiReferenceSelectOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
               </div>
             </div>
 
@@ -7528,6 +7559,138 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                 <div className="text-sm font-semibold text-slate-700">{language === 'fr' ? 'Gain net 20 ans' : '20-year net gain'}</div>
                 <div className={`mt-2 text-3xl font-bold ${twentyYearSavings >= 0 ? 'text-emerald-800' : 'text-red-700'}`}>{formatSignedCost(twentyYearSavings)}</div>
               </div>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h3 className="text-lg font-bold text-slate-800">
+                  {language === 'fr' ? 'Comment le retour est calculé' : 'How the return is calculated'}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowRoiExplanation((current) => !current)}
+                  className="rounded-xl border border-emerald-300 bg-white px-4 py-2 text-sm font-bold text-emerald-800 hover:bg-emerald-50"
+                >
+                  {showRoiExplanation
+                    ? (language === 'fr' ? 'Masquer le calcul' : 'Hide calculation')
+                    : (language === 'fr' ? 'Voir le calcul' : 'View calculation')}
+                </button>
+              </div>
+
+              {showRoiExplanation && (
+                <div className="mt-4 space-y-4 text-sm text-slate-700">
+                  <p>
+                    {language === 'fr'
+                      ? "Le retour simple compare l'investissement additionnel de la solution analysée par rapport à la technologie de référence sélectionnée avec les économies annuelles d'exploitation. Il ne tient pas compte de l'inflation, de l'actualisation, des coûts d'entretien ou de l'évolution future des tarifs énergétiques, sauf si ces paramètres sont explicitement activés dans HESA."
+                      : "Simple payback compares the additional investment of the analyzed solution against the selected reference technology with the annual operating savings. It does not account for inflation, discounting, maintenance costs, or future energy rate changes unless these parameters are explicitly enabled in HESA."}
+                  </p>
+
+                  <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                    <table className="w-full text-sm">
+                      <tbody>
+                        <tr className="border-b border-slate-100">
+                          <td className="p-3 font-semibold text-slate-600">{language === 'fr' ? '1. Technologie de référence' : '1. Reference technology'}</td>
+                          <td className="p-3 text-right font-bold text-slate-900">{roiExplanationReferenceRow?.label}</td>
+                        </tr>
+                        <tr className="border-b border-slate-100 bg-slate-50">
+                          <td className="p-3 font-semibold text-slate-600">{language === 'fr' ? '2. Coût installé de la référence' : '2. Reference installed cost'}</td>
+                          <td className="p-3 text-right font-bold text-slate-900">{formatInstalledCost(roiExplanationReferenceRow?.installedCost)}</td>
+                        </tr>
+                        <tr className="border-b border-slate-100">
+                          <td className="p-3 font-semibold text-slate-600">{language === 'fr' ? '3. Coût installé de la solution analysée' : '3. Analyzed solution installed cost'}</td>
+                          <td className="p-3 text-right font-bold text-slate-900">{formatInstalledCost(installedCostBreakdown.humifog?.base)}</td>
+                        </tr>
+                        <tr className="border-b border-slate-100 bg-slate-50">
+                          <td className="p-3 font-semibold text-slate-600">{language === 'fr' ? '4. Options / ajustements CAPEX applicables' : '4. Applicable CAPEX options / adjustments'}</td>
+                          <td className="p-3 text-right font-bold text-slate-900">
+                            {(installedCostBreakdown.humifog?.heatRecoveryAdder || 0) > 0 && (
+                              <div>{language === 'fr' ? 'Récupération : ' : 'Heat recovery: '}{formatInstalledCost(installedCostBreakdown.humifog.heatRecoveryAdder)}</div>
+                            )}
+                            {(installedCostBreakdown.humifog?.freeCoolingControlsAdder || 0) > 0 && (
+                              <div>{language === 'fr' ? 'Volets Free Cooling : ' : 'Free Cooling dampers: '}{formatInstalledCost(installedCostBreakdown.humifog.freeCoolingControlsAdder)}</div>
+                            )}
+                            {(installedCostBreakdown.humifog?.heatRecoveryAdder || 0) <= 0 && (installedCostBreakdown.humifog?.freeCoolingControlsAdder || 0) <= 0 && (
+                              <span>{language === 'fr' ? 'Aucun' : 'None'}</span>
+                            )}
+                          </td>
+                        </tr>
+                        <tr className="border-b border-slate-100">
+                          <td className="p-3 font-semibold text-slate-600">{language === 'fr' ? '5. Coût installé effectif de la solution' : '5. Effective installed cost of the solution'}</td>
+                          <td className="p-3 text-right font-bold text-slate-900">{formatInstalledCost(selectedRoiRow?.installedCost)}</td>
+                        </tr>
+                        <tr className="border-b border-slate-100 bg-slate-50">
+                          <td className="p-3 font-semibold text-slate-600">{language === 'fr' ? '6. Coût additionnel vs référence' : '6. Incremental cost vs reference'}</td>
+                          <td className="p-3 text-right font-bold text-slate-900">{formatSignedCost(selectedRoiRow?.incrementalCost)}</td>
+                        </tr>
+                        <tr className="border-b border-slate-100">
+                          <td className="p-3 font-semibold text-slate-600">{language === 'fr' ? '7. Coût annuel énergétique de la référence' : '7. Reference annual energy cost'}</td>
+                          <td className="p-3 text-right font-bold text-slate-900">{formatAnnualCost(roiExplanationReferenceRow?.annualCost)}</td>
+                        </tr>
+                        <tr className="border-b border-slate-100 bg-slate-50">
+                          <td className="p-3 font-semibold text-slate-600">{language === 'fr' ? '8. Coût annuel énergétique de la solution' : '8. Solution annual energy cost'}</td>
+                          <td className="p-3 text-right font-bold text-slate-900">{formatAnnualCost(selectedRoiRow?.annualCost)}</td>
+                        </tr>
+                        <tr className="border-b border-slate-100">
+                          <td className="p-3 font-semibold text-slate-600">{language === 'fr' ? '9. Économies annuelles' : '9. Annual savings'}</td>
+                          <td className="p-3 text-right font-bold text-emerald-700">{formatSignedAnnualCost(selectedRoiRow?.annualSavings)}</td>
+                        </tr>
+                        <tr className="border-b border-slate-100 bg-slate-50">
+                          <td className="p-3 font-semibold text-slate-600">{language === 'fr' ? '10. Retour simple' : '10. Simple payback'}</td>
+                          <td className="p-3 text-right font-bold text-slate-900">{selectedRoiRow ? formatPayback(selectedRoiRow) : '-'}</td>
+                        </tr>
+                        <tr className="border-b border-slate-100">
+                          <td className="p-3 font-semibold text-slate-600">{language === 'fr' ? '11. ROI annuel simple' : '11. Simple annual ROI'}</td>
+                          <td className="p-3 text-right font-bold text-slate-900">
+                            {roiExplanationAnnualRoiPercent == null
+                              ? (language === 'fr' ? 'Non disponible' : 'Not available')
+                              : formatSignedPercent(roiExplanationAnnualRoiPercent)}
+                          </td>
+                        </tr>
+                        <tr className="border-b border-slate-100 bg-slate-50">
+                          <td className="p-3 font-semibold text-slate-600">{language === 'fr' ? '12. Gain net 10 ans' : '12. 10-year net gain'}</td>
+                          <td className="p-3 text-right font-bold text-slate-900">{formatSignedCost(tenYearSavings)}</td>
+                        </tr>
+                        <tr>
+                          <td className="p-3 font-semibold text-slate-600">{language === 'fr' ? '13. Gain net 20 ans' : '13. 20-year net gain'}</td>
+                          <td className="p-3 text-right font-bold text-slate-900">{formatSignedCost(twentyYearSavings)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="font-bold text-slate-800 mb-2">
+                      {language === 'fr' ? 'Formules utilisées' : 'Formulas used'}
+                    </div>
+                    <div className="font-mono text-xs md:text-sm leading-relaxed text-slate-700 space-y-1">
+                      <div>
+                        {language === 'fr' ? 'Économies annuelles = ' : 'Annual savings = '}
+                        {formatAnnualCost(roiExplanationReferenceRow?.annualCost)} - {formatAnnualCost(selectedRoiRow?.annualCost)} = {formatSignedAnnualCost(selectedRoiRow?.annualSavings)}
+                      </div>
+                      <div>
+                        {language === 'fr' ? 'Coût additionnel = ' : 'Incremental cost = '}
+                        {formatInstalledCost(selectedRoiRow?.installedCost)} - {formatInstalledCost(roiExplanationReferenceRow?.installedCost)} = {formatSignedCost(selectedRoiRow?.incrementalCost)}
+                      </div>
+                      <div>
+                        {language === 'fr' ? 'Retour simple (années) = Coût additionnel / Économies annuelles = ' : 'Simple payback (years) = Incremental cost / Annual savings = '}
+                        {selectedRoiRow ? formatPayback(selectedRoiRow) : '-'}
+                      </div>
+                      <div>
+                        {language === 'fr' ? 'ROI annuel simple (%) = Économies annuelles / Coût additionnel × 100 = ' : 'Simple annual ROI (%) = Annual savings / Incremental cost × 100 = '}
+                        {roiExplanationAnnualRoiPercent == null
+                          ? (language === 'fr' ? 'Non disponible' : 'Not available')
+                          : formatSignedPercent(roiExplanationAnnualRoiPercent)}
+                      </div>
+                      <div>
+                        {language === 'fr' ? 'Gain net sur N années = (Économies annuelles × N) - Coût additionnel' : 'Net gain over N years = (Annual savings × N) - Incremental cost'}
+                      </div>
+                    </div>
+                    <div className="mt-3 text-xs font-semibold text-slate-500">
+                      {language === 'fr' ? 'Calcul simple sans actualisation.' : 'Simple calculation, no discounting.'}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
