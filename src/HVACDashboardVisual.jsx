@@ -356,14 +356,19 @@ function HesesPrintableReportPage() {
   const reportHtml = typeof window === 'undefined'
     ? ''
     : window.sessionStorage.getItem(HESES_PRINT_REPORT_STORAGE_KEY) || ''
+  const reportLanguage = typeof window === 'undefined'
+    ? 'fr'
+    : (() => {
+        try {
+          const saved = window.localStorage.getItem(HESES_PROJECT_SETTINGS_STORAGE_KEY)
+          const parsed = saved ? JSON.parse(saved) : {}
+          return parsed?.language === 'en' ? 'en' : 'fr'
+        } catch {
+          return 'fr'
+        }
+      })()
   const printInProgressRef = useRef(false)
-  const [htmlReportUrl, setHtmlReportUrl] = useState('')
-  const [pdfReportUrl, setPdfReportUrl] = useState('')
-  const [pdfDownloadUrl, setPdfDownloadUrl] = useState('')
-  const [localPdfPath, setLocalPdfPath] = useState('')
-  const [currentReportId, setCurrentReportId] = useState('')
   const [pdfReportStatus, setPdfReportStatus] = useState('')
-  const [isGeneratingBrowserPdf, setIsGeneratingBrowserPdf] = useState(false)
 
   const printCurrentReport = () => {
     if (typeof window === 'undefined' || printInProgressRef.current) return
@@ -409,45 +414,6 @@ function HesesPrintableReportPage() {
     }
   }
 
-  const openLocalPdfInWindows = () => {
-    setPdfReportStatus('Ouverture du fichier PDF dans Windows...')
-    fetch('/api/heses-report-open-local-pdf', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: currentReportId }),
-    })
-      .then(async (response) => {
-        const payload = await response.json().catch(() => ({}))
-        if (!response.ok) throw new Error(payload.error || 'Impossible douvrir le PDF dans Windows.')
-        if (payload.localPdfPath) setLocalPdfPath(payload.localPdfPath)
-        setPdfReportStatus('PDF ouvert dans Windows. Utilisez Ctrl+P dans le lecteur PDF externe.')
-      })
-      .catch((error) => {
-        console.error('Erreur ouverture PDF Windows:', error)
-        setPdfReportStatus(`Impossible douvrir le PDF dans Windows. ${error.message || ''}`.trim())
-      })
-  }
-
-  const generateBrowserPdf = () => {
-    if (!reportHtml || isGeneratingBrowserPdf) return
-    setIsGeneratingBrowserPdf(true)
-    setPdfReportStatus('Generation du PDF en cours...')
-    Promise.resolve(createPdfBlobFromReportHtml(reportHtml, 'HESA Report'))
-      .then((blob) => {
-        const clientPdfUrl = URL.createObjectURL(blob)
-        setPdfReportUrl(clientPdfUrl)
-        setPdfDownloadUrl(clientPdfUrl)
-        setPdfReportStatus('PDF pret au telechargement.')
-      })
-      .catch((error) => {
-        console.error('Erreur PDF:', error)
-        setPdfReportStatus('Echec de generation PDF. Telechargez le rapport HTML.')
-      })
-      .finally(() => {
-        setIsGeneratingBrowserPdf(false)
-      })
-  }
-
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!window.location.search.includes('print=1')) return
@@ -455,16 +421,8 @@ function HesesPrintableReportPage() {
   }, [])
 
   useEffect(() => {
-    if (!reportHtml) return undefined
-
-    const htmlUrl = URL.createObjectURL(new Blob([reportHtml], { type: 'text/html;charset=utf-8' }))
-
-    setHtmlReportUrl(htmlUrl)
+    if (!reportHtml) return
     setPdfReportStatus('Rapport pret pour impression.')
-
-    return () => {
-      URL.revokeObjectURL(htmlUrl)
-    }
   }, [reportHtml])
 
   if (!reportHtml) {
@@ -480,7 +438,7 @@ function HesesPrintableReportPage() {
             onClick={returnToHesesApp}
             className="mt-5 rounded-xl bg-sky-700 px-5 py-3 font-bold text-white hover:bg-sky-800"
           >
-            Retour à HESA
+            {reportLanguage === 'fr' ? 'Retour à HESA' : 'Back to HESA'}
           </button>
         </section>
       </main>
@@ -521,58 +479,18 @@ function HesesPrintableReportPage() {
           onClick={returnToHesesApp}
           className="rounded-xl bg-slate-700 px-5 py-3 font-bold text-white hover:bg-slate-600"
         >
-          Retour à HESA
+          {reportLanguage === 'fr' ? 'Retour à HESA' : 'Back to HESA'}
         </button>
         <button
           type="button"
           onClick={printCurrentReport}
           className="rounded-xl bg-emerald-600 px-5 py-3 font-bold text-white hover:bg-emerald-700"
         >
-          Imprimer ce rapport
+          {reportLanguage === 'fr' ? 'Imprimer / Enregistrer en PDF' : 'Print / Save as PDF'}
         </button>
-        <button
-          type="button"
-          onClick={openLocalPdfInWindows}
-          className={`rounded-xl px-5 py-3 font-bold text-white ${
-            localPdfPath ? 'bg-orange-600 hover:bg-orange-700' : 'pointer-events-none bg-slate-500'
-          }`}
-        >
-          Ouvrir PDF dans Windows
-        </button>
-        <button
-          type="button"
-          onClick={generateBrowserPdf}
-          disabled={isGeneratingBrowserPdf || !reportHtml}
-          className={`rounded-xl px-5 py-3 font-bold text-white ${
-            isGeneratingBrowserPdf ? 'bg-slate-500' : 'bg-indigo-600 hover:bg-indigo-700'
-          }`}
-        >
-          {isGeneratingBrowserPdf ? 'Generation PDF...' : 'Generer PDF'}
-        </button>
-        <a
-          href={pdfDownloadUrl || '#'}
-          download="HESA_Energy_Analysis_Report.pdf"
-          aria-disabled={!pdfDownloadUrl}
-          onClick={(event) => { if (!pdfDownloadUrl) event.preventDefault() }}
-          className={`rounded-xl px-5 py-3 font-bold text-white ${
-            pdfDownloadUrl ? 'bg-cyan-700 hover:bg-cyan-800' : 'pointer-events-none bg-slate-500'
-          }`}
-        >
-          Télécharger PDF
-        </a>
-        <a
-          href={htmlReportUrl || '#'}
-          download="HESA_Energy_Analysis_Report.html"
-          className="rounded-xl bg-sky-700 px-5 py-3 font-bold text-white hover:bg-sky-800"
-        >
-          Télécharger HTML
-        </a>
-        <span className="text-sm font-semibold text-slate-200">
-          {pdfReportStatus || 'PDF disponible après génération.'}
-        </span>
-        {localPdfPath && (
-          <span className="w-full text-center text-xs font-semibold text-slate-300">
-            Fichier local : {localPdfPath}
+        {pdfReportStatus && (
+          <span className="text-sm font-semibold text-slate-200">
+            {pdfReportStatus}
           </span>
         )}
       </div>
@@ -580,17 +498,6 @@ function HesesPrintableReportPage() {
         className="report-page-content shadow-xl"
         dangerouslySetInnerHTML={{ __html: reportHtml }}
       />
-      {localPdfPath && (
-        <aside className="mx-auto mb-8 max-w-5xl rounded-2xl border border-cyan-200 bg-cyan-50 p-5 text-sm font-semibold text-cyan-900">
-          <div className="text-lg font-bold">Fichier PDF local prêt</div>
-          <div className="mt-2 break-all">{localPdfPath}</div>
-          <div className="mt-2">
-            Cliquez sur Ouvrir PDF dans Windows, puis utilisez Ctrl+P dans le lecteur PDF externe. Le lecteur PDF intégré peut bloquer l’impression.
-          </div>
-          <div className="mt-4 flex flex-wrap gap-3">
-          </div>
-        </aside>
-      )}
     </main>
   )
 }
@@ -660,7 +567,8 @@ function HesaMultiSystemApp() {
     const next = {
       id,
       name: systemControlLabels.defaultSystemName(systems.length + 1),
-      settings: getInitialProjectSettings(),
+      // A brand new AHU must not inherit a stale economizerTargetTemp from legacy localStorage.
+      settings: { ...getInitialProjectSettings(), economizerTargetTemp: 12.8 },
     }
     setSystems((current) => [...current, next])
     setActiveSystemId(id)
@@ -2865,6 +2773,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
 
     const reportHtml = buildPrintableReportHtml({
       autoPrint: false,
+      includeActions: false,
       bodyHtml: buildPrintableReportMarkup(),
     })
     window.sessionStorage.setItem(HESES_PRINT_REPORT_STORAGE_KEY, reportHtml)
@@ -3377,7 +3286,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     setVentilationMode(mode)
     updateVentilationModeUrl(mode)
   }
-  const [economizerTargetTemp, setEconomizerTargetTemp] = useState(() => finiteSetting(initialProjectSettings, 'economizerTargetTemp', 18))
+  // Default 12.8C (~55F) for a new Free Cooling simulation; saved/existing values always take precedence via finiteSetting.
+  const [economizerTargetTemp, setEconomizerTargetTemp] = useState(() => finiteSetting(initialProjectSettings, 'economizerTargetTemp', 12.8))
   const [minimumOutsideAirPercent, setMinimumOutsideAirPercent] = useState(() => finiteSetting(initialProjectSettings, 'minimumOutsideAirPercent', 20))
   const [annualComparisonReference, setAnnualComparisonReference] = useState(() => (
     BASELINE_TECHNOLOGIES.includes(initialProjectSettings.annualComparisonReference) || initialProjectSettings.annualComparisonReference === 'humifog'
