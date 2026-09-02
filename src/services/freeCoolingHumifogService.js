@@ -27,6 +27,8 @@ export function calculateFreeCoolingHumifogComparison({
   useMeasuredMixedAirTemperature = false,
   measuredMixedAirTemperatureC = 18,
   optimizationBins = null,
+  includeOptimizationRows = true,
+  includeRowPoints = true,
 }) {
   const weatherBins = normalizeBins(bins)
   const optimizationWeatherBins = normalizeBins(optimizationBins || bins)
@@ -62,19 +64,15 @@ export function calculateFreeCoolingHumifogComparison({
     naturalGasRate,
     useMeasuredMixedAirTemperature,
     measuredMixedAirTemperatureC,
+    includeRowPoints,
   }
 
-  const binRows = weatherBins.map((bin) => calculateHumifogBinRow({
-    ...common,
-    bin,
-    outdoorAirPercent: minimumOa,
-    damperMinimumOutdoorAirPercent: humifogDamperMinimumOa,
-  }))
-
-  const oaTestPoints = [...new Set([
-    minimumOa,
-    ...FREE_COOLING_OA_TEST_POINTS.filter((oaPercent) => oaPercent >= minimumOa),
-  ])].sort((a, b) => a - b)
+  const oaTestPoints = includeOptimizationRows
+    ? [...new Set([
+      minimumOa,
+      ...FREE_COOLING_OA_TEST_POINTS.filter((oaPercent) => oaPercent >= minimumOa),
+    ])].sort((a, b) => a - b)
+    : []
 
   const optimizationRows = oaTestPoints.map((oaPercent) => {
     const rows = optimizationWeatherBins.map((bin) => calculateHumifogBinRow({
@@ -119,9 +117,25 @@ export function calculateFreeCoolingHumifogComparison({
     outdoorAirPercent: minimumOa,
     damperMinimumOutdoorAirPercent: humifogDamperMinimumOa,
   }))
+  const binRows = optimizedHumifogRows
 
   const freeCooling = summarizeRows(conventionalRows)
   const humifog = summarizeRows(optimizedHumifogRows)
+  const resolvedOptimal = optimal || {
+    oaPercent: minimumOa,
+    raPercent: 100 - minimumOa,
+    tmix: humifog.averageMixedDb,
+    rhmix: humifog.averageMixedRh,
+    wmix: humifog.averageMixedW,
+    hmix: humifog.averageMixedH,
+    humifogOutletT: humifog.averageHumifogDb,
+    heatingEnergyKwh: humifog.heatingEnergyKwh + humifog.reheatEnergyKwh,
+    humidificationEnergyKwh: humifog.humidificationEnergyKwh,
+    reheatLoadKwh: humifog.reheatEnergyKwh,
+    totalEnergyKwh: humifog.totalEnergyKwh,
+    annualCost: humifog.totalCost,
+    rows: optimizedHumifogRows,
+  }
   const freeCoolingAnnualCost = freeCooling.totalCost
   const humifogAnnualCost = humifog.totalCost
   const energyDeltaKwh = freeCooling.totalEnergyKwh - humifog.totalEnergyKwh
@@ -176,7 +190,7 @@ export function calculateFreeCoolingHumifogComparison({
     binValidationRows,
     annualTotalsValidation,
     optimizationRows,
-    optimal,
+    optimal: resolvedOptimal,
     psychrometricPoints: dominantRow?.points ?? [],
     validation: {
       calculatedMixedDb: dominantRow?.calculatedMixed.db ?? 0,
@@ -195,7 +209,7 @@ export function calculateFreeCoolingHumifogComparison({
     message: {
       minimumOa,
       conventionalOa: freeCooling.averageOa,
-      optimalOa: optimal.oaPercent,
+      optimalOa: resolvedOptimal.oaPercent,
       mixedAirIncreaseC: humifog.averageMixedDb - freeCooling.averageMixedDb,
       heatingReductionKwh: freeCooling.heatingEnergyKwh - humifog.heatingEnergyKwh,
       humidificationReductionKwh: freeCooling.humidificationEnergyKwh - humifog.humidificationEnergyKwh,
@@ -219,6 +233,7 @@ function calculateHumifogBinRow({
   naturalGasRate,
   useMeasuredMixedAirTemperature,
   measuredMixedAirTemperatureC,
+  includeRowPoints = true,
 }) {
   const oa = psychrometricState({ dryBulbC: bin.tempC, relativeHumidity: bin.rh })
   const targetAfterHumifogDb = Number.isFinite(Number(mixedAirTargetDb))
@@ -353,7 +368,7 @@ function calculateHumifogBinRow({
     reheatCost,
     totalCost,
     ...freeCoolingEconomy,
-    points: buildPoints({ oa, room, mixed, recovered, afterHumifog, afterHeating }),
+    points: includeRowPoints ? buildPoints({ oa, room, mixed, recovered, afterHumifog, afterHeating }) : [],
   }
 }
 

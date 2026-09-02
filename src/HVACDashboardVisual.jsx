@@ -759,6 +759,45 @@ function compactWeatherBins(records = [], targetCount = 96) {
   return compacted
 }
 
+function createIncompleteFreeCoolingHumifogAnalysis(error = '') {
+  return {
+    isComplete: false,
+    incompleteReason: error || 'Free Cooling Humifog calculation in progress',
+    bins: [],
+    binRows: [],
+    conventionalRows: [],
+    optimizedHumifogRows: [],
+    binValidationRows: [],
+    annualTotalsValidation: {},
+    optimizationRows: [],
+    optimal: null,
+    psychrometricPoints: [],
+    validation: {},
+    annualComparison: {
+      freeCooling: { totalHours: 0 },
+      humifog: { totalHours: 0 },
+      savingsKwh: 0,
+      annualSavings: 0,
+      savingsPercent: 0,
+    },
+    annualBreakdownRows: [],
+    netSavings: {
+      annualHeatingSavingsKwh: 0,
+      annualHumidificationSavingsKwh: 0,
+      additionalReheatEnergyKwh: 0,
+      freeCoolingObtainedKwh: 0,
+      humifogPumpEnergyKwh: 0,
+      adiabaticReheatThermalKwh: 0,
+      adiabaticReheatElectricKwh: 0,
+      mechanicalReheatEnergyKwh: 0,
+      netAnnualEnergySavingsKwh: 0,
+      annualCostSavings: 0,
+      energyReductionPercent: 0,
+    },
+    message: {},
+  }
+}
+
 function aggregateFreeCoolingComparisonRows(humifogRows = [], steamRows = [], binSizeC = 5) {
   const groups = new Map()
   humifogRows.forEach((humifogRow, index) => {
@@ -3332,6 +3371,11 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const hourlyWorkerRef = useRef(null)
   const hourlyWorkerRequestIdRef = useRef(0)
   const hourlyWorkerRecordsTokenRef = useRef('')
+  const freeCoolingHumifogWorkerRef = useRef(null)
+  const freeCoolingHumifogWorkerRequestIdRef = useRef(0)
+  const [freeCoolingHumifogWorkerResult, setFreeCoolingHumifogWorkerResult] = useState(null)
+  const [freeCoolingHumifogWorkerLoading, setFreeCoolingHumifogWorkerLoading] = useState(false)
+  const [freeCoolingHumifogWorkerError, setFreeCoolingHumifogWorkerError] = useState('')
   const [scheduleStartTime, setScheduleStartTime] = useState(() => initialProjectSettings.scheduleStartTime || '06:00')
   const [scheduleEndTime, setScheduleEndTime] = useState(() => initialProjectSettings.scheduleEndTime || '18:00')
   const [scheduleDaysOption, setScheduleDaysOption] = useState(() => {
@@ -3364,6 +3408,18 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     return () => {
       worker.terminate()
       if (hourlyWorkerRef.current === worker) hourlyWorkerRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof Worker === 'undefined') return
+
+    const worker = new Worker(new URL('./workers/freeCoolingHumifog.worker.js', import.meta.url), { type: 'module' })
+    freeCoolingHumifogWorkerRef.current = worker
+
+    return () => {
+      worker.terminate()
+      if (freeCoolingHumifogWorkerRef.current === worker) freeCoolingHumifogWorkerRef.current = null
     }
   }, [])
 
@@ -4394,6 +4450,121 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     }))
     : selectedBinWeatherData, [isHourlySimulationActive, filteredHourlyRecords, selectedBinWeatherData])
   const freeCoolingOptimizationWeatherData = freeCoolingWeatherData
+  const freeCoolingHumifogWorkerInputs = useMemo(() => ({
+    bins: freeCoolingOptimizationWeatherData,
+    optimizationBins: freeCoolingOptimizationWeatherData,
+    roomDb: roomTemperature,
+    roomRh: roomRelativeHumidity,
+    minimumOutdoorAirPercent: minimumOutsideAirPercent,
+    recoveryType: isNoRecovery ? 'none' : freeCoolingRecoveryType,
+    recoveryEfficiency: isNoRecovery ? 0 : cappedRecoveryEfficiency,
+    humifogEffectiveness: ventilationMode.evaporativeEffectiveness ?? 0.72,
+    airflowCfm: outsideAirCFM,
+    electricityRate,
+    naturalGasRate,
+    mixedAirTargetDb: economizerTargetTemp,
+    selectedReheatSystem,
+    heatPumpCOP,
+    useMeasuredMixedAirTemperature,
+    measuredMixedAirTemperatureC: measuredMixedAirTemperature,
+    includeOptimizationRows: !isHourlySimulationActive,
+    includeRowPoints: !isHourlySimulationActive,
+  }), [
+    freeCoolingOptimizationWeatherData,
+    roomTemperature,
+    roomRelativeHumidity,
+    minimumOutsideAirPercent,
+    isNoRecovery,
+    freeCoolingRecoveryType,
+    cappedRecoveryEfficiency,
+    ventilationMode.evaporativeEffectiveness,
+    outsideAirCFM,
+    electricityRate,
+    naturalGasRate,
+    economizerTargetTemp,
+    selectedReheatSystem,
+    heatPumpCOP,
+    useMeasuredMixedAirTemperature,
+    measuredMixedAirTemperature,
+    isHourlySimulationActive,
+  ])
+  const freeCoolingHumifogWorkerInputKey = useMemo(() => {
+    const weatherSignature = freeCoolingOptimizationWeatherData
+      .map((record) => `${record.tempC}:${record.hours}:${record.rh}`)
+      .join('|')
+    return JSON.stringify({
+      weatherSignature,
+      roomTemperature,
+      roomRelativeHumidity,
+      minimumOutsideAirPercent,
+      recoveryType: isNoRecovery ? 'none' : freeCoolingRecoveryType,
+      recoveryEfficiency: isNoRecovery ? 0 : cappedRecoveryEfficiency,
+      humifogEffectiveness: ventilationMode.evaporativeEffectiveness ?? 0.72,
+      outsideAirCFM,
+      electricityRate,
+      naturalGasRate,
+      economizerTargetTemp,
+      selectedReheatSystem,
+      heatPumpCOP,
+      useMeasuredMixedAirTemperature,
+      measuredMixedAirTemperature: measuredMixedAirTemperature,
+      isHourlySimulationActive,
+    })
+  }, [
+    freeCoolingOptimizationWeatherData,
+    roomTemperature,
+    roomRelativeHumidity,
+    minimumOutsideAirPercent,
+    isNoRecovery,
+    freeCoolingRecoveryType,
+    cappedRecoveryEfficiency,
+    ventilationMode.evaporativeEffectiveness,
+    outsideAirCFM,
+    electricityRate,
+    naturalGasRate,
+    economizerTargetTemp,
+    selectedReheatSystem,
+    heatPumpCOP,
+    useMeasuredMixedAirTemperature,
+    measuredMixedAirTemperature,
+    isHourlySimulationActive,
+  ])
+  useEffect(() => {
+    if (!isHourlySimulationActive || !freeCoolingHumifogWorkerRef.current) return
+
+    const worker = freeCoolingHumifogWorkerRef.current
+    const requestId = ++freeCoolingHumifogWorkerRequestIdRef.current
+    setFreeCoolingHumifogWorkerLoading(true)
+    setFreeCoolingHumifogWorkerError('')
+
+    const onMessage = (event) => {
+      const payload = event.data || {}
+      if (payload.requestId !== requestId) return
+      worker.removeEventListener('message', onMessage)
+      worker.removeEventListener('error', onError)
+      if (requestId !== freeCoolingHumifogWorkerRequestIdRef.current) return
+      setFreeCoolingHumifogWorkerLoading(false)
+      if (payload.ok) setFreeCoolingHumifogWorkerResult(payload.result)
+      else setFreeCoolingHumifogWorkerError(payload.error || 'Free Cooling Humifog calculation failed.')
+    }
+    const onError = (event) => {
+      worker.removeEventListener('message', onMessage)
+      worker.removeEventListener('error', onError)
+      if (requestId !== freeCoolingHumifogWorkerRequestIdRef.current) return
+      setFreeCoolingHumifogWorkerLoading(false)
+      setFreeCoolingHumifogWorkerError(event?.message || 'Free Cooling Humifog worker error.')
+    }
+
+    setFreeCoolingHumifogWorkerResult(null)
+    worker.addEventListener('message', onMessage)
+    worker.addEventListener('error', onError)
+    worker.postMessage({ requestId, inputs: freeCoolingHumifogWorkerInputs })
+
+    return () => {
+      worker.removeEventListener('message', onMessage)
+      worker.removeEventListener('error', onError)
+    }
+  }, [isHourlySimulationActive, freeCoolingHumifogWorkerInputKey])
   const selectedHeatPumpCOPForAnnual = Number.isFinite(Number(selectedReheatSystem?.cop))
     ? Math.max(Number(selectedReheatSystem.cop), 0.1)
     : Math.max(heatPumpCOP, 0.1)
@@ -4646,44 +4817,14 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     : adiabaticGESRaw
   const annualEliminatedGESResolved = annualNaturalGasGESResolved - annualAdiabaticGESResolved
 
-  const freeCoolingHumifogAnalysis = useMemo(() => calculateFreeCoolingHumifogComparison({
-    // Downstream rows are re-aggregated into 5C bins anyway, so use the compacted
-    // (max 96-point) weather data instead of full 8760 hourly records to avoid
-    // blocking the main thread when EPW hourly schedule/hours change.
-    bins: freeCoolingOptimizationWeatherData,
-    optimizationBins: freeCoolingOptimizationWeatherData,
-    roomDb: roomTemperature,
-    roomRh: roomRelativeHumidity,
-    minimumOutdoorAirPercent: minimumOutsideAirPercent,
-    recoveryType: isNoRecovery ? 'none' : freeCoolingRecoveryType,
-    recoveryEfficiency: isNoRecovery ? 0 : cappedRecoveryEfficiency,
-    humifogEffectiveness: ventilationMode.evaporativeEffectiveness ?? 0.72,
-    airflowCfm: outsideAirCFM,
-    electricityRate,
-    naturalGasRate,
-    mixedAirTargetDb: economizerTargetTemp,
-    selectedReheatSystem,
-    heatPumpCOP,
-    useMeasuredMixedAirTemperature,
-    measuredMixedAirTemperatureC: measuredMixedAirTemperature,
-  }), [
-    freeCoolingOptimizationWeatherData,
-    roomTemperature,
-    roomRelativeHumidity,
-    minimumOutsideAirPercent,
-    isNoRecovery,
-    freeCoolingRecoveryType,
-    cappedRecoveryEfficiency,
-    ventilationMode.evaporativeEffectiveness,
-    outsideAirCFM,
-    electricityRate,
-    naturalGasRate,
-    economizerTargetTemp,
-    selectedReheatSystem,
-    heatPumpCOP,
-    useMeasuredMixedAirTemperature,
-    measuredMixedAirTemperature,
-  ])
+  const freeCoolingHumifogAnalysis = useMemo(() => isHourlySimulationActive
+    ? (freeCoolingHumifogWorkerResult || createIncompleteFreeCoolingHumifogAnalysis(freeCoolingHumifogWorkerError))
+    : calculateFreeCoolingHumifogComparison(freeCoolingHumifogWorkerInputs), [
+      isHourlySimulationActive,
+      freeCoolingHumifogWorkerResult,
+      freeCoolingHumifogWorkerError,
+      freeCoolingHumifogWorkerInputs,
+    ])
   const displayedFreeCoolingRows = isHourlySimulationActive
     ? aggregateFreeCoolingComparisonRows(
       freeCoolingHumifogAnalysis.binRows,
@@ -5694,6 +5835,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       label: language === 'fr' ? 'Vapeur electrique' : 'Electric steam',
       color: 'red',
       ...annualTechnologyResults.electricSteam,
+      comparisonKwh: freeCoolingSteamAnnual.humidificationEnergyKwh || 0,
+      comparisonCost: freeCoolingSteamAnnual.humidificationCost || 0,
       totalKwh: annualTechnologyResults.electricSteam.annualEnergyKWh,
       annualCost: annualTechnologyResults.electricSteam.annualOperatingCost,
     },
@@ -5702,6 +5845,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       label: language === 'fr' ? 'Vapeur gaz naturel' : 'Natural gas steam',
       color: 'yellow',
       ...annualTechnologyResults.naturalGasSteam,
+      comparisonKwh: freeCoolingNaturalGasHumidificationKwh,
+      comparisonCost: (freeCoolingNaturalGasHumidificationKwh / 10.35) * naturalGasRate,
       totalKwh: annualTechnologyResults.naturalGasSteam.annualEnergyKWh,
       annualCost: annualTechnologyResults.naturalGasSteam.annualOperatingCost,
     },
@@ -5710,6 +5855,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       label: language === 'fr' ? 'Humidificateur gaz atmosph.' : 'Atmospheric gas humidifier',
       color: 'amber',
       ...annualTechnologyResults.atmosphericGas,
+      comparisonKwh: freeCoolingAtmosphericGasHumidificationKwh,
+      comparisonCost: (freeCoolingAtmosphericGasHumidificationKwh / 10.35) * naturalGasRate,
       totalKwh: annualTechnologyResults.atmosphericGas.annualEnergyKWh,
       annualCost: annualTechnologyResults.atmosphericGas.annualOperatingCost,
     },
@@ -5718,6 +5865,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       label: language === 'fr' ? 'Humifog + Free Cooling' : 'Humifog + Free Cooling',
       color: 'cyan',
       ...annualTechnologyResults.humifogFreeCooling,
+      comparisonKwh: (freeCoolingHumifogAnnual.humidificationEnergyKwh || 0) + (freeCoolingHumifogAnnual.reheatEnergyKwh || 0),
+      comparisonCost: (freeCoolingHumifogAnnual.humidificationCost || 0) + (freeCoolingHumifogAnnual.reheatCost || 0),
       humidificationOnlyCost: freeCoolingHumifogAnnual.humidificationCost || 0,
       reheatCost: freeCoolingHumifogAnnual.reheatCost || 0,
       totalKwh: annualTechnologyResults.humifogFreeCooling.annualEnergyKWh,
@@ -5746,12 +5895,6 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   ]
   const freeCoolingAnnualTechnologyRows = [
     {
-      key: 'commonHeating',
-      label: language === 'fr' ? 'Énergie chauffage commun de l’UTA' : 'Common AHU heating energy',
-      value: (option) => option.commonHeatingKWh,
-      format: formatAnnualEnergyIfComplete,
-    },
-    {
       key: 'reheat',
       label: language === 'fr' ? 'Énergie réchauffage supplémentaire Humifog' : 'Additional Humifog reheat energy',
       value: (option) => option.reheatKWh,
@@ -5772,20 +5915,14 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     {
       key: 'total',
       label: language === 'fr' ? 'Energie annuelle totale' : 'Total annual energy',
-      value: (option) => option.totalKwh,
+      value: (option) => option.comparisonKwh,
       format: formatAnnualEnergyIfComplete,
     },
     {
       key: 'cost',
-      label: language === 'fr' ? 'Coût annuel total avec chauffage commun' : 'Total annual cost including common heating',
-      value: (option) => option.annualCost,
+      label: language === 'fr' ? 'Coût énergétique annuel comparatif' : 'Comparative annual energy cost',
+      value: (option) => option.comparisonCost,
       format: formatAnnualCostIfComplete,
-    },
-    {
-      key: 'heatingOnlyCost',
-      label: language === 'fr' ? 'Coût chauffage commun seul' : 'Common heating-only cost',
-      value: (option) => option.heatingOnlyCost,
-      format: (value) => value === null ? (language === 'fr' ? 'Non applicable' : 'Not applicable') : formatAnnualCostIfComplete(value),
     },
     {
       key: 'humidificationOnlyCost',
@@ -8659,6 +8796,18 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-4 mb-6">
+                {freeCoolingHumifogWorkerLoading && !freeCoolingHumifogWorkerResult && (
+                  <div className="mb-3 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm font-bold text-cyan-900">
+                    {language === 'fr'
+                      ? 'Calcul annuel Free Cooling + Humifog en cours...'
+                      : 'Annual Free Cooling + Humifog calculation in progress...'}
+                  </div>
+                )}
+                {freeCoolingHumifogWorkerError && (
+                  <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-900">
+                    {freeCoolingHumifogWorkerError}
+                  </div>
+                )}
                 <div className="text-xs uppercase font-bold text-slate-500 mb-2">
                   {language === 'fr' ? 'Clarification des unites' : 'Unit clarification'}
                 </div>
@@ -9083,8 +9232,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                           </div>
                         </td>
                         <td className="p-3 text-center text-blue-700">{displayDeltaTemp(displayedAdiabaticDeltaDb)}{tempUnit}</td>
-                        <td className="p-3 text-center font-bold">{row.additionalHumifogReheatEnergyKwh > 0 ? (language === 'fr' ? 'OUI' : 'YES') : (language === 'fr' ? 'NON' : 'NO')}</td>
-                        <td className="p-3 text-center">{formatAnnualEnergy(row.additionalHumifogReheatEnergyKwh)}</td>
+                        <td className="p-3 text-center font-bold">{row.humifogOptimized.reheatEnergyKwh > 0 ? (language === 'fr' ? 'OUI' : 'YES') : (language === 'fr' ? 'NON' : 'NO')}</td>
+                        <td className="p-3 text-center">{formatAnnualEnergy(row.humifogOptimized.reheatEnergyKwh)}</td>
                         <td className="p-3 text-center">{formatInstantPower(row.commonHeatingThermalKw)}</td>
                         <td className="p-3 text-center font-bold text-red-700">{formatAnnualEnergy(row.steamReference.binEnergyKwh)}</td>
                         <td className="p-3 text-center font-bold text-cyan-700">{formatAnnualEnergy(row.humifogOptimized.binEnergyKwh)}</td>
@@ -9210,7 +9359,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                   </thead>
                   <tbody>
                     {freeCoolingHumifogAnalysis.optimizationRows.map((row) => (
-                      <tr key={`opt-${row.oaPercent}`} className={`border-b border-slate-100 ${row.oaPercent === freeCoolingHumifogAnalysis.optimal.oaPercent ? 'bg-emerald-50' : ''}`}>
+                      <tr key={`opt-${row.oaPercent}`} className={`border-b border-slate-100 ${row.oaPercent === freeCoolingHumifogAnalysis.optimal?.oaPercent ? 'bg-emerald-50' : ''}`}>
                         <td className="p-3 text-center font-bold text-sky-700">{row.oaPercent}%</td>
                         <td className="p-3 text-center font-bold text-orange-700">{row.raPercent}%</td>
                         <td className="p-3 text-center">{displayTemp(row.tmix)}{tempUnit}</td>
@@ -9440,9 +9589,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     [language === 'fr' ? 'Energie annuelle totale Humifog' : 'Humifog System Total Annual Energy', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifog.totalEnergyKwh)],
                     [language === 'fr' ? 'Economies annuelles nettes' : 'Net Annual Savings', freeCoolingCalculationComplete ? formatSavingsAnnualEnergy(freeCoolingHumifogAnalysis.netSavings.netAnnualEnergySavingsKwh) : calculationIncompleteText],
                     [language === 'fr' ? 'Economies cout annuel' : 'Net Annual Cost Savings', freeCoolingCalculationComplete ? formatSavingsAnnualCost(freeCoolingHumifogAnalysis.netSavings.annualCostSavings) : calculationIncompleteText],
-                    [language === 'fr' ? 'OA recommande' : 'Recommended OA %', `${freeCoolingHumifogAnalysis.optimal.oaPercent}%`],
-                    [language === 'fr' ? 'RA recommande' : 'Recommended RA %', `${freeCoolingHumifogAnalysis.optimal.raPercent}%`],
-                    [language === 'fr' ? 'Tmix optimale' : 'Optimal Mixed Air Temperature', `${displayTemp(freeCoolingHumifogAnalysis.optimal.tmix)}${tempUnit}`],
+                    [language === 'fr' ? 'OA recommande' : 'Recommended OA %', freeCoolingHumifogAnalysis.optimal ? `${freeCoolingHumifogAnalysis.optimal.oaPercent}%` : calculationIncompleteText],
+                    [language === 'fr' ? 'RA recommande' : 'Recommended RA %', freeCoolingHumifogAnalysis.optimal ? `${freeCoolingHumifogAnalysis.optimal.raPercent}%` : calculationIncompleteText],
+                    [language === 'fr' ? 'Tmix optimale' : 'Optimal Mixed Air Temperature', freeCoolingHumifogAnalysis.optimal ? `${displayTemp(freeCoolingHumifogAnalysis.optimal.tmix)}${tempUnit}` : calculationIncompleteText],
                     [
                       'ASHRAE Compliance',
                       language === 'fr'
