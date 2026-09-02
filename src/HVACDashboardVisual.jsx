@@ -8776,7 +8776,11 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     [language === 'fr' ? 'Pompe Humifog annuelle' : 'Annual Humifog pump kWh', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.humifogPumpKwh)],
                     [language === 'fr' ? 'Cout pompe Humifog' : 'Humifog pump cost', formatAnnualCostIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.humifogPumpCost)],
                     [language === 'fr' ? 'Source rechauffage selectionnee' : 'Selected reheat source', selectedReheatSystemDisplayName],
-                    [language === 'fr' ? 'Rechauffage thermique requis' : 'Required thermal reheat', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.adiabaticReheatThermalKwh)],
+                    [language === 'fr' ? 'Rechauffage thermique requis' : 'Required thermal reheat', formatAnnualEnergyIfComplete(
+                      freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.selectedReheatEnergyKwh > 0
+                        ? freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.adiabaticReheatThermalKwh
+                        : 0
+                    )],
                     [language === 'fr' ? 'Rechauffage applique selon methode' : 'Applied reheat by selected method', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.selectedReheatEnergyKwh)],
                     [language === 'fr' ? 'Cout rechauffage selectionne' : 'Selected reheat cost', formatAnnualCostIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifogDebug?.selectedReheatCost)],
                     ...(usesHeatPumpReheat
