@@ -250,6 +250,11 @@ function calculateHumifogBinRow({
     damperSolve,
     reheatDeltaC,
     reheatThermalKw,
+    commonHeatingDeltaC,
+    commonHeatingThermalKw,
+    additionalHumifogReheatDeltaC,
+    additionalHumifogReheatThermalKw,
+    requiredTemperatureBeforeHumifogDb,
     heatingLoadKw,
     reheatLoadKw,
     totalAfterHumifogHeatingKw,
@@ -271,6 +276,8 @@ function calculateHumifogBinRow({
   const heatingEnergyKwh = heatingLoadKw * bin.hours
   const reheatEnergyKwh = reheatLoadKw * bin.hours
   const thermalReheatEnergyKwh = reheatThermalKw * bin.hours
+  const commonHeatingEnergyKwh = heatingEnergyKwh
+  const additionalHumifogReheatEnergyKwh = reheatEnergyKwh
   const adiabaticReheatThermalKw = sensibleHeatingKw(airflowCfm, adiabaticCoolingC)
   const adiabaticReheatThermalKwh = adiabaticReheatThermalKw * bin.hours
   const adiabaticReheatElectricKw = adiabaticReheatThermalKw / Math.max(heatPumpCOP, 0.1)
@@ -316,6 +323,11 @@ function calculateHumifogBinRow({
     humifogWetBulbReferenceC: mixed.wb,
     reheatDeltaC,
     reheatThermalKw,
+    commonHeatingDeltaC,
+    commonHeatingThermalKw,
+    additionalHumifogReheatDeltaC,
+    additionalHumifogReheatThermalKw,
+    requiredTemperatureBeforeHumifogDb,
     thermalReheatEnergyKwh,
     humifogLoadLbHr,
     humifogLoadKgH: humifogLoadLbHr * 0.453592,
@@ -330,9 +342,11 @@ function calculateHumifogBinRow({
     heatPumpCOP,
     totalAfterHumifogHeatingKw,
     heatingEnergyKwh,
+    commonHeatingEnergyKwh,
     comparisonHeatingEnergyKwh: heatingLoadKw * bin.hours,
     humidificationEnergyKwh,
     reheatEnergyKwh,
+    additionalHumifogReheatEnergyKwh,
     totalEnergyKwh,
     heatingCost,
     humidificationCost,
@@ -502,36 +516,53 @@ function calculateHumifogFreeCoolingState({
     const inletToHumifog = recovered
     const afterHumifog = applyHumifogFromMixedWetBulb(inletToHumifog, inletToHumifog, humifogEffectiveness, room.w)
     const needsMechanicalReheat = afterHumifog.db < targetAfterHumifogDb - 0.05
-    const finalReheatDb = needsMechanicalReheat
-      ? targetAfterHumifogDb
-      : afterHumifog.db
-    const afterHeating = applyHeatingToDryBulb(afterHumifog, finalReheatDb)
-    const heatingLoadKw = 0
-    const reheatDeltaC = needsMechanicalReheat
-      ? Math.max(0, targetAfterHumifogDb - afterHumifog.db)
-      : 0
-    const reheatThermalKw = sensibleHeatingKw(airflowCfm, reheatDeltaC)
-    const reheatLoadKw = needsMechanicalReheat
-      ? reheatInputKw(reheatThermalKw, selectedReheatSystem, heatPumpCOP)
-      : 0
     const adiabaticCoolingC = Math.max(0, inletToHumifog.db - afterHumifog.db)
+    const requiredTemperatureBeforeHumifogDb = targetAfterHumifogDb + adiabaticCoolingC
+    const commonHeatingDeltaC = Math.max(0, targetAfterHumifogDb - mixed.db)
+    const additionalHumifogReheatDeltaC = damperSolve.limitedByMinimum
+      ? Math.max(0, requiredTemperatureBeforeHumifogDb - targetAfterHumifogDb)
+      : 0
+    const commonHeatingThermalKw = sensibleHeatingKw(airflowCfm, commonHeatingDeltaC)
+    const additionalHumifogReheatThermalKw = sensibleHeatingKw(airflowCfm, additionalHumifogReheatDeltaC)
+    const heatingLoadKw = reheatInputKw(commonHeatingThermalKw, selectedReheatSystem, heatPumpCOP)
+    const reheatDeltaC = additionalHumifogReheatDeltaC
+    const reheatThermalKw = additionalHumifogReheatThermalKw
+    const reheatLoadKw = reheatInputKw(reheatThermalKw, selectedReheatSystem, heatPumpCOP)
+    const commonHeatedInletToHumifog = applyHeatingToDryBulb(
+      inletToHumifog,
+      Math.max(inletToHumifog.db, targetAfterHumifogDb)
+    )
+    const finalAfterHumifog = applyHumifogFromMixedWetBulb(
+      commonHeatedInletToHumifog,
+      commonHeatedInletToHumifog,
+      humifogEffectiveness,
+      room.w
+    )
+    const afterHeating = applyHeatingToDryBulb(
+      finalAfterHumifog,
+      Math.max(finalAfterHumifog.db, targetAfterHumifogDb)
+    )
 
     result = {
       calculatedMixed,
       mixed,
       recovered,
       inletToHumifog,
-      afterHumifog,
+      afterHumifog: finalAfterHumifog,
       afterHeating,
       damperTargetDb,
       damperSolve,
       reheatDeltaC,
       reheatThermalKw,
+      commonHeatingDeltaC,
+      commonHeatingThermalKw,
+      additionalHumifogReheatThermalKw,
+      requiredTemperatureBeforeHumifogDb,
       heatingLoadKw,
       reheatLoadKw,
       totalAfterHumifogHeatingKw: heatingLoadKw + reheatLoadKw,
       adiabaticCoolingC,
-      mechanicalReheatRequired: needsMechanicalReheat,
+      mechanicalReheatRequired: additionalHumifogReheatDeltaC > 0,
     }
 
     if (Math.abs(adiabaticCoolingC - estimatedAdiabaticCoolingC) < 0.05) break
@@ -898,9 +929,11 @@ function summarizeRows(rows) {
     averageAfterHumifogDb: weighted((row) => row.afterHumifog.db),
     averageAfterHumifogRh: weighted((row) => row.afterHumifog.rh),
     heatingEnergyKwh: rows.reduce((total, row) => total + row.heatingEnergyKwh, 0),
+    commonHeatingEnergyKwh: rows.reduce((total, row) => total + (row.commonHeatingEnergyKwh || 0), 0),
     comparisonHeatingEnergyKwh: rows.reduce((total, row) => total + row.comparisonHeatingEnergyKwh, 0),
     humidificationEnergyKwh: rows.reduce((total, row) => total + row.humidificationEnergyKwh, 0),
     reheatEnergyKwh: rows.reduce((total, row) => total + (row.reheatEnergyKwh || 0), 0),
+    additionalHumifogReheatEnergyKwh: rows.reduce((total, row) => total + (row.additionalHumifogReheatEnergyKwh || 0), 0),
     thermalReheatEnergyKwh: rows.reduce((total, row) => total + (row.thermalReheatEnergyKwh || 0), 0),
     mechanicalReheatEnergyKwh: rows.reduce((total, row) => total + (row.reheatEnergyKwh || 0), 0),
     adiabaticReheatThermalKwh: rows.reduce((total, row) => total + (row.adiabaticReheatThermalKwh || 0), 0),
@@ -908,6 +941,7 @@ function summarizeRows(rows) {
     totalEnergyKwh: rows.reduce((total, row) => total + row.totalEnergyKwh, 0),
     freeCoolingObtainedKwh: rows.reduce((total, row) => total + (row.freeCoolingObtainedKwh || 0), 0),
     humifogPumpEnergyKwh: rows.reduce((total, row) => total + (row.humifogPumpEnergyKwh || 0), 0),
+    humifogComparisonEnergyKwh: rows.reduce((total, row) => total + (row.humifogPumpEnergyKwh || 0) + (row.reheatEnergyKwh || 0), 0),
     netFreeCoolingSavingsKwh: rows.reduce((total, row) => total + (row.netFreeCoolingSavingsKwh || 0), 0),
     heatingCost: rows.reduce((total, row) => total + (row.heatingCost || 0), 0),
     humidificationCost: rows.reduce((total, row) => total + (row.humidificationCost || 0), 0),

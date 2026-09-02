@@ -1211,6 +1211,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
       [tr('Température après Humifog', 'Temperature after Humifog'), '-', formatTemp(systemHumifog.averageAfterHumifogDb, data.units, data.language), '-'],
       [tr('Heures de fonctionnement Free Cooling', 'Free Cooling operating hours'), `${formatNumber(systemFreeCoolingOperatingHours, 0)} h`, `${formatNumber(systemFreeCoolingOperatingHours, 0)} h`, '-'],
       [tr('Énergie de chauffage évitée grâce au Free Cooling', 'Heating Energy Avoided by Free Cooling'), formatEnergy(referenceAvoided), formatEnergy(optimizedAvoided), formatEnergy(optimizedAvoided - referenceAvoided)],
+      [tr('Énergie chauffage commun de l’UTA', 'Common AHU heating energy'), formatEnergy(systemFreeCooling.heatingEnergyKwh || 0), formatEnergy(systemHumifog.commonHeatingEnergyKwh || 0), formatEnergy((systemFreeCooling.heatingEnergyKwh || 0) - (systemHumifog.commonHeatingEnergyKwh || 0))],
       [tr('Besoin thermique annuel de réchauffage Humifog', 'Annual Humifog thermal reheat requirement'), '-', formatEnergy(systemReheatThermalKwh), '-'],
       [tr('Énergie d’entrée réellement consommée pour le réchauffage', 'Actual reheat input energy consumed'), '-', formatEnergy(systemReheatAppliedKwh), '-'],
       [tr('Énergie pompe Humifog', 'Humifog pump energy'), '-', formatEnergy(systemPumpEnergyKwh), '-'],
