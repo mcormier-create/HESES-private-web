@@ -950,7 +950,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
     : (includesFreeCoolingAnalysis ? annual.annualSavings : energySummary.annualSavingsVsSteam)
   const economicPayback = isMultiSystemReport
     ? Number.isFinite(buildingSavings.totals.simplePaybackYears)
-      ? `${formatNumber(buildingSavings.totals.simplePaybackYears, 1)} ${tr('ans', 'years')}`
+      ? `${formatNumber(buildingSavings.totals.simplePaybackYears, 3)} ${tr('ans', 'years')}`
       : '-'
     : economics.estimatedPayback
   const economicTenYearSavings = isMultiSystemReport
@@ -1009,13 +1009,13 @@ export default function HvacEnergyOptimizationReport({ data }) {
   const buildingTechnologyRows = [...BASELINE_TECHNOLOGIES, 'humifogSelected']
     .filter((key) => projectEnergy.totals[key].applicableSystems > 0)
   const projectPayback = (value, status = 'notAvailable') => Number.isFinite(value)
-    ? `${formatNumber(value, 1)} ${tr('ans', 'years')}`
+    ? `${formatNumber(value, 3)} ${tr('ans', 'years')}`
     : status === 'immediate'
       ? tr('Immédiat', 'Immediate')
       : status === 'notEconomical'
         ? tr('Non rentable', 'Not economical')
         : tr('Non disponible', 'Not available')
-  const projectRoi = (value) => Number.isFinite(value) ? `${formatNumber(value, 1)}%` : '-'
+  const projectRoi = (value) => Number.isFinite(value) ? `${formatNumber(value, 3)}%` : '-'
   const equipmentCostCompositionRows = isMultiSystemReport
     ? projectSystems.flatMap((projectSystem, index) => {
       const systemBreakdown = projectSystem.economics?.installedCostBreakdown || {}
@@ -1465,14 +1465,14 @@ export default function HvacEnergyOptimizationReport({ data }) {
           [tr('Énergie de référence totale', 'Total reference energy'), formatEnergy(buildingSavings.totals.referenceEnergy)],
           [tr('Énergie Humifog totale', 'Total Humifog energy'), formatEnergy(buildingSavings.totals.humifogEnergy)],
           [tr('Économies d’énergie totales', 'Total energy savings'), formatEnergy(buildingSavings.totals.energySavings)],
-          [tr('Réduction d’énergie totale', 'Total energy reduction'), Number.isFinite(buildingSavings.totals.energyReductionPercent) ? `${formatNumber(buildingSavings.totals.energyReductionPercent, 1)}%` : tr('Non disponible', 'Not available')],
+          [tr('Réduction d’énergie totale', 'Total energy reduction'), Number.isFinite(buildingSavings.totals.energyReductionPercent) ? `${formatNumber(buildingSavings.totals.energyReductionPercent, 3)}%` : tr('Non disponible', 'Not available')],
           [tr('Coût énergie de référence total', 'Total reference energy operating cost'), formatMoney(buildingSavings.totals.referenceCost)],
           [tr('Coût énergie Humifog + coût réchauffage', 'Total Humifog energy cost + reheat cost'), formatMoney(buildingSavings.totals.humifogCost)],
           [tr('Économies de coût annuelles totales', 'Total annual cost savings'), formatMoney(buildingSavings.totals.costSavings)],
           [tr('Investissement Humifog total', 'Total Humifog installed investment'), formatMoney(projectEnergy.totals.humifogSelected.installedInvestmentCost)],
           [tr('Investissement incrémental total', 'Total incremental investment'), formatMoney(buildingSavings.totals.incrementalInvestment)],
           [tr('Retour simple total', 'Total simple payback'), projectPayback(buildingSavings.totals.simplePaybackYears, buildingSavings.totals.paybackStatus)],
-          [tr('ROI annuel simple total', 'Total annual simple ROI'), Number.isFinite(buildingSavings.totals.simpleAnnualRoiPercent) ? `${formatNumber(buildingSavings.totals.simpleAnnualRoiPercent, 1)}%` : tr('Non disponible', 'Not available')],
+          [tr('ROI annuel simple total', 'Total annual simple ROI'), Number.isFinite(buildingSavings.totals.simpleAnnualRoiPercent) ? `${formatNumber(buildingSavings.totals.simpleAnnualRoiPercent, 3)}%` : tr('Non disponible', 'Not available')],
         ]} />
         <h3>{tr('Bases horaires par système', 'Operating-hour basis by system')}</h3>
         <KeyValueTable rows={projectEnergy.systemHourBases.map((entry) => [entry.name, localizeOperatingHourBasis(entry.basis) || '-'])} />
@@ -1508,7 +1508,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
                   <td>{projectEnergy.referenceTechnology === key ? '-' : formatMoney(total.incrementalInvestment)}</td>
                   <td>{projectEnergy.referenceTechnology === key ? '-' : projectPayback(total.simplePaybackYears, total.paybackStatus)}</td>
                   <td>{projectEnergy.referenceTechnology === key ? '-' : projectRoi(total.simpleAnnualRoiPercent)}</td>
-                  <td>{projectEnergy.referenceTechnology === key ? tr('Référence', 'Reference') : Number.isFinite(total.energyReductionPercent) ? `${formatNumber(total.energyReductionPercent, 1)}%` : tr('Non disponible', 'Not available')}</td>
+                  <td>{projectEnergy.referenceTechnology === key ? tr('Référence', 'Reference') : Number.isFinite(total.energyReductionPercent) ? `${formatNumber(total.energyReductionPercent, 3)}%` : tr('Non disponible', 'Not available')}</td>
                 </tr>
               )
             })}
@@ -1532,7 +1532,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
               <td>{formatFlow(item.system?.supplyAirflowCfm, data.units)}</td>
               <td>{technologyNames[itemSavings.referenceTechnology] || itemSavings.referenceTechnology}</td>
               <td>{formatEnergy(itemSavings.referenceEnergy)}</td><td>{formatEnergy(itemSavings.humifogEnergy)}</td>
-              <td>{formatEnergy(itemSavings.energySavings)}</td><td>{Number.isFinite(itemSavings.energyReductionPercent) ? `${formatNumber(itemSavings.energyReductionPercent, 1)}%` : tr('Non disponible', 'Not available')}</td>
+              <td>{formatEnergy(itemSavings.energySavings)}</td><td>{Number.isFinite(itemSavings.energyReductionPercent) ? `${formatNumber(itemSavings.energyReductionPercent, 3)}%` : tr('Non disponible', 'Not available')}</td>
               <td>{formatMoney(itemSavings.referenceCost)}</td><td>{formatMoney(itemSavings.humifogCost)}</td><td>{formatMoney(itemSavings.costSavings)}</td>
               <td>{projectPayback(itemSavings.simplePaybackYears, itemSavings.paybackStatus)}</td>
             </tr>
@@ -1540,7 +1540,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
           <tfoot><tr>
             <th>{tr('TOTAL BÂTIMENT', 'TOTAL BUILDING')}</th><th colSpan="3" />
               <th>{formatEnergy(buildingSavings.totals.referenceEnergy)}</th><th>{formatEnergy(buildingSavings.totals.humifogEnergy)}</th><th>{formatEnergy(buildingSavings.totals.energySavings)}</th>
-            <th>{Number.isFinite(buildingSavings.totals.energyReductionPercent) ? `${formatNumber(buildingSavings.totals.energyReductionPercent, 1)}%` : tr('Non disponible', 'Not available')}</th>
+            <th>{Number.isFinite(buildingSavings.totals.energyReductionPercent) ? `${formatNumber(buildingSavings.totals.energyReductionPercent, 3)}%` : tr('Non disponible', 'Not available')}</th>
               <th>{formatMoney(buildingSavings.totals.referenceCost)}</th><th>{formatMoney(buildingSavings.totals.humifogCost)}</th><th>{formatMoney(buildingSavings.totals.costSavings)}</th><th>{projectPayback(buildingSavings.totals.simplePaybackYears, buildingSavings.totals.paybackStatus)}</th>
           </tr></tfoot>
         </table>
@@ -1756,7 +1756,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
           [
             tr("Réduction d'énergie", 'Energy Reduction'),
             Number.isFinite(buildingSavings.totals.energyReductionPercent)
-              ? `${formatNumber(buildingSavings.totals.energyReductionPercent, 1)}%`
+              ? `${formatNumber(buildingSavings.totals.energyReductionPercent, 3)}%`
               : tr('Non disponible', 'Not available'),
           ],
           [
@@ -1983,7 +1983,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
       <ReportSection title={tr('RÉSULTATS GLOBAUX DU BÂTIMENT', 'OVERALL BUILDING RESULTS')} pageBreak allowPageBreak>
         <div className="executive-callout">
           <div><span className="eyebrow">{tr('Économies annuelles totales d’énergie', 'TOTAL ANNUAL ENERGY SAVINGS')}</span><strong>{formatEnergy(buildingSavings.totals.energySavings)}</strong></div>
-          <div><span className="eyebrow">{tr('Réduction totale d’énergie', 'TOTAL ENERGY REDUCTION')}</span><strong>{Number.isFinite(buildingSavings.totals.energyReductionPercent) ? `${formatNumber(buildingSavings.totals.energyReductionPercent, 1)}%` : tr('Non disponible', 'Not available')}</strong></div>
+          <div><span className="eyebrow">{tr('Réduction totale d’énergie', 'TOTAL ENERGY REDUCTION')}</span><strong>{Number.isFinite(buildingSavings.totals.energyReductionPercent) ? `${formatNumber(buildingSavings.totals.energyReductionPercent, 3)}%` : tr('Non disponible', 'Not available')}</strong></div>
           <div><span className="eyebrow">{tr('Économies annuelles totales de coût', 'TOTAL ANNUAL COST SAVINGS')}</span><strong>{formatMoney(buildingSavings.totals.costSavings)}</strong></div>
         </div>
         <KeyValueTable rows={[
@@ -1991,7 +1991,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
           [tr('Énergie Humifog totale', 'Total Humifog Energy'), formatEnergy(buildingSavings.totals.humifogEnergy)],
           [tr('Investissement incrémental total', 'Total Incremental Investment'), formatMoney(buildingSavings.totals.incrementalInvestment)],
           [tr('Retour simple', 'Simple Payback'), projectPayback(buildingSavings.totals.simplePaybackYears, buildingSavings.totals.paybackStatus)],
-          [tr('ROI annuel simple', 'Annual Simple ROI'), Number.isFinite(buildingSavings.totals.simpleAnnualRoiPercent) ? `${formatNumber(buildingSavings.totals.simpleAnnualRoiPercent, 1)}%` : tr('Non disponible', 'Not available')],
+          [tr('ROI annuel simple', 'Annual Simple ROI'), Number.isFinite(buildingSavings.totals.simpleAnnualRoiPercent) ? `${formatNumber(buildingSavings.totals.simpleAnnualRoiPercent, 3)}%` : tr('Non disponible', 'Not available')],
         ]} />
       </ReportSection>
         <FormulaBlock lines={includesFreeCoolingAnalysis
@@ -3044,7 +3044,7 @@ function formatWater(lbHr, units) {
 
 function formatEnergy(kwh) {
   if (!Number.isFinite(Number(kwh))) return activeReportLanguage === 'fr' ? 'Non disponible' : 'Not available'
-  return `${formatNumber(kwh, 0, activeReportLanguage)} kWh`
+  return `${formatNumber(kwh, 2, activeReportLanguage)} kWh`
 }
 
 function formatPower(kw) {
@@ -3054,9 +3054,9 @@ function formatPower(kw) {
 function formatMoney(value) {
   if (!Number.isFinite(Number(value))) return activeReportLanguage === 'fr' ? 'Non disponible' : 'Not available'
   if (activeReportLanguage === 'fr') {
-    return `${formatNumber(value, 0, activeReportLanguage)} $`
+    return `${formatNumber(value, 2, activeReportLanguage)} $`
   }
-  return `$${formatNumber(value, 0, activeReportLanguage)}`
+  return `$${formatNumber(value, 2, activeReportLanguage)}`
 }
 
 function formatUtilityRate(value, digits = 3) {
@@ -3077,7 +3077,7 @@ function formatUtilityRateWithUnit(value, digits = 3, unit = '') {
 function formatSignedMoney(value) {
   const numeric = Number(value || 0)
   const sign = numeric > 0 ? '+' : numeric < 0 ? '-' : ''
-  return `${sign}$${formatNumber(Math.abs(numeric), 0, activeReportLanguage)}`
+  return `${sign}$${formatNumber(Math.abs(numeric), 2, activeReportLanguage)}`
 }
 
 function formatPayback(row) {
@@ -3085,11 +3085,10 @@ function formatPayback(row) {
   if ((row.annualSavings || 0) <= 0 || row.paybackYears == null) return 'Not economical'
   if (row.paybackYears === 0) return 'Immediate'
   if (activeReportLanguage === 'fr') {
-    const rounded = Number(formatNumber(row.paybackYears, 1, activeReportLanguage).replace(',', '.'))
-    const unit = Math.abs(rounded - 1) < 0.0001 ? 'an' : 'ans'
-    return `${formatNumber(row.paybackYears, 1, activeReportLanguage)} ${unit}`
+    const unit = Math.abs(row.paybackYears - 1) < 0.0001 ? 'an' : 'ans'
+    return `${formatNumber(row.paybackYears, 3, activeReportLanguage)} ${unit}`
   }
-  return `${formatNumber(row.paybackYears, 1, activeReportLanguage)} years`
+  return `${formatNumber(row.paybackYears, 3, activeReportLanguage)} years`
 }
 
 function formatNumber(value, digits = 1, language = activeReportLanguage) {

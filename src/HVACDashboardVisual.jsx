@@ -5145,8 +5145,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     label: option.label,
   }))
   const roiRows = roiOptions.map((option) => {
-    const annualSavings = Math.round(referenceAnnualCost - option.annualCost)
-    const incrementalCost = Math.round(option.installedCost - referenceInstalledCost)
+    const annualSavings = referenceAnnualCost - option.annualCost
+    const incrementalCost = option.installedCost - referenceInstalledCost
     const paybackYears = annualSavings > 0
       ? Math.max(0, incrementalCost) / annualSavings
       : null
@@ -5163,9 +5163,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     ? (language === 'fr' ? 'Non rentable selon les données actuelles' : 'Not economical with current inputs')
     : selectedRoiRow.paybackYears === 0
       ? (language === 'fr' ? 'Immédiat' : 'Immediate')
-      : `${selectedRoiRow.paybackYears.toFixed(1)} ${language === 'fr' ? 'ans' : 'years'}`
-  const tenYearSavings = Math.round((selectedRoiRow?.annualSavings || 0) * 10 - Math.max(0, selectedRoiRow?.incrementalCost || 0))
-  const twentyYearSavings = Math.round((selectedRoiRow?.annualSavings || 0) * 20 - Math.max(0, selectedRoiRow?.incrementalCost || 0))
+      : `${selectedRoiRow.paybackYears.toFixed(3)} ${language === 'fr' ? 'ans' : 'years'}`
+  const tenYearSavings = (selectedRoiRow?.annualSavings || 0) * 10 - Math.max(0, selectedRoiRow?.incrementalCost || 0)
+  const twentyYearSavings = (selectedRoiRow?.annualSavings || 0) * 20 - Math.max(0, selectedRoiRow?.incrementalCost || 0)
   // Explanation panel reads the same values already computed above; it derives no new economics.
   const roiExplanationReferenceRow = roiRows.find((row) => row.reference) || roiRows[0]
   const roiExplanationAnnualRoiPercent = Number.isFinite(selectedRoiRow?.incrementalCost) && selectedRoiRow.incrementalCost > 0 && Number.isFinite(selectedRoiRow?.annualSavings) && selectedRoiRow.annualSavings > 0
@@ -5466,28 +5466,26 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   })
-  const formatEnergy = (value) => Math.round(value || 0).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')
-  const formatCost = (value) => Math.round(value || 0).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')
+  const formatEnergy = (value) => formatNumber(value, 2)
+  const formatCost = (value) => formatNumber(value, 2)
   const formatSignedNumber = (value) => {
-    const rounded = Math.round(value || 0)
-    const formatted = Math.abs(rounded).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')
-    if (rounded > 0) return `+${formatted}`
-    if (rounded < 0) return `-${formatted}`
+    const numeric = Number(value || 0)
+    const formatted = formatNumber(Math.abs(numeric), 2)
+    if (numeric > 0) return `+${formatted}`
+    if (numeric < 0) return `-${formatted}`
     return formatted
   }
   const formatSavingsNumber = (value) => {
-    const rounded = Math.round(value || 0)
-    const formatted = Math.abs(rounded).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')
-    return rounded < 0 ? `-${formatted}` : formatted
+    const numeric = Number(value || 0)
+    const formatted = formatNumber(Math.abs(numeric), 2)
+    return numeric < 0 ? `-${formatted}` : formatted
   }
-  const annualSteamCostDisplay = isHourlySimulationActive && hourlyWeatherSummary
-    ? Math.round(annualSteamCostResolved)
-    : Math.round(annualSteamCostResolved)
-  const annualNaturalGasCostDisplay = Math.round(annualNaturalGasCostResolved)
-  const annualAtmosphericGasHumidifierCostDisplay = Math.round(annualAtmosphericGasHumidifierCostResolved)
+  const annualSteamCostDisplay = annualSteamCostResolved
+  const annualNaturalGasCostDisplay = annualNaturalGasCostResolved
+  const annualAtmosphericGasHumidifierCostDisplay = annualAtmosphericGasHumidifierCostResolved
   const annualAdiabaticCostDisplay = isHourlySimulationActive && hourlyWeatherSummary
-    ? Math.round(hourlyWeatherSummary.annualCost || 0)
-    : Math.round(annualAdiabaticCostResolved)
+    ? hourlyWeatherSummary.annualCost || 0
+    : annualAdiabaticCostResolved
   const formatAnnualEnergy = (value) => `${formatEnergy(value)} kWh/year`
   const formatAnnualCost = (value) => `${formatCost(value)} $/year`
   const formatInstalledCost = (value) => `${formatCost(value)} $`
@@ -5500,14 +5498,14 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     if (row.reference) return language === 'fr' ? 'Référence' : 'Reference'
     if (row.annualSavings <= 0) return language === 'fr' ? 'Non rentable' : 'Not economical'
     if (row.paybackYears === 0) return language === 'fr' ? 'Immédiat' : 'Immediate'
-    return `${formatNumber(row.paybackYears, 1)} ${language === 'fr' ? 'ans' : 'years'}`
+    return `${formatNumber(row.paybackYears, 3)} ${language === 'fr' ? 'ans' : 'years'}`
   }
   const formatInstantPower = (value) => `${formatNumber(value, 1)} kW`
   const formatSignedPercent = (value) => {
     const numeric = Number(value || 0)
     const formatted = Math.abs(numeric).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA', {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1,
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 3,
     })
     if (numeric > 0) return `+${formatted}%`
     if (numeric < 0) return `-${formatted}%`
@@ -5516,8 +5514,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const formatSavingsPercent = (value) => {
     const numeric = Number(value || 0)
     const formatted = Math.abs(numeric).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA', {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1,
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 3,
     })
     return numeric < 0 ? `-${formatted}%` : `${formatted}%`
   }
@@ -7396,7 +7394,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     />
                   </td>
                   <td className="p-4 text-center text-red-700 font-semibold">
-                    {formatAnnualEnergy(annualCommonHvacHeatingKwhResolved + annualElectricSteamHumidificationInputKwhResolved)} / {annualSteamCostDisplay.toLocaleString()} $/an
+                    {formatAnnualEnergy(annualCommonHvacHeatingKwhResolved + annualElectricSteamHumidificationInputKwhResolved)} / {formatCost(annualSteamCostDisplay)} $/an
                   </td>
                 </tr>
 
@@ -7415,7 +7413,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     />
                   </td>
                   <td className="p-4 text-center text-yellow-700 font-semibold">
-                    {annualNaturalGasCostDisplay.toLocaleString()} $/an
+                    {formatCost(annualNaturalGasCostDisplay)} $/an
                   </td>
                 </tr>
 
@@ -7952,17 +7950,17 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                   <tr className="bg-slate-50">
                     <td className="p-4 font-semibold">{t.annualCost}</td>
                     <td className="p-4 text-center text-red-700 font-bold">
-                      {annualSteamCostDisplay.toLocaleString()} $
+                      {formatCost(annualSteamCostDisplay)} $
                       <div className="mt-1 text-xs font-semibold leading-relaxed">
                         {language === 'fr'
                           ? `Humidification seule : ${Math.round(annualElectricHumidificationOnlyCost).toLocaleString()} $/an`
                           : `Humidification only: ${Math.round(annualElectricHumidificationOnlyCost).toLocaleString()} $/year`}
                       </div>
                     </td>
-                    <td className="p-4 text-center text-yellow-700 font-bold">{annualNaturalGasCostDisplay.toLocaleString()} $</td>
-                    <td className="p-4 text-center text-amber-700 font-bold">{annualAtmosphericGasHumidifierCostDisplay.toLocaleString()} $</td>
+                    <td className="p-4 text-center text-yellow-700 font-bold">{formatCost(annualNaturalGasCostDisplay)} $</td>
+                    <td className="p-4 text-center text-amber-700 font-bold">{formatCost(annualAtmosphericGasHumidifierCostDisplay)} $</td>
                     <td className="p-4 text-center text-cyan-700 font-bold">
-                      {annualAdiabaticCostDisplay.toLocaleString()} $
+                      {formatCost(annualAdiabaticCostDisplay)} $
                       {isNoRecovery && (
                         <div className="mt-1 text-xs font-semibold text-cyan-700 leading-relaxed">
                           <div>
