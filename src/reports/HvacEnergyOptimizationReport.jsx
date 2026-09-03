@@ -976,7 +976,6 @@ export default function HvacEnergyOptimizationReport({ data }) {
   const pdfDetailedAnnualRows = [
     { key: 'heatingKWh', label: tr('Énergie annuelle chauffage', 'Annual heating energy'), cost: false },
     { key: 'humidificationKWh', label: tr('Énergie annuelle humidification', 'Annual humidification energy'), cost: false },
-    { key: 'thermalReheatKWh', label: tr('Réchauffage thermique Humifog requis', 'Humifog thermal reheat requirement'), cost: false, humifogOnly: true },
     { key: 'reheatInputKWh', label: tr('Énergie d’entrée du réchauffage Humifog', 'Humifog reheat input energy'), cost: false, humifogOnly: true },
     { key: 'reheatKWh', label: tr('Énergie annuelle de réchauffage Humifog', 'Annual Humifog reheat energy'), cost: false },
     { key: 'pumpKWh', label: tr('Énergie pompe Humifog', 'Humifog pump energy'), cost: false, humifogOnly: true },
