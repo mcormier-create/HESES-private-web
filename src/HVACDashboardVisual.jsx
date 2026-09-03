@@ -548,6 +548,33 @@ function HesaMultiSystemApp() {
     }
   }, [systems, activeSystem])
 
+  useEffect(() => {
+    setSystems((current) => {
+      let changed = false
+      const next = current.map((system) => {
+        if (system.settings?.language === systemControlsLanguage) return system
+        changed = true
+        return {
+          ...system,
+          settings: {
+            ...system.settings,
+            language: systemControlsLanguage,
+          },
+        }
+      })
+      return changed ? next : current
+    })
+
+    try {
+      const settings = getInitialProjectSettings()
+      window.localStorage.setItem(
+        HESES_PROJECT_SETTINGS_STORAGE_KEY,
+        JSON.stringify({ ...settings, language: systemControlsLanguage })
+      )
+    } catch {
+    }
+  }, [systemControlsLanguage])
+
   const updateActiveSystem = (settings) => {
     setSystems((current) => {
       let changed = false
