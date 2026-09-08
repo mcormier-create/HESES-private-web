@@ -1142,7 +1142,8 @@ function loadMultiSystemState(initialSettings, language = 'fr') {
     try {
       const saved = JSON.parse(window.localStorage.getItem(HESES_MULTI_SYSTEM_STORAGE_KEY) || 'null')
       if (Array.isArray(saved) && saved.length > 0) {
-        return saved.slice(0, 6).map((system, index) => ({
+        const savedSystems = saved.filter((system) => system && typeof system === 'object').slice(0, 6)
+        if (savedSystems.length > 0) return savedSystems.map((system, index) => ({
           id: system.id || `system-${index + 1}`,
           name: system.name || (language === 'en' ? `AHU-${index + 1}` : `UTA-${index + 1}`),
           settings: system.settings || initialSettings,
@@ -5593,7 +5594,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   useEffect(() => {
     onReportSnapshot?.(reportSnapshot)
   }, [reportSnapshotSerialized])
-  reportData.projectSystems = (projectSystems || []).map((system) => {
+  reportData.projectSystems = (projectSystems || []).filter((system) => system && typeof system === 'object').map((system) => {
     if (system.id === activeSystemId) return reportSnapshot
 
     const savedSettings = system.settings || {}
