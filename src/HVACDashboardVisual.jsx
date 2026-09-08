@@ -2842,7 +2842,22 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       includeActions: false,
       bodyHtml: buildPrintableReportMarkup(),
     })
-    window.sessionStorage.setItem(HESES_PRINT_REPORT_STORAGE_KEY, reportHtml)
+    try {
+      window.sessionStorage.setItem(HESES_PRINT_REPORT_STORAGE_KEY, reportHtml)
+    } catch (error) {
+      console.warn('Impossible de sauvegarder le rapport pour la page imprimable:', error)
+      const directReportUrl = createPrintableDocumentUrl(reportHtml)
+      const directPopup = window.open(directReportUrl, '_blank', 'popup,width=1200,height=900')
+      if (!directPopup) {
+        URL.revokeObjectURL(directReportUrl)
+        throw new Error(language === 'fr'
+          ? 'Chrome a bloqué la fenêtre du rapport. Autorisez les fenêtres contextuelles pour hesahvac.com.'
+          : 'Chrome blocked the report window. Allow pop-up windows for hesahvac.com.')
+      }
+      directPopup.focus()
+      setTimeout(() => URL.revokeObjectURL(directReportUrl), 60_000)
+      return
+    }
     // Build with the current origin explicitly so the popup never targets a stale dev-server port.
     const printableReportUrl = `${window.location.origin}/heses-report-print`
     const popup = window.open(printableReportUrl, '_blank', 'popup,width=1200,height=900')
@@ -2865,7 +2880,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       openPrintableReportPage()
     } catch (error) {
       console.error('Erreur PDF:', error)
-      alert(t.pdfError)
+      const detail = error instanceof Error && error.message ? ` ${error.message}` : ''
+      setReportStatus(language === 'fr'
+        ? `Impossible d’ouvrir le rapport imprimable.${detail}`
+        : `Unable to open the printable report.${detail}`)
     }
   }
 
