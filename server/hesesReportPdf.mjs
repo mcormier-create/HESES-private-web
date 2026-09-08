@@ -478,8 +478,13 @@ export function createHesesReportPdfMiddleware() {
           await writeLatestReportFiles({ html, pdfBuffer })
           pdfReady = true
         } catch (error) {
-          await writeLatestReportFiles({ html })
-          pdfError = error instanceof Error ? error.message : 'Erreur generation PDF Chrome.'
+          const chromeError = error instanceof Error ? error.message : 'Erreur generation PDF Chrome.'
+          const pdfBuffer = createPdfBufferFromReportHtml(html, title)
+          report.renderedPdf = pdfBuffer
+          latestRenderedPdf = pdfBuffer
+          await writeLatestReportFiles({ html, pdfBuffer })
+          pdfReady = true
+          pdfError = `Rendu visuel Chromium indisponible; PDF texte de secours genere. ${chromeError}`
         }
 
         sendJson(response, 200, {
