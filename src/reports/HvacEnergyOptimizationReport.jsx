@@ -863,6 +863,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
     const totalEnergyKwh = getOptimizationEnergyKwh(row)
     return Number.isFinite(oaPercent) && Number.isFinite(totalEnergyKwh)
   })
+  const optimalOaPercent = getOptimizationOaPercent(data.optimal)
   const heatMapRows = optimizationRows
     .map((row) => ({
       oaPercent: getOptimizationOaPercent(row),
@@ -1370,7 +1371,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
         </div>
         <div className="cover-title-block">
           <div className="cover-brand">HESA Energy Engineering Platform</div>
-          <h1>HVAC ENERGY OPTIMIZATION REPORT</h1>
+          <h1>HESA – HUMIDIFICATION ENERGY SYSTEM ANALYSIS</h1>
           <p className="cover-subtitle">Prepared for technical review, energy comparison and preliminary decision support</p>
           <div className="cover-badges">
   {projectSystems.length > 1 ? (
@@ -2527,7 +2528,9 @@ export default function HvacEnergyOptimizationReport({ data }) {
             ['Recommended Configuration', `${system.recoveryType}, ${selectedReheatName}, Humifog adiabatic humidification`],
             ['Expected Annual Savings', formatMoney(economicAnnualSavings)],
             ['Expected Payback', economicPayback],
-            ['Final Recommendation', `Proceed with Humifog optimized outdoor air control at ${formatNumber(data.optimal.oaPercent, 0)}% OA, subject to final design review.`],
+            ['Final Recommendation', Number.isFinite(optimalOaPercent)
+              ? `Proceed with Humifog optimized outdoor air control at ${formatNumber(optimalOaPercent, 0)}% OA, subject to final design review.`
+              : 'Optimization result is not available for this report.'],
           ]
           : [
             ['Recommended Configuration', `${system.recoveryType}, ${selectedReheatName}, Humifog adiabatic humidification, 100% OA`],
