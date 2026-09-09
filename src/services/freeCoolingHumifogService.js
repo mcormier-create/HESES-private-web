@@ -276,7 +276,7 @@ function calculateHumifogBinRow({
   const adiabaticReheatElectricKw = adiabaticReheatThermalKw / Math.max(heatPumpCOP, 0.1)
   const adiabaticReheatElectricKwh = adiabaticReheatElectricKw * bin.hours
   const humidificationEnergyKwh = humifogPumpKw * bin.hours
-  const totalEnergyKwh = heatingEnergyKwh + humidificationEnergyKwh + reheatEnergyKwh
+  const totalEnergyKwh = humidificationEnergyKwh + reheatEnergyKwh
   const heatingCost = reheatEnergyCost(heatingEnergyKwh, selectedReheatSystem, electricityRate, naturalGasRate)
   const humidificationCost = humidificationEnergyKwh * electricityRate
   const reheatCost = reheatEnergyCost(reheatEnergyKwh, selectedReheatSystem, electricityRate, naturalGasRate)
@@ -339,7 +339,6 @@ function calculateHumifogBinRow({
     reheatCost,
     totalCost,
     ...freeCoolingEconomy,
-    points: buildPoints({ oa, room, mixed, recovered, afterHumifog, afterHeating }),
   }
 }
 
@@ -438,7 +437,11 @@ function calculateConventionalFreeCoolingRow({
     reheatLoadKw: 0,
     heatingEnergyKwh,
     comparisonHeatingEnergyKwh: heatingEnergyKwh,
+    commonHeatingEnergyKwh: heatingEnergyKwh,
+    commonHeatingCost: heatingCost,
     humidificationEnergyKwh,
+    comparativeEnergyKwh: humidificationEnergyKwh,
+    comparativeCost: humidificationCost,
     reheatEnergyKwh: 0,
     totalEnergyKwh,
     heatingCost,
@@ -801,6 +804,8 @@ function buildBinValidationRows(conventionalRows, optimizedHumifogRows) {
         reheatCost: referenceRow?.reheatCost ?? 0,
         binEnergyKwh: referenceRow?.totalEnergyKwh ?? 0,
         binCost: referenceRow?.totalCost ?? 0,
+        comparativeBinEnergyKwh: referenceRow?.comparativeEnergyKwh ?? referenceRow?.totalEnergyKwh ?? 0,
+        comparativeBinCost: referenceRow?.comparativeCost ?? referenceRow?.totalCost ?? 0,
       },
       humifogOptimized: {
         oaPercent: humifogRow.outdoorAirPercent,
@@ -838,7 +843,7 @@ function buildBinValidationRows(conventionalRows, optimizedHumifogRows) {
 
 function buildAnnualTotalsValidation(binValidationRows, annualComparison) {
   const steamEnergyFromBins = binValidationRows.reduce(
-    (total, row) => total + (row.steamReference?.binEnergyKwh || 0),
+    (total, row) => total + (row.steamReference?.comparativeBinEnergyKwh || 0),
     0
   )
   const humifogEnergyFromBins = binValidationRows.reduce(
@@ -846,7 +851,7 @@ function buildAnnualTotalsValidation(binValidationRows, annualComparison) {
     0
   )
   const steamCostFromBins = binValidationRows.reduce(
-    (total, row) => total + (row.steamReference?.binCost || 0),
+    (total, row) => total + (row.steamReference?.comparativeBinCost || 0),
     0
   )
   const humifogCostFromBins = binValidationRows.reduce(
@@ -905,14 +910,14 @@ function summarizeRows(rows) {
     mechanicalReheatEnergyKwh: rows.reduce((total, row) => total + (row.reheatEnergyKwh || 0), 0),
     adiabaticReheatThermalKwh: rows.reduce((total, row) => total + (row.adiabaticReheatThermalKwh || 0), 0),
     adiabaticReheatElectricKwh: rows.reduce((total, row) => total + (row.adiabaticReheatElectricKwh || 0), 0),
-    totalEnergyKwh: rows.reduce((total, row) => total + row.totalEnergyKwh, 0),
+    totalEnergyKwh: rows.reduce((total, row) => total + (row.comparativeEnergyKwh ?? row.totalEnergyKwh), 0),
     freeCoolingObtainedKwh: rows.reduce((total, row) => total + (row.freeCoolingObtainedKwh || 0), 0),
     humifogPumpEnergyKwh: rows.reduce((total, row) => total + (row.humifogPumpEnergyKwh || 0), 0),
     netFreeCoolingSavingsKwh: rows.reduce((total, row) => total + (row.netFreeCoolingSavingsKwh || 0), 0),
     heatingCost: rows.reduce((total, row) => total + (row.heatingCost || 0), 0),
     humidificationCost: rows.reduce((total, row) => total + (row.humidificationCost || 0), 0),
     reheatCost: rows.reduce((total, row) => total + (row.reheatCost || 0), 0),
-    totalCost: rows.reduce((total, row) => total + (row.totalCost || 0), 0),
+    totalCost: rows.reduce((total, row) => total + (row.comparativeCost ?? row.totalCost ?? 0), 0),
   }
 }
 

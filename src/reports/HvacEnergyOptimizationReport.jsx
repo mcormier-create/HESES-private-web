@@ -810,6 +810,49 @@ export default function HvacEnergyOptimizationReport({ data }) {
   const binRows = data.binRows || []
   const binValidationRows = data.binValidationRows || []
   const optimizationRows = data.optimizationRows || []
+  const toFiniteNumber = (...values) => {
+    for (const value of values) {
+      const parsed = Number(value)
+      if (Number.isFinite(parsed)) return parsed
+    }
+    return null
+  }
+  const getOptimizationOaPercent = (row) => toFiniteNumber(
+    row?.oaPercent,
+    row?.appliedOaPercent,
+    row?.outdoorAirPercent,
+    row?.selectedOaPercent
+  )
+  const getOptimizationEnergyKwh = (row) => toFiniteNumber(
+    row?.totalEnergyKwh,
+    row?.annualEnergyKwh,
+    row?.annualEnergyKWh,
+    row?.totalEnergy
+  )
+  const getOptimizationMixedAirC = (row) => toFiniteNumber(
+    row?.tmix,
+    row?.mixedAirTempC,
+    row?.mixedDb,
+    row?.mixedAirTemperatureC,
+    row?.mixedAirTemperature
+  )
+  const getOptimizationBins = (row) => {
+    if (Array.isArray(row?.rows)) return row.rows
+    if (Array.isArray(row?.binRows)) return row.binRows
+    if (Array.isArray(row?.bins)) return row.bins
+    return []
+  }
+  const validOptimizationRows = optimizationRows.filter((row) => {
+    const oaPercent = getOptimizationOaPercent(row)
+    const totalEnergyKwh = getOptimizationEnergyKwh(row)
+    return Number.isFinite(oaPercent) && Number.isFinite(totalEnergyKwh)
+  })
+  const heatMapRows = optimizationRows
+    .map((row) => ({
+      oaPercent: getOptimizationOaPercent(row),
+      rows: getOptimizationBins(row),
+    }))
+    .filter((row) => Number.isFinite(row.oaPercent) && Array.isArray(row.rows) && row.rows.length > 0)
   const conventionalRows = data.conventionalRows || []
   const optimizedRows = data.optimizedHumifogRows || []
   const pointMap = new Map(points.map((point) => [point.key, point.state]))
@@ -2325,23 +2368,30 @@ export default function HvacEnergyOptimizationReport({ data }) {
       {includesFreeCoolingAnalysis && (
         <ReportSection title={reportSectionTitle('graphs', tr('GRAPHIQUES', 'GRAPHS'))} pageBreak allowPageBreak>
           <div className="graph-grid">
-            {optimizationRows.length > 0 && <>
+            {validOptimizationRows.length > 0 && <>
               <LineGraph
                 title="Graph 1 - Energy vs OA %"
-                data={optimizationRows.map((row) => ({ x: row.oaPercent, y: row.totalEnergyKwh }))}
+                data={validOptimizationRows.map((row) => ({
+                  x: getOptimizationOaPercent(row),
+                  y: getOptimizationEnergyKwh(row),
+                }))}
                 color="#0ea5e9"
                 yLabel="kWh"
               />
               <LineGraph
                 title="Graph 2 - Mixed Air Temperature vs OA %"
-                data={optimizationRows.map((row) => ({ x: row.oaPercent, y: row.tmix }))}
+                data={validOptimizationRows.map((row) => ({
+                  x: getOptimizationOaPercent(row),
+                  y: getOptimizationMixedAirC(row),
+                }))}
                 color="#f97316"
                 yLabel={data.units === 'imperial' ? (isFrench ? '°F' : 'deg F') : (isFrench ? '°C' : 'deg C')}
                 yTransform={(value) => data.units === 'imperial' ? value * 9 / 5 + 32 : value}
               />
             </>}
             {showBinAnalysis && <BarGraph title="Graph 3 - Annual Savings by BIN" data={binSavingsRows} color="#22c55e" />}
-            {optimizationRows.length > 0 && <HeatMap title="Graph 4 - OA / Temperature Heat Map" rows={optimizationRows} units={data.units} />}
+            {heatMapRows.length > 0 && <HeatMap title="Graph 4 - OA / Temperature Heat Map" rows={heatMapRows} units={data.units} />}
+            {heatMapRows.length === 0 && <div className="graph-card"><h3>Graph 4 - OA / Temperature Heat Map</h3><p className="report-text">No chart data available for this report.</p></div>}
             <EnergyBreakdownGraph title="Graph 5 - Annual Energy Breakdown" data={annualBreakdown} />
           </div>
         </ReportSection>
@@ -2689,12 +2739,52 @@ function FormulaBlock({ lines }) {
 }
 
 function LineGraph({ title, data, color, yLabel, yTransform = (value) => value }) {
-  const values = data.map((item) => yTransform(item.y)).filter(Number.isFinite)
-  const minY = Math.min(...values, 0)
-  const maxY = Math.max(...values, 1)
-  const points = data.map((item, index) => {
-    const x = 34 + index * (286 / Math.max(data.length - 1, 1))
-    const y = 150 - ((yTransform(item.y) - minY) / Math.max(maxY - minY, 1)) * 112
+  const validPoints = data.filter((item) => Number.isFinite(Number(item?.x)) && Number.isFinite(Number(item?.y)))
+  const transformedPoints = validPoints
+    .map((item) => ({
+      x: Number(item.x),
+      yValue: Number(yTransform(Number(item.y))),
+    }))
+    .filter((item) => Number.isFinite(item.x) && Number.isFinite(item.yValue))
+  console.info(`[HESA PDF] ${title}`, transformedPoints.length
+    ? {
+      pointCount: transformedPoints.length,
+      first: transformedPoints[0],
+      last: transformedPoints[transformedPoints.length - 1],
+      minX: Math.min(...transformedPoints.map((item) => item.x)),
+      maxX: Math.max(...transformedPoints.map((item) => item.x)),
+      minY: Math.min(...transformedPoints.map((item) => item.yValue)),
+      maxY: Math.max(...transformedPoints.map((item) => item.yValue)),
+      hasInvalidInput: validPoints.length !== data.length,
+    }
+    : { status: 'DATA NOT AVAILABLE', pointCount: 0, inputCount: data.length })
+  if (!transformedPoints.length) {
+    return (
+      <div className="graph-card">
+        <h3>{title}</h3>
+        <p className="report-text">No chart data available for this report.</p>
+      </div>
+    )
+  }
+
+  const values = transformedPoints.map((item) => item.yValue)
+  const rawMinY = Math.min(...values)
+  const rawMaxY = Math.max(...values)
+  const displayRange = rawMaxY - rawMinY || Math.max(Math.abs(rawMaxY) * 0.1, 1)
+  const minY = rawMinY - (rawMaxY === rawMinY ? displayRange / 2 : 0)
+  const maxY = rawMaxY + (rawMaxY === rawMinY ? displayRange / 2 : 0)
+  const plotLeft = 54
+  const plotRight = 330
+  const plotTop = 24
+  const plotBottom = 150
+  const xTicks = [15, 20, 25, 30, 35, 40, 50, 60]
+  const yTicks = axisTicks(minY, maxY, 5)
+  const xScale = (value) => plotLeft + ((value - 15) / (60 - 15)) * (plotRight - plotLeft)
+  const yScale = (value) => plotBottom - ((value - minY) / Math.max(maxY - minY, 1)) * (plotBottom - plotTop)
+  const points = transformedPoints.map((item, index) => {
+    const x = xScale(item.x)
+    const yValue = item.yValue
+    const y = yScale(yValue)
     return { x, y, label: item.x }
   })
 
@@ -2702,15 +2792,19 @@ function LineGraph({ title, data, color, yLabel, yTransform = (value) => value }
     <div className="graph-card">
       <h3>{title}</h3>
       <svg viewBox="0 0 360 210">
-        <line x1="34" y1="150" x2="330" y2="150" stroke="#94a3b8" />
-        <line x1="34" y1="24" x2="34" y2="150" stroke="#94a3b8" />
+        {yTicks.map((tick) => <g key={`${title}-y-${tick}`}>
+          <line x1={plotLeft} y1={yScale(tick)} x2={plotRight} y2={yScale(tick)} stroke="#e2e8f0" />
+          <text x="48" y={yScale(tick) + 3} textAnchor="end" fontSize="8" fill="#475569">{formatNumber(tick, 0)}</text>
+        </g>)}
+        <line x1={plotLeft} y1={plotBottom} x2={plotRight} y2={plotBottom} stroke="#94a3b8" />
+        <line x1={plotLeft} y1={plotTop} x2={plotLeft} y2={plotBottom} stroke="#94a3b8" />
         <polyline points={points.map((point) => `${point.x},${point.y}`).join(' ')} fill="none" stroke={color} strokeWidth="3" />
         {points.map((point) => (
           <g key={`${title}-${point.label}`}>
             <circle cx={point.x} cy={point.y} r="4" fill={color} />
-            <text x={point.x} y="174" textAnchor="middle" fontSize="9">{point.label}%</text>
           </g>
         ))}
+        {xTicks.map((tick) => <text key={`${title}-x-${tick}`} x={xScale(tick)} y="188" textAnchor="middle" fontSize="8">{tick}%</text>)}
         <text x="330" y="28" textAnchor="end" fontSize="10" fill="#475569">{yLabel}</text>
       </svg>
     </div>
@@ -2718,22 +2812,35 @@ function LineGraph({ title, data, color, yLabel, yTransform = (value) => value }
 }
 
 function BarGraph({ title, data, color }) {
-  const maxValue = Math.max(...data.map((item) => item.value), 1)
+  const values = data.map((item) => Number(item.value)).filter(Number.isFinite)
+  const minValue = Math.min(...values)
+  const maxValue = Math.max(...values)
+  const displayMin = Math.min(0, minValue)
+  const displayMax = maxValue === displayMin ? displayMin + 1 : maxValue
+  const yTicks = axisTicks(displayMin, displayMax, 5)
   const barWidth = 280 / Math.max(data.length, 1)
+  const plotTop = 28
+  const plotBottom = 150
+  const yScale = (value) => plotBottom - ((value - displayMin) / Math.max(displayMax - displayMin, 1)) * (plotBottom - plotTop)
 
   return (
     <div className="graph-card">
       <h3>{title}</h3>
       <svg viewBox="0 0 360 225">
-        <line x1="34" y1="150" x2="330" y2="150" stroke="#94a3b8" />
-        <line x1="34" y1="28" x2="34" y2="150" stroke="#94a3b8" />
+        {yTicks.map((tick) => <g key={`${title}-y-${tick}`}>
+          <line x1="34" y1={yScale(tick)} x2="330" y2={yScale(tick)} stroke="#e2e8f0" />
+          <text x="30" y={yScale(tick) + 3} textAnchor="end" fontSize="8" fill="#475569">{formatNumber(tick, 0)}</text>
+        </g>)}
+        <line x1="34" y1={plotBottom} x2="330" y2={plotBottom} stroke="#94a3b8" />
+        <line x1="34" y1={plotTop} x2="34" y2={plotBottom} stroke="#94a3b8" />
         {data.map((item, index) => {
-          const height = (item.value / maxValue) * 112
+          const y = yScale(Number(item.value))
+          const height = plotBottom - y
           const x = 42 + index * barWidth
           const labelX = x + Math.max(8, barWidth - 6) / 2
           return (
             <g key={`${title}-${item.label}`}>
-              <rect x={x} y={150 - height} width={Math.max(8, barWidth - 6)} height={height} fill={color} opacity="0.82" />
+              <rect x={x} y={y} width={Math.max(8, barWidth - 6)} height={height} fill={color} opacity="0.82" />
               <text
                 x={labelX}
                 y="165"
@@ -2750,6 +2857,12 @@ function BarGraph({ title, data, color }) {
       </svg>
     </div>
   )
+}
+
+function axisTicks(minValue, maxValue, count) {
+  if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) return []
+  if (minValue === maxValue) return [minValue]
+  return Array.from({ length: count }, (_, index) => minValue + ((maxValue - minValue) * index) / (count - 1))
 }
 
 function EnergyBreakdownGraph({ title, data }) {
@@ -2786,10 +2899,43 @@ function EnergyBreakdownGraph({ title, data }) {
 }
 
 function HeatMap({ title, rows, units }) {
-  const bins = rows[0]?.rows || []
-  const values = rows.flatMap((row) => (row.rows || []).map((bin) => bin.totalEnergyKwh))
-  const minValue = Math.min(...values, 0)
-  const maxValue = Math.max(...values, 1)
+  const validRows = (rows || [])
+    .map((row) => ({
+      ...row,
+      rows: (row.rows || []).map((bin) => ({
+        ...bin,
+        outdoorTemperature: Number(bin.tempC),
+        finalOaPercent: Number(bin.appliedOutdoorAirPercent),
+      })),
+    }))
+    .filter((row) => Array.isArray(row?.rows) && row.rows.some((bin) => Number.isFinite(bin.outdoorTemperature) && Number.isFinite(bin.finalOaPercent)))
+  if (!validRows.length) {
+    console.info(`[HESA PDF] ${title}`, { status: 'DATA NOT AVAILABLE', validRowCount: 0 })
+    return (
+      <div className="graph-card heatmap-card">
+        <h3>{title}</h3>
+        <p className="report-text">No chart data available for this report.</p>
+      </div>
+    )
+  }
+
+  const bins = validRows[0]?.rows.filter((bin) => Number.isFinite(bin.outdoorTemperature) && Number.isFinite(bin.finalOaPercent)) || []
+  const validBins = validRows.flatMap((row) => row.rows || []).filter((bin) => Number.isFinite(bin.outdoorTemperature) && Number.isFinite(bin.finalOaPercent))
+  const oaValues = validBins.map((bin) => bin.finalOaPercent)
+  const temperatureValues = validBins.map((bin) => bin.outdoorTemperature)
+  const minOa = Math.min(...oaValues)
+  const maxOa = Math.max(...oaValues)
+  console.info(`[HESA PDF] ${title}`, {
+    validRowCount: validRows.length,
+    validPointCount: validBins.length,
+    first: validBins[0],
+    last: validBins[validBins.length - 1],
+    minOutdoorTemperature: Math.min(...temperatureValues),
+    maxOutdoorTemperature: Math.max(...temperatureValues),
+    minFinalOaPercent: minOa,
+    maxFinalOaPercent: maxOa,
+    hasInvalidInput: validBins.length !== validRows.reduce((count, row) => count + row.rows.length, 0),
+  })
 
   return (
     <div className="graph-card heatmap-card">
@@ -2798,20 +2944,22 @@ function HeatMap({ title, rows, units }) {
         <thead>
           <tr>
             <th>OA%</th>
-            {bins.map((bin) => <th key={`hm-head-${bin.tempC}`}>{formatTemp(bin.tempC, units)}</th>)}
+            {bins.map((bin) => <th key={`hm-head-${bin.outdoorTemperature}`}>{formatTemp(bin.outdoorTemperature, units)}</th>)}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {validRows.map((row) => (
             <tr key={`hm-row-${row.oaPercent}`}>
               <th>{formatNumber(row.oaPercent, 0)}%</th>
               {(row.rows || []).map((bin) => (
-                <td
-                  key={`hm-${row.oaPercent}-${bin.tempC}`}
-                  style={{ backgroundColor: heatColor(bin.totalEnergyKwh, minValue, maxValue) }}
-                >
-                  {formatNumber(bin.totalEnergyKwh, 0)}
-                </td>
+                Number.isFinite(bin.outdoorTemperature) && Number.isFinite(bin.finalOaPercent)
+                  ? <td
+                    key={`hm-${row.oaPercent}-${bin.outdoorTemperature}`}
+                    style={{ backgroundColor: heatColor(bin.finalOaPercent, minOa, maxOa) }}
+                  >
+                    {formatNumber(bin.finalOaPercent, 1)}%
+                  </td>
+                  : <td key={`hm-missing-${row.oaPercent}-${bin.tempC}`}>DATA NOT AVAILABLE</td>
               ))}
             </tr>
           ))}
