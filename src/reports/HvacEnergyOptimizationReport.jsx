@@ -2325,21 +2325,23 @@ export default function HvacEnergyOptimizationReport({ data }) {
       {includesFreeCoolingAnalysis && (
         <ReportSection title={reportSectionTitle('graphs', tr('GRAPHIQUES', 'GRAPHS'))} pageBreak allowPageBreak>
           <div className="graph-grid">
-            <LineGraph
-              title="Graph 1 - Energy vs OA %"
-              data={optimizationRows.map((row) => ({ x: row.oaPercent, y: row.totalEnergyKwh }))}
-              color="#0ea5e9"
-              yLabel="kWh"
-            />
-            <LineGraph
-              title="Graph 2 - Mixed Air Temperature vs OA %"
-              data={optimizationRows.map((row) => ({ x: row.oaPercent, y: row.tmix }))}
-              color="#f97316"
-              yLabel={data.units === 'imperial' ? (isFrench ? '°F' : 'deg F') : (isFrench ? '°C' : 'deg C')}
-              yTransform={(value) => data.units === 'imperial' ? value * 9 / 5 + 32 : value}
-            />
+            {optimizationRows.length > 0 && <>
+              <LineGraph
+                title="Graph 1 - Energy vs OA %"
+                data={optimizationRows.map((row) => ({ x: row.oaPercent, y: row.totalEnergyKwh }))}
+                color="#0ea5e9"
+                yLabel="kWh"
+              />
+              <LineGraph
+                title="Graph 2 - Mixed Air Temperature vs OA %"
+                data={optimizationRows.map((row) => ({ x: row.oaPercent, y: row.tmix }))}
+                color="#f97316"
+                yLabel={data.units === 'imperial' ? (isFrench ? '°F' : 'deg F') : (isFrench ? '°C' : 'deg C')}
+                yTransform={(value) => data.units === 'imperial' ? value * 9 / 5 + 32 : value}
+              />
+            </>}
             {showBinAnalysis && <BarGraph title="Graph 3 - Annual Savings by BIN" data={binSavingsRows} color="#22c55e" />}
-            <HeatMap title="Graph 4 - OA / Temperature Heat Map" rows={optimizationRows} units={data.units} />
+            {optimizationRows.length > 0 && <HeatMap title="Graph 4 - OA / Temperature Heat Map" rows={optimizationRows} units={data.units} />}
             <EnergyBreakdownGraph title="Graph 5 - Annual Energy Breakdown" data={annualBreakdown} />
           </div>
         </ReportSection>
