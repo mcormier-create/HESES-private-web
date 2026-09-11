@@ -4880,6 +4880,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       humifogRow,
       steamRow: freeCoolingHumifogAnalysis.conventionalRows[index] || {},
     }))
+  const freeCoolingOptimizationRows = Array.isArray(freeCoolingHumifogAnalysis.optimizationRows)
+    ? freeCoolingHumifogAnalysis.optimizationRows.filter((row) => row && typeof row === 'object')
+    : []
   const freeCoolingCalculationComplete = Boolean(freeCoolingHumifogAnalysis.isComplete)
   const freeCoolingSummaryRows = freeCoolingHumifogAnalysis.binRows || []
   const isFreeCoolingSummaryRowActive = (row) => (
@@ -5427,7 +5430,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     conventionalRows: freeCoolingHumifogAnalysis.conventionalRows,
     optimizedHumifogRows: freeCoolingHumifogAnalysis.optimizedHumifogRows,
     binValidationRows: freeCoolingHumifogAnalysis.binValidationRows,
-    optimizationRows: freeCoolingHumifogAnalysis.optimizationRows,
+    optimizationRows: freeCoolingOptimizationRows,
     optimal: freeCoolingHumifogAnalysis.optimal,
     annualComparison: freeCoolingHumifogAnalysis.annualComparison,
     annualBreakdownRows: freeCoolingHumifogAnalysis.annualBreakdownRows,
@@ -9401,9 +9404,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     </tr>
                   </thead>
                   <tbody>
-                    {freeCoolingHumifogAnalysis.optimizationRows.map((row) => (
-                      <tr key={`opt-${row.oaPercent}`} className={`border-b border-slate-100 ${row.oaPercent === freeCoolingHumifogAnalysis.optimal?.oaPercent ? 'bg-emerald-50' : ''}`}>
-                        <td className="p-3 text-center font-bold text-sky-700">{row.oaPercent}%</td>
+                    {freeCoolingOptimizationRows.map((row, index) => (
+                      <tr key={`opt-${row.oaPercent ?? index}`} className={`border-b border-slate-100 ${row.oaPercent === freeCoolingHumifogAnalysis.optimal?.oaPercent ? 'bg-emerald-50' : ''}`}>
+                        <td className="p-3 text-center font-bold text-sky-700">{row.oaPercent ?? '-'}%</td>
                         <td className="p-3 text-center font-bold text-orange-700">{row.raPercent}%</td>
                         <td className="p-3 text-center">{displayTemp(row.tmix)}{tempUnit}</td>
                         <td className="p-3 text-center">{formatAnnualEnergy(row.heatingEnergyKwh)}</td>
