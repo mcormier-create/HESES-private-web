@@ -2831,7 +2831,24 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const displayEnthalpy = (btu) => units === 'metric' ? Math.round(btu * 2.326) : btu
   const enthalpyUnit = units === 'metric' ? 'kJ/kg' : 'Btu/lb'
 
+  const hourlyFreeCoolingReportInProgressMessage = () => language === 'fr'
+    ? "Calcul en cours — veuillez attendre la fin de l'analyse avant de générer le rapport."
+    : 'Calculation in progress - please wait for the analysis to finish before generating the report.'
+  const isHourlyFreeCoolingReportPending = () => (
+    isFreeCoolingMode &&
+    isHourlyMode &&
+    (!freeCoolingCalculationComplete || !freeCoolingHumifogWorkerResult)
+  )
+  const preventIncompleteHourlyFreeCoolingReport = () => {
+    if (!isHourlyFreeCoolingReportPending()) return false
+    setReportPreviewVisible(false)
+    setReportStatus(hourlyFreeCoolingReportInProgressMessage())
+    return true
+  }
+
   const openPrintableReportPage = () => {
+    if (preventIncompleteHourlyFreeCoolingReport()) return
+
     persistProjectLocally()
     setReportStatus(language === 'fr'
       ? 'Préparation du rapport...'
@@ -2873,6 +2890,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
 
   const generatePDF = () => {
     try {
+      if (preventIncompleteHourlyFreeCoolingReport()) return
+
       setReportPreviewVisible(true)
       setReportStatus(language === 'fr'
         ? 'Rapport original ouvert. Utilisez les options de la page rapport pour imprimer ou télécharger.'
@@ -2968,6 +2987,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     if (printInProgressRef.current) {
       return
     }
+    if (preventIncompleteHourlyFreeCoolingReport()) return
 
     printInProgressRef.current = true
     console.time('printStaticReport-total')
@@ -3259,6 +3279,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
 
   const downloadPrintableReport = ({ showPreview = true } = {}) => {
     try {
+      if (preventIncompleteHourlyFreeCoolingReport()) return
+
       if (showPreview) {
         setReportPreviewVisible(true)
       }
@@ -4884,6 +4906,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     ? freeCoolingHumifogAnalysis.optimizationRows.filter((row) => row && typeof row === 'object')
     : []
   const freeCoolingCalculationComplete = Boolean(freeCoolingHumifogAnalysis.isComplete)
+  const hourlyFreeCoolingReportPending = isFreeCoolingMode && isHourlyMode && (
+    !freeCoolingCalculationComplete || !freeCoolingHumifogWorkerResult
+  )
   const freeCoolingSummaryRows = freeCoolingHumifogAnalysis.binRows || []
   const isFreeCoolingSummaryRowActive = (row) => (
     row.outdoorAirPercent > minimumOutsideAirPercent + 0.05
@@ -6570,13 +6595,21 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
           <div className="flex flex-wrap justify-center gap-2">
             <button
               onClick={generatePDF}
-              className="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-2xl shadow-xl font-bold transition"
+              disabled={hourlyFreeCoolingReportPending}
+              title={hourlyFreeCoolingReportPending ? hourlyFreeCoolingReportInProgressMessage() : undefined}
+              className={`px-6 py-3 rounded-2xl shadow-xl font-bold transition ${hourlyFreeCoolingReportPending
+                ? 'cursor-not-allowed bg-slate-400 text-white opacity-70'
+                : 'bg-red-600 hover:bg-red-700 text-white'}`}
             >
               {t.generatePDF}
             </button>
             <button
               onClick={downloadPrintableReport}
-              className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-3 rounded-2xl shadow-xl font-bold transition"
+              disabled={hourlyFreeCoolingReportPending}
+              title={hourlyFreeCoolingReportPending ? hourlyFreeCoolingReportInProgressMessage() : undefined}
+              className={`px-5 py-3 rounded-2xl shadow-xl font-bold transition ${hourlyFreeCoolingReportPending
+                ? 'cursor-not-allowed bg-slate-400 text-white opacity-70'
+                : 'bg-slate-800 hover:bg-slate-900 text-white'}`}
             >
               {language === 'fr' ? 'Rapport imprimable' : 'Printable report'}
             </button>

@@ -858,6 +858,50 @@ export default function HvacEnergyOptimizationReport({ data }) {
     if (Array.isArray(row?.bins)) return row.bins
     return []
   }
+  const getFinalOaPercent = (row) => toFiniteNumber(
+    row?.finalOaPercent,
+    row?.appliedOutdoorAirPercent,
+    row?.outdoorAirPercent,
+    row?.oaPercent
+  )
+  const buildHourlyHeatMapRows = (rows, maxColumns = 14) => {
+    const validRows = (rows || [])
+      .map((row) => ({
+        tempC: toFiniteNumber(row?.tempC, row?.outdoorTemperature),
+        finalOaPercent: getFinalOaPercent(row),
+        hours: Number(row?.hours || 1),
+      }))
+      .filter((row) => Number.isFinite(row.tempC) && Number.isFinite(row.finalOaPercent))
+
+    if (!validRows.length) return []
+
+    const buckets = new Map()
+    validRows.forEach((row) => {
+      const bucketTempC = Math.floor(row.tempC / 5) * 5
+      const bucket = buckets.get(bucketTempC) || { tempC: bucketTempC, weightedOa: 0, hours: 0 }
+      const hours = Math.max(0, Number(row.hours || 1)) || 1
+      bucket.weightedOa += row.finalOaPercent * hours
+      bucket.hours += hours
+      buckets.set(bucketTempC, bucket)
+    })
+
+    const bucketRows = [...buckets.values()]
+      .sort((a, b) => a.tempC - b.tempC)
+      .map((bucket) => ({
+        tempC: bucket.tempC,
+        hours: bucket.hours,
+        finalOaPercent: bucket.weightedOa / Math.max(bucket.hours, 1),
+      }))
+
+    const displayedRows = bucketRows.length <= maxColumns
+      ? bucketRows
+      : bucketRows.filter((_, index) => index % Math.ceil(bucketRows.length / maxColumns) === 0).slice(0, maxColumns)
+
+    return [{
+      oaPercent: toFiniteNumber(system.selectedOaPercent, system.oaMinimumPercent, system.oaPercent),
+      rows: displayedRows,
+    }]
+  }
   const validOptimizationRows = optimizationRows.filter((row) => {
     const oaPercent = getOptimizationOaPercent(row)
     const totalEnergyKwh = getOptimizationEnergyKwh(row)
@@ -870,6 +914,8 @@ export default function HvacEnergyOptimizationReport({ data }) {
       rows: getOptimizationBins(row),
     }))
     .filter((row) => Number.isFinite(row.oaPercent) && Array.isArray(row.rows) && row.rows.length > 0)
+  const hourlyHeatMapRows = isHourlyCalculation ? buildHourlyHeatMapRows(binRows) : []
+  const displayedHeatMapRows = heatMapRows.length > 0 ? heatMapRows : hourlyHeatMapRows
   const conventionalRows = data.conventionalRows || []
   const optimizedRows = data.optimizedHumifogRows || []
   const pointMap = new Map(points.map((point) => [point.key, point.state]))
@@ -1229,7 +1275,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
     }
   })
   const annualBreakdown = [
-    { label: 'Heating', value: freeCooling.heatingEnergyKwh || 0, color: '#ef4444' },
+    ...(!includesFreeCoolingAnalysis ? [{ label: 'Heating', value: freeCooling.heatingEnergyKwh || 0, color: '#ef4444' }] : []),
     { label: 'Humidification', value: humifog.humidificationEnergyKwh || 0, color: '#0ea5e9' },
     { label: 'Reheat', value: humifogReheatAppliedKwh, color: '#f97316' },
   ]
@@ -2472,8 +2518,8 @@ export default function HvacEnergyOptimizationReport({ data }) {
               />
             </>}
             {showBinAnalysis && <BarGraph title="Graph 3 - Annual Savings by BIN" data={binSavingsRows} color="#22c55e" />}
-            {heatMapRows.length > 0 && <HeatMap title="Graph 4 - OA / Temperature Heat Map" rows={heatMapRows} units={data.units} />}
-            {heatMapRows.length === 0 && <div className="graph-card"><h3>Graph 4 - OA / Temperature Heat Map</h3><p className="report-text">No chart data available for this report.</p></div>}
+            {displayedHeatMapRows.length > 0 && <HeatMap title="Graph 4 - OA / Temperature Heat Map" rows={displayedHeatMapRows} units={data.units} />}
+            {displayedHeatMapRows.length === 0 && <div className="graph-card"><h3>Graph 4 - OA / Temperature Heat Map</h3><p className="report-text">{isHourlyCalculation ? tr("La carte thermique OA / température n'est pas disponible pour l'analyse horaire.", 'OA/Temperature heat map is not available for hourly analysis.') : 'No chart data available for this report.'}</p></div>}
             <EnergyBreakdownGraph title="Graph 5 - Annual Energy Breakdown" data={annualBreakdown} />
           </div>
         </ReportSection>
@@ -2993,8 +3039,8 @@ function HeatMap({ title, rows, units }) {
       ...row,
       rows: (row.rows || []).map((bin) => ({
         ...bin,
-        outdoorTemperature: Number(bin.tempC),
-        finalOaPercent: Number(bin.appliedOutdoorAirPercent),
+        outdoorTemperature: Number(bin.tempC ?? bin.outdoorTemperature),
+        finalOaPercent: Number(bin.finalOaPercent ?? bin.appliedOutdoorAirPercent),
       })),
     }))
     .filter((row) => Array.isArray(row?.rows) && row.rows.some((bin) => Number.isFinite(bin.outdoorTemperature) && Number.isFinite(bin.finalOaPercent)))
