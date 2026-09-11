@@ -2664,6 +2664,7 @@ function CompleteBinCalculationTable({ rows, conventionalRows, units }) {
 }
 
 function OptimizationTable({ rows, optimal, units }) {
+  const optimalOaPercent = optimal?.oaPercent
   return (
     <table className="report-table compact">
       <thead>
@@ -2679,8 +2680,8 @@ function OptimizationTable({ rows, optimal, units }) {
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => (
-          <tr key={`opt-report-${row.oaPercent}`} className={row.oaPercent === optimal.oaPercent ? 'highlight-row' : ''}>
+        {rows.filter(Boolean).map((row) => (
+          <tr key={`opt-report-${row.oaPercent}`} className={row.oaPercent === optimalOaPercent ? 'highlight-row' : ''}>
             <td>{formatNumber(row.oaPercent, 0)}%</td>
             <td>{formatNumber(row.raPercent, 0)}%</td>
             <td>{formatTemp(row.tmix, units)}</td>

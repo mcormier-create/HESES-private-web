@@ -4737,6 +4737,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       humifogRow,
       steamRow: freeCoolingHumifogAnalysis.conventionalRows[index] || {},
     }))
+  const freeCoolingOptimizationRows = Array.isArray(freeCoolingHumifogAnalysis.optimizationRows)
+    ? freeCoolingHumifogAnalysis.optimizationRows.filter((row) => row && typeof row === 'object')
+    : []
   const freeCoolingCalculationComplete = Boolean(freeCoolingHumifogAnalysis.isComplete)
   const freeCoolingSummaryRows = freeCoolingHumifogAnalysis.binRows || []
   const isFreeCoolingSummaryRowActive = (row) => (
@@ -5258,7 +5261,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     conventionalRows: freeCoolingHumifogAnalysis.conventionalRows,
     optimizedHumifogRows: freeCoolingHumifogAnalysis.optimizedHumifogRows,
     binValidationRows: freeCoolingHumifogAnalysis.binValidationRows,
-    optimizationRows: freeCoolingHumifogAnalysis.optimizationRows,
+    optimizationRows: freeCoolingOptimizationRows,
     optimal: freeCoolingHumifogAnalysis.optimal,
     annualComparison: freeCoolingHumifogAnalysis.annualComparison,
     annualBreakdownRows: freeCoolingHumifogAnalysis.annualBreakdownRows,
@@ -8854,9 +8857,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     </tr>
                   </thead>
                   <tbody>
-                    {freeCoolingHumifogAnalysis.optimizationRows.map((row) => (
-                      <tr key={`opt-${row.oaPercent}`} className={`border-b border-slate-100 ${row.oaPercent === freeCoolingHumifogAnalysis.optimal.oaPercent ? 'bg-emerald-50' : ''}`}>
-                        <td className="p-3 text-center font-bold text-sky-700">{row.oaPercent}%</td>
+                    {freeCoolingOptimizationRows.map((row, index) => (
+                      <tr key={`opt-${row.oaPercent ?? index}`} className={`border-b border-slate-100 ${row.oaPercent === freeCoolingHumifogAnalysis.optimal?.oaPercent ? 'bg-emerald-50' : ''}`}>
+                        <td className="p-3 text-center font-bold text-sky-700">{row.oaPercent ?? '-'}%</td>
                         <td className="p-3 text-center font-bold text-orange-700">{row.raPercent}%</td>
                         <td className="p-3 text-center">{displayTemp(row.tmix)}{tempUnit}</td>
                         <td className="p-3 text-center">{formatAnnualEnergy(row.heatingEnergyKwh)}</td>
@@ -9085,9 +9088,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     [language === 'fr' ? 'Energie annuelle totale Humifog' : 'Humifog System Total Annual Energy', formatAnnualEnergyIfComplete(freeCoolingHumifogAnalysis.annualComparison.humifog.totalEnergyKwh)],
                     [language === 'fr' ? 'Economies annuelles nettes' : 'Net Annual Savings', freeCoolingCalculationComplete ? formatSavingsAnnualEnergy(freeCoolingHumifogAnalysis.netSavings.netAnnualEnergySavingsKwh) : calculationIncompleteText],
                     [language === 'fr' ? 'Economies cout annuel' : 'Net Annual Cost Savings', freeCoolingCalculationComplete ? formatSavingsAnnualCost(freeCoolingHumifogAnalysis.netSavings.annualCostSavings) : calculationIncompleteText],
-                    [language === 'fr' ? 'OA recommande' : 'Recommended OA %', `${freeCoolingHumifogAnalysis.optimal.oaPercent}%`],
-                    [language === 'fr' ? 'RA recommande' : 'Recommended RA %', `${freeCoolingHumifogAnalysis.optimal.raPercent}%`],
-                    [language === 'fr' ? 'Tmix optimale' : 'Optimal Mixed Air Temperature', `${displayTemp(freeCoolingHumifogAnalysis.optimal.tmix)}${tempUnit}`],
+                    [language === 'fr' ? 'OA recommande' : 'Recommended OA %', freeCoolingHumifogAnalysis.optimal ? `${freeCoolingHumifogAnalysis.optimal.oaPercent}%` : calculationIncompleteText],
+                    [language === 'fr' ? 'RA recommande' : 'Recommended RA %', freeCoolingHumifogAnalysis.optimal ? `${freeCoolingHumifogAnalysis.optimal.raPercent}%` : calculationIncompleteText],
+                    [language === 'fr' ? 'Tmix optimale' : 'Optimal Mixed Air Temperature', freeCoolingHumifogAnalysis.optimal ? `${displayTemp(freeCoolingHumifogAnalysis.optimal.tmix)}${tempUnit}` : calculationIncompleteText],
                     [
                       'ASHRAE Compliance',
                       language === 'fr'

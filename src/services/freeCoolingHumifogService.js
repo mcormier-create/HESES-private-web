@@ -195,7 +195,7 @@ export function calculateFreeCoolingHumifogComparison({
     message: {
       minimumOa,
       conventionalOa: freeCooling.averageOa,
-      optimalOa: optimal.oaPercent,
+      optimalOa: Number.isFinite(Number(optimal?.oaPercent)) ? optimal.oaPercent : null,
       mixedAirIncreaseC: humifog.averageMixedDb - freeCooling.averageMixedDb,
       heatingReductionKwh: freeCooling.heatingEnergyKwh - humifog.heatingEnergyKwh,
       humidificationReductionKwh: freeCooling.humidificationEnergyKwh - humifog.humidificationEnergyKwh,
