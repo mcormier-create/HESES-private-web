@@ -1014,6 +1014,82 @@ export default function HvacEnergyOptimizationReport({ data }) {
     label: `${formatTemp(row.tempC, data.units)}`,
     value: Math.max(0, (conventionalRows[index]?.totalEnergyKwh || 0) - row.totalEnergyKwh),
   }))
+  const buildHourlyAppliedOaRows = (rows) => {
+    const buckets = new Map()
+    rows.forEach((row) => {
+      const finalOaPercent = getFinalOaPercent(row)
+      const comparativeEnergyKwh = toFiniteNumber(row?.comparativeEnergyKwh)
+      const mixedDb = toFiniteNumber(row?.mixed?.db, row?.mixedDb, row?.tmix, row?.mixedAirTemperatureC, row?.mixedAirTemperature)
+      if (!Number.isFinite(finalOaPercent)) return
+
+      const bucketOa = Math.round(finalOaPercent / 5) * 5
+      const bucket = buckets.get(bucketOa) || {
+        oaPercent: bucketOa,
+        hours: 0,
+        weightedOa: 0,
+        comparativeEnergyKwh: 0,
+        weightedMixedDb: 0,
+        hasEnergy: false,
+        hasMixedDb: false,
+      }
+      const hours = Math.max(0, Number(row?.hours || 1)) || 1
+      bucket.hours += hours
+      bucket.weightedOa += finalOaPercent * hours
+      if (Number.isFinite(comparativeEnergyKwh)) {
+        bucket.comparativeEnergyKwh += comparativeEnergyKwh
+        bucket.hasEnergy = true
+      }
+      if (Number.isFinite(mixedDb)) {
+        bucket.weightedMixedDb += mixedDb * hours
+        bucket.hasMixedDb = true
+      }
+      buckets.set(bucketOa, bucket)
+    })
+
+    return [...buckets.values()]
+      .sort((a, b) => a.oaPercent - b.oaPercent)
+      .map((bucket) => ({
+        x: bucket.weightedOa / Math.max(bucket.hours, 1),
+        finalOaBucket: bucket.oaPercent,
+        hours: bucket.hours,
+        comparativeEnergyKwh: bucket.hasEnergy ? bucket.comparativeEnergyKwh : null,
+        averageMixedDb: bucket.hasMixedDb ? bucket.weightedMixedDb / Math.max(bucket.hours, 1) : null,
+      }))
+  }
+  const hourlyAppliedOaRows = isHourlyCalculation ? buildHourlyAppliedOaRows(optimizedRows.length ? optimizedRows : binRows) : []
+  const hourlyAppliedOaTicks = hourlyAppliedOaRows.length > 0
+    ? (() => {
+      const minTick = Math.floor(Math.min(...hourlyAppliedOaRows.map((row) => row.x)) / 5) * 5
+      const maxTick = Math.ceil(Math.max(...hourlyAppliedOaRows.map((row) => row.x)) / 5) * 5
+      const ticks = []
+      for (let tick = minTick; tick <= maxTick; tick += 15) ticks.push(tick)
+      if (ticks[ticks.length - 1] !== maxTick) ticks.push(maxTick)
+      return ticks
+    })()
+    : undefined
+  const hourlyAppliedOaDomain = hourlyAppliedOaRows.length > 0
+    ? [
+      Math.floor(Math.min(...hourlyAppliedOaRows.map((row) => row.x)) / 5) * 5,
+      Math.ceil(Math.max(...hourlyAppliedOaRows.map((row) => row.x)) / 5) * 5,
+    ]
+    : undefined
+  const graph1Rows = validOptimizationRows.length > 0
+    ? validOptimizationRows.map((row) => ({
+      x: getOptimizationOaPercent(row),
+      y: getOptimizationEnergyKwh(row),
+    }))
+    : hourlyAppliedOaRows
+      .filter((row) => Number.isFinite(row.comparativeEnergyKwh))
+      .map((row) => ({ x: row.x, y: row.comparativeEnergyKwh }))
+  const graph2Rows = validOptimizationRows.length > 0
+    ? validOptimizationRows.map((row) => ({
+      x: getOptimizationOaPercent(row),
+      y: getOptimizationMixedAirC(row),
+    }))
+    : hourlyAppliedOaRows
+      .filter((row) => Number.isFinite(row.averageMixedDb))
+      .map((row) => ({ x: row.x, y: row.averageMixedDb }))
+  const usesHourlyAppliedOaGraphs = validOptimizationRows.length === 0 && hourlyAppliedOaRows.length > 0
   const hourlySavingsRows = isHourlyCalculation
     ? (() => {
       const buckets = new Map()
@@ -2531,25 +2607,27 @@ export default function HvacEnergyOptimizationReport({ data }) {
       {includesFreeCoolingAnalysis && (
         <ReportSection title={reportSectionTitle('graphs', tr('GRAPHIQUES', 'GRAPHS'))} pageBreak allowPageBreak>
           <div className="graph-grid">
-            {validOptimizationRows.length > 0 && <>
+            {graph1Rows.length > 0 && graph2Rows.length > 0 && <>
               <LineGraph
-                title="Graph 1 - Energy vs OA %"
-                data={validOptimizationRows.map((row) => ({
-                  x: getOptimizationOaPercent(row),
-                  y: getOptimizationEnergyKwh(row),
-                }))}
+                title={usesHourlyAppliedOaGraphs
+                  ? tr('Graphique 1 - Énergie comparative par Final OA appliqué', 'Chart 1 - Comparative Energy by Applied Final OA')
+                  : 'Graph 1 - Energy vs OA %'}
+                data={graph1Rows}
                 color="#0ea5e9"
-                yLabel="kWh"
+                yLabel={usesHourlyAppliedOaGraphs ? tr('Énergie comparative (kWh)', 'Comparative Energy (kWh)') : 'kWh'}
+                xTicks={usesHourlyAppliedOaGraphs ? hourlyAppliedOaTicks : undefined}
+                xDomain={usesHourlyAppliedOaGraphs ? hourlyAppliedOaDomain : undefined}
               />
               <LineGraph
-                title="Graph 2 - Mixed Air Temperature vs OA %"
-                data={validOptimizationRows.map((row) => ({
-                  x: getOptimizationOaPercent(row),
-                  y: getOptimizationMixedAirC(row),
-                }))}
+                title={usesHourlyAppliedOaGraphs
+                  ? tr('Graphique 2 - Température d’air mélangé par Final OA appliqué', 'Chart 2 - Mixed-Air Temperature by Applied Final OA')
+                  : 'Graph 2 - Mixed Air Temperature vs OA %'}
+                data={graph2Rows}
                 color="#f97316"
                 yLabel={data.units === 'imperial' ? (isFrench ? '°F' : 'deg F') : (isFrench ? '°C' : 'deg C')}
                 yTransform={(value) => data.units === 'imperial' ? value * 9 / 5 + 32 : value}
+                xTicks={usesHourlyAppliedOaGraphs ? hourlyAppliedOaTicks : undefined}
+                xDomain={usesHourlyAppliedOaGraphs ? hourlyAppliedOaDomain : undefined}
               />
             </>}
             {graph3SavingsRows.length > 0 && <BarGraph title="Graph 3 - Annual Savings by BIN" data={graph3SavingsRows} color="#22c55e" />}
@@ -2908,7 +2986,7 @@ function FormulaBlock({ lines }) {
   )
 }
 
-function LineGraph({ title, data, color, yLabel, yTransform = (value) => value }) {
+function LineGraph({ title, data, color, yLabel, yTransform = (value) => value, xTicks: providedXTicks, xDomain }) {
   const validPoints = data.filter((item) => Number.isFinite(Number(item?.x)) && Number.isFinite(Number(item?.y)))
   const transformedPoints = validPoints
     .map((item) => ({
@@ -2947,9 +3025,11 @@ function LineGraph({ title, data, color, yLabel, yTransform = (value) => value }
   const plotRight = 330
   const plotTop = 24
   const plotBottom = 150
-  const xTicks = [15, 20, 25, 30, 35, 40, 50, 60]
+  const xTicks = Array.isArray(providedXTicks) && providedXTicks.length > 0 ? providedXTicks : [15, 20, 25, 30, 35, 40, 50, 60]
+  const minX = Array.isArray(xDomain) && Number.isFinite(Number(xDomain[0])) ? Number(xDomain[0]) : 15
+  const maxX = Array.isArray(xDomain) && Number.isFinite(Number(xDomain[1])) ? Number(xDomain[1]) : 60
   const yTicks = axisTicks(minY, maxY, 5)
-  const xScale = (value) => plotLeft + ((value - 15) / (60 - 15)) * (plotRight - plotLeft)
+  const xScale = (value) => plotLeft + ((value - minX) / Math.max(maxX - minX, 1)) * (plotRight - plotLeft)
   const yScale = (value) => plotBottom - ((value - minY) / Math.max(maxY - minY, 1)) * (plotBottom - plotTop)
   const points = transformedPoints.map((item, index) => {
     const x = xScale(item.x)
