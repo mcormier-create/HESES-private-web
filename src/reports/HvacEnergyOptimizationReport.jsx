@@ -1014,6 +1014,41 @@ export default function HvacEnergyOptimizationReport({ data }) {
     label: `${formatTemp(row.tempC, data.units)}`,
     value: Math.max(0, (conventionalRows[index]?.totalEnergyKwh || 0) - row.totalEnergyKwh),
   }))
+  const hourlySavingsRows = isHourlyCalculation
+    ? (() => {
+      const buckets = new Map()
+      conventionalRows.forEach((referenceRow, index) => {
+        const humifogRow = optimizedRows[index] || binRows[index]
+        const tempC = toFiniteNumber(humifogRow?.tempC, referenceRow?.tempC)
+        const referenceEnergyKwh = toFiniteNumber(referenceRow?.comparativeEnergyKwh)
+        const humifogEnergyKwh = toFiniteNumber(humifogRow?.comparativeEnergyKwh)
+        if (!Number.isFinite(tempC) || !Number.isFinite(referenceEnergyKwh) || !Number.isFinite(humifogEnergyKwh)) return
+
+        const bucketTempC = Math.floor(tempC / 5) * 5
+        const bucket = buckets.get(bucketTempC) || {
+          tempC: bucketTempC,
+          hours: 0,
+          referenceEnergyKwh: 0,
+          humifogEnergyKwh: 0,
+        }
+        bucket.hours += Number(humifogRow?.hours || referenceRow?.hours || 1)
+        bucket.referenceEnergyKwh += referenceEnergyKwh
+        bucket.humifogEnergyKwh += humifogEnergyKwh
+        buckets.set(bucketTempC, bucket)
+      })
+
+      return [...buckets.values()]
+        .sort((a, b) => a.tempC - b.tempC)
+        .map((bucket) => ({
+          label: `${formatTemp(bucket.tempC, data.units)}`,
+          value: bucket.referenceEnergyKwh - bucket.humifogEnergyKwh,
+          hours: bucket.hours,
+          referenceEnergyKwh: bucket.referenceEnergyKwh,
+          humifogEnergyKwh: bucket.humifogEnergyKwh,
+        }))
+    })()
+    : []
+  const graph3SavingsRows = showBinAnalysis ? binSavingsRows : hourlySavingsRows
   const humifogReheatKwh = humifog.reheatEnergyKwh || 0
   const selectedHumifogAnnualResult = annualTechnologyResults[selectedHumifogTechnology({ mode, system })] || {}
   const humifogReheatThermalKwh =
@@ -2517,7 +2552,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
                 yTransform={(value) => data.units === 'imperial' ? value * 9 / 5 + 32 : value}
               />
             </>}
-            {showBinAnalysis && <BarGraph title="Graph 3 - Annual Savings by BIN" data={binSavingsRows} color="#22c55e" />}
+            {graph3SavingsRows.length > 0 && <BarGraph title="Graph 3 - Annual Savings by BIN" data={graph3SavingsRows} color="#22c55e" />}
             {displayedHeatMapRows.length > 0 && <HeatMap title="Graph 4 - OA / Temperature Heat Map" rows={displayedHeatMapRows} units={data.units} />}
             {displayedHeatMapRows.length === 0 && <div className="graph-card"><h3>Graph 4 - OA / Temperature Heat Map</h3><p className="report-text">{isHourlyCalculation ? tr("La carte thermique OA / température n'est pas disponible pour l'analyse horaire.", 'OA/Temperature heat map is not available for hourly analysis.') : 'No chart data available for this report.'}</p></div>}
             <EnergyBreakdownGraph title="Graph 5 - Annual Energy Breakdown" data={annualBreakdown} />
