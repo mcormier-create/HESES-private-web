@@ -5474,6 +5474,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       scheduleFactor,
       scheduleDescription: scheduleDescriptionText,
       recoveryEnergyReductionKW,
+      annualOperatingHours,
       annualHumidificationHours: annualHumidificationHoursResolved,
       naturalGasGES: Number(annualNaturalGasGESResolved.toFixed(1)),
       atmosphericGasHumidifierGES: Number(annualAtmosphericGasGESResolved.toFixed(1)),

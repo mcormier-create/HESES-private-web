@@ -2140,7 +2140,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
               [tr('Énergie vapeur équivalente', 'Equivalent steam energy'), `${formatNumber(systemMetrics.steamEnergyKWRaw ?? systemMetrics.steamEnergyKW ?? 0, 2)} kW`],
               [tr('Puissance pompe Humifog', 'Humifog pump power'), `${formatNumber(systemMetrics.humifogPumpKWRaw ?? systemMetrics.humifogPumpKW ?? 0, 2)} kW`],
               [tr('Chauffage CVC commun', 'Common HVAC heating'), `${formatNumber(systemMetrics.commonHvacHeatingThermalKWRaw ?? systemMetrics.commonHvacHeatingThermalKW ?? 0, 2)} kW`],
-              [tr('Heures annuelles utilisées', 'Annual operating hours used'), `${formatNumber(systemMetrics.annualHumidificationHours || energySummary.annualHumidificationHours || 0, 0)} h/year`],
+              [tr('Heures annuelles utilisées', 'Annual operating hours used'), `${formatNumber(systemMetrics.annualOperatingHours ?? systemMetrics.annualHumidificationHours ?? energySummary.annualHumidificationHours ?? 0, 0)} h/year`],
             ]} />
             <table className="report-table compact">
               <thead>
