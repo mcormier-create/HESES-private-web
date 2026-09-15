@@ -370,45 +370,64 @@ function HesesPrintableReportPage() {
   const printInProgressRef = useRef(false)
   const [pdfReportStatus, setPdfReportStatus] = useState('')
 
-  const printCurrentReport = () => {
+  // Waits on real render signals (fonts, images, Section 11 SVGs, a settled paint) instead of a fixed delay.
+  const waitForReportRenderReady = async (container) => {
+    if (document.fonts && document.fonts.ready) {
+      try { await document.fonts.ready } catch { /* fonts API unavailable or rejected: continue */ }
+    }
+
+    const images = Array.from(container.querySelectorAll('img'))
+    await Promise.all(images.map((image) => (image.complete
+      ? Promise.resolve()
+      : new Promise((resolve) => {
+          image.addEventListener('load', resolve, { once: true })
+          image.addEventListener('error', resolve, { once: true })
+        }))))
+
+    if (container.querySelector('.graph-card')) {
+      await new Promise((resolve) => {
+        let attempts = 0
+        const checkGraphsRendered = () => {
+          attempts += 1
+          if (container.querySelector('.graph-card svg') || attempts > 20) {
+            resolve()
+            return
+          }
+          window.requestAnimationFrame(checkGraphsRendered)
+        }
+        checkGraphsRendered()
+      })
+    }
+
+    // Let layout/paint settle for two frames before invoking print().
+    await new Promise((resolve) => {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(resolve))
+    })
+  }
+
+  const printCurrentReport = async () => {
     if (typeof window === 'undefined' || printInProgressRef.current) return
     printInProgressRef.current = true
     console.time('printCurrentReport-total')
-    console.time('printCurrentReport-build-html')
-    setPdfReportStatus('Ouverture de la fenetre d impression du rapport original...')
+    setPdfReportStatus('Preparation de l impression du rapport...')
 
     try {
-      const printWindow = window.open('', '_blank', 'popup,width=1200,height=900')
-      if (!printWindow) {
-        setPdfReportStatus('Autorisez les fenetres contextuelles pour imprimer le rapport.')
-        console.timeEnd('printCurrentReport-build-html')
-        console.timeEnd('printCurrentReport-total')
-        printInProgressRef.current = false
-        return
+      const reportContainer = document.querySelector('.report-page-content')
+      if (reportContainer) {
+        await waitForReportRenderReady(reportContainer)
       }
 
-      const html = reportHtml || ''
-      const reportDocumentUrl = createPrintableDocumentUrl(html)
-      console.timeEnd('printCurrentReport-build-html')
-      console.time('printCurrentReport-write-doc')
-      printWindow.location.replace(reportDocumentUrl)
-      console.timeEnd('printCurrentReport-write-doc')
-      console.time('printCurrentReport-print')
-      const onAfterPrint = () => {
-        console.timeEnd('printCurrentReport-print')
+      window.addEventListener('afterprint', () => {
         console.timeEnd('printCurrentReport-total')
         printInProgressRef.current = false
-        try { printWindow.close() } catch { }
-      }
-      printWindow.addEventListener('afterprint', onAfterPrint, { once: true })
-      printWindow.addEventListener('load', () => {
-        printWindow.focus()
-        printWindow.print()
       }, { once: true })
+
+      setPdfReportStatus('Rapport pret pour impression.')
+      window.focus()
+      window.print()
     } catch (error) {
       console.error('Erreur impression rapport original:', error)
       printInProgressRef.current = false
-      console.timeEnd('printCurrentReport-build-html')
       console.timeEnd('printCurrentReport-total')
       setPdfReportStatus('Impossible de preparer limpression du rapport original.')
     }
