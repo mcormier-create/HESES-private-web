@@ -234,7 +234,10 @@ export function calculateHourlySimulation(records, options) {
     const correctedHumidificationLoad = steamHumidificationLoad
     const steamEnergyKW = Math.round(correctedHumidificationLoad * 0.345)
     const adiabaticLoad = correctedHumidificationLoad
-    const adiabaticPumpKW = Math.max(1, Math.round(adiabaticLoad * 0.0009))
+    const hasActiveHumidification = correctedHumidificationLoad > 0
+    const adiabaticPumpKW = hasActiveHumidification
+      ? Math.max(1, Math.round(adiabaticLoad * 0.0009))
+      : 0
     const recoveredDryBulbC = record.dryBulbC + (sensibleRecoveryEfficiency / 100) * (roomTemperature - record.dryBulbC)
     const enteringHumifogEnthalpy = moistAirEnthalpyBtuLb(recoveredDryBulbC, recoveredHumidityRatio)
     const preheatBtuPerHr = Math.max(0, 4.5 * effectiveOutsideAirCFM * (indoorEnthalpy - enteringHumifogEnthalpy))

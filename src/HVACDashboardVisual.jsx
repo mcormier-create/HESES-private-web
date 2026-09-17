@@ -7,8 +7,12 @@ import { BASELINE_TECHNOLOGIES, humifogReheatLabel, selectedHumifogTechnology } 
 import { calculateFreeCoolingHumifogComparison } from './services/freeCoolingHumifogService'
 import { calculateHvacDashboardMetrics } from './services/hvacEngineeringService'
 import { epwTextToRecords as parseHourlyEpwText, calculateHourlySimulation as simulateHourlyWeather, isEpwRecordOperating } from './services/hourlyWeatherSimulation'
+import { parseAndValidateEpw, toHesaWeatherContract } from './services/epwImportService'
 import { dryBulbFromEnthalpyHumidityRatio, mixAirStates, psychrometricState, sensibleHeatingKw, stateFromDbW } from './calculations/psychrometrics'
 import { getSystemSchematic, resolveSystemSchematicId, systemImages } from './utils/systemImages'
+import { HESA_USA_REGION } from './regions/regionRegistry'
+import { getUnitedStatesCities, getUnitedStatesCity, getUnitedStatesState } from './regions/unitedStatesRegion'
+import { WEATHER_STATION_MANIFEST_BY_CITY_ID } from './regions/weatherStationManifest'
 import {
   ResponsiveContainer,
   BarChart,
@@ -531,7 +535,7 @@ export default function HVACDashboardVisual() {
 
 function HesaMultiSystemApp() {
   const initialSettings = getInitialProjectSettings()
-  const initialLanguage = initialSettings.language || 'fr'
+  const initialLanguage = initialSettings.language || HESA_USA_REGION.defaultLanguage
   const [systemControlsLanguage, setSystemControlsLanguage] = useState(initialLanguage)
   const [systems, setSystems] = useState(() => loadMultiSystemState(initialSettings, initialLanguage))
   const [activeSystemId, setActiveSystemId] = useState(() => systems[0]?.id || 'system-1')
@@ -2711,8 +2715,13 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const printInProgressRef = useRef(false)
   const hourlyWeatherFileInputRef = useRef(null)
   const initialProjectSettings = systemSettings || getInitialProjectSettings()
-  const [language, setLanguage] = useState(initialProjectSettings.language || 'fr')
-  const [units, setUnits] = useState(initialProjectSettings.units || 'metric')
+  const [language, setLanguage] = useState(initialProjectSettings.language || HESA_USA_REGION.defaultLanguage)
+  const [units, setUnits] = useState(initialProjectSettings.units || HESA_USA_REGION.defaultUnits)
+  const initialRegionState = getUnitedStatesState(initialProjectSettings.regionStateCode) || getUnitedStatesState('NY')
+  const initialRegionCities = getUnitedStatesCities(initialRegionState?.code)
+  const initialRegionCity = getUnitedStatesCity(initialRegionState?.code, initialProjectSettings.regionCityId) || initialRegionCities[0] || null
+  const [regionStateCode, setRegionStateCode] = useState(initialRegionState?.code || '')
+  const [regionCityId, setRegionCityId] = useState(initialRegionCity?.id || '')
   const [assistantQuestion, setAssistantQuestion] = useState('')
   const [assistantAnswer, setAssistantAnswer] = useState('')
   const [assistantError, setAssistantError] = useState('')
@@ -2741,6 +2750,30 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       typeof value === 'string' ? repairFrenchEncoding(value) : value,
     ])
   )
+  const regionState = getUnitedStatesState(regionStateCode)
+  const regionCities = getUnitedStatesCities(regionStateCode)
+  const regionCity = getUnitedStatesCity(regionStateCode, regionCityId)
+  const regionWeatherManifest = WEATHER_STATION_MANIFEST_BY_CITY_ID[regionCityId] || null
+
+  useEffect(() => {
+    if (regionWeatherManifest?.epwFile) {
+      setCalculationMethod('hourly')
+    }
+  }, [regionWeatherManifest?.epwFile])
+
+  const selectRegionState = (stateCode) => {
+    const cities = getUnitedStatesCities(stateCode)
+    const nextCityId = cities[0]?.id || ''
+    setRegionStateCode(stateCode)
+    setRegionCityId(nextCityId)
+  }
+
+  const selectRegionCity = (cityId) => {
+    setRegionCityId(cityId)
+    if (WEATHER_STATION_MANIFEST_BY_CITY_ID[cityId]?.epwFile) {
+      setCalculationMethod('hourly')
+    }
+  }
 
   useEffect(() => {
     repairDisplayEncodingInDom()
@@ -3534,6 +3567,13 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const buildProjectSettingsSnapshot = () => ({
     language,
     units,
+    regionCountryCode: HESA_USA_REGION.countryCode,
+    regionStateCode,
+    regionCityId,
+    regionWeatherStation: regionWeatherManifest?.stationName || regionCity?.weatherStation || null,
+    regionClimateZone: regionWeatherManifest?.ashraeClimateZone || regionCity?.climateZone || null,
+    locale: HESA_USA_REGION.locale,
+    currency: HESA_USA_REGION.currency,
     outsideAirCFM,
     roomTemperature,
     roomRelativeHumidity,
@@ -3596,6 +3636,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     onSettingsChange,
     language,
     units,
+    regionStateCode,
+    regionCityId,
     projectProfile,
     outsideAirCFM,
     roomTemperature,
@@ -3779,8 +3821,12 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     .toLowerCase()
   const usesHeatPumpReheat = selectedReheatEnergySource.includes('thermopompe') ||
     selectedReheatEnergySource.includes('heat pump')
-  const builtInHourlyWeatherFilePath = getBuiltInHourlyWeatherFilePath(selectedCity.nom)
-  const builtInHourlyWeatherFileName = getBuiltInHourlyWeatherFileName(selectedCity.nom)
+  const regionalHourlyWeatherFileName = regionWeatherManifest?.epwFile?.split('/').pop() || ''
+  const hourlyWeatherLocationName = regionWeatherManifest?.city || selectedCity.nom
+  const builtInHourlyWeatherFilePath = regionWeatherManifest?.epwFile
+    ? `/${regionWeatherManifest.epwFile.replace(/^public\//, '')}`
+    : getBuiltInHourlyWeatherFilePath(selectedCity.nom)
+  const builtInHourlyWeatherFileName = regionalHourlyWeatherFileName || getBuiltInHourlyWeatherFileName(selectedCity.nom)
   const isHourlyMode = calculationMethod === 'hourly'
   const hasLoadedHourlyEpw =
     isHourlyMode &&
@@ -3940,7 +3986,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     setHourlyWeatherLoading(true)
     setHourlyWeatherParseError('')
 
-    const fileName = getBuiltInEpwFileName(selectedCity?.nom || '')
+    const fileName = builtInHourlyWeatherFileName
     if (!fileName) {
       const fallbackMessage = getBuiltInHourlyFallbackMessage(selectedCity.nom, t)
       setHourlyWeatherLoading(false)
@@ -3949,7 +3995,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       return
     }
 
-    const epwUrl = buildEpwUrl(fileName)
+    const epwUrl = regionWeatherManifest?.epwFile
+      ? `${window.location.origin}${builtInHourlyWeatherFilePath}`
+      : buildEpwUrl(fileName)
     setHourlyWeatherResolvedUrl(epwUrl)
 
     const builtInCacheKey = `${normalizeCityKey(selectedCity?.nom || '')}|${fileName}`
@@ -4001,8 +4049,22 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
           throw new Error('BUILT_IN_ZERO_RECORDS')
         }
 
-        const { weatherLocation, records } = parseHourlyEpwText(text)
-        const metadata = getWeatherMetadataForCity(selectedCity.nom)
+        const regionalImport = regionWeatherManifest
+          ? parseAndValidateEpw(text, { fileName: regionWeatherManifest.epwFile })
+          : null
+        const { weatherLocation, records } = regionalImport
+          ? toHesaWeatherContract(regionalImport)
+          : parseHourlyEpwText(text)
+        const metadata = regionalImport
+          ? {
+              ...regionWeatherManifest,
+              ...regionalImport.metadata,
+              dataSource: regionWeatherManifest.weatherDataset,
+              sourceOrganization: regionWeatherManifest.sourceName,
+              climateFileType: `${regionWeatherManifest.weatherDataset} EPW`,
+              validationStatus: 'official',
+            }
+          : getWeatherMetadataForCity(selectedCity.nom)
 
         if (!Array.isArray(records) || records.length === 0) {
           throw new Error('EPW weather file validation failed: unable to parse hourly records.')
@@ -4025,6 +4087,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
 
         setHourlyWeatherFileName(fileName)
         setHourlyWeatherFileLocation(weatherLocation || selectedCity.nom)
+        setHourlyWeatherSourceType('built-in')
         setHourlyWeatherRecords(records)
         setHourlyWeatherMetadata(resolvedMetadata)
         setHourlyWeatherValidationWarning('')
@@ -4084,6 +4147,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     calculationMethod,
     hourlyWeatherSourceType,
     selectedCity.nom,
+    builtInHourlyWeatherFileName,
+    builtInHourlyWeatherFilePath,
+    regionWeatherManifest,
     t.noBuiltInWeatherAvailable,
     t.builtInWeatherLoadFailed,
   ])
@@ -5382,7 +5448,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         : calculationMethod === 'hourly'
         ? (hourlyWeatherSourceType === 'custom'
           ? (language === 'fr' ? 'Fichier météo téléchargé personnalisé' : 'Custom uploaded weather file')
-          : `${t.builtInWeatherFile} — ${selectedCity.nom}`)
+          : `${t.builtInWeatherFile} — ${hourlyWeatherLocationName}`)
         : (language === 'fr' ? 'Méthode heures BIN active' : 'BIN hours method active'),
       weatherSourceOrganization: calculationMethod === 'hourly'
         ? localizeWeatherMetadataValue('sourceOrganization', hourlyWeatherMetadata?.sourceOrganization || '', language)
@@ -5396,7 +5462,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       weatherValidationWarning: '',
       hourlyWeatherDataSummary: isHourlySimulationActive
         ? {
-          selectedCity: selectedCity.nom,
+          selectedCity: hourlyWeatherLocationName,
           weatherSource: localizeWeatherMetadataValue('dataSource', hourlyWeatherMetadata?.dataSource || '', language) || (hourlyWeatherSourceType === 'custom'
             ? (language === 'fr' ? 'Fichier météo téléchargé personnalisé' : 'Custom uploaded weather file')
             : ''),
@@ -5430,11 +5496,11 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     },
     project: {
       name: reportProjectName,
-      location: selectedCity.nom,
+      location: hourlyWeatherLocationName,
       preparedFor: reportPreparedFor,
       preparedBy: reportPreparedBy,
       engineerOrRepresentative: reportPreparedBy,
-      date: new Date().toLocaleDateString(language === 'fr' ? 'fr-CA' : 'en-CA'),
+      date: new Date().toLocaleDateString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale),
       softwareVersion: 'HVAC Analyzer Phase 3 - Free Cooling + Humifog',
     },
     system: {
@@ -6250,16 +6316,16 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const displayedOutdoorAirCFM = Math.round(outsideAirCFM * (displayedOaPercentForFlow / 100))
   const displayedReturnAirCFM = Math.max(0, outsideAirCFM - displayedOutdoorAirCFM)
   const displayedExhaustAirCFM = displayedOutdoorAirCFM
-  const totalAirflowDisplay = `${displayFlow(outsideAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
-  const outsideAirFlowDisplay = `${displayFlow(effectiveOutsideAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
-  const returnAirFlowDisplay = `${displayFlow(calculatedReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
-  const displayedOutdoorAirFlowDisplay = `${displayFlow(displayedOutdoorAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
-  const displayedReturnAirFlowDisplay = `${displayFlow(displayedReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
-  const displayedExhaustAirFlowDisplay = `${displayFlow(displayedExhaustAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
-  const imageOutdoorAirFlowDisplay = `${displayFlow(imageOutdoorAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
-  const imageReturnAirFlowDisplay = `${displayFlow(imageReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
-  const imageExhaustAirFlowDisplay = `${displayFlow(imageExhaustAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
-  const imageSupplyAirFlowDisplay = `${displayFlow(imageSupplyAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} ${flowUnit}`
+  const totalAirflowDisplay = `${displayFlow(outsideAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)} ${flowUnit}`
+  const outsideAirFlowDisplay = `${displayFlow(effectiveOutsideAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)} ${flowUnit}`
+  const returnAirFlowDisplay = `${displayFlow(calculatedReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)} ${flowUnit}`
+  const displayedOutdoorAirFlowDisplay = `${displayFlow(displayedOutdoorAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)} ${flowUnit}`
+  const displayedReturnAirFlowDisplay = `${displayFlow(displayedReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)} ${flowUnit}`
+  const displayedExhaustAirFlowDisplay = `${displayFlow(displayedExhaustAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)} ${flowUnit}`
+  const imageOutdoorAirFlowDisplay = `${displayFlow(imageOutdoorAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)} ${flowUnit}`
+  const imageReturnAirFlowDisplay = `${displayFlow(imageReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)} ${flowUnit}`
+  const imageExhaustAirFlowDisplay = `${displayFlow(imageExhaustAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)} ${flowUnit}`
+  const imageSupplyAirFlowDisplay = `${displayFlow(imageSupplyAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)} ${flowUnit}`
   const imageFlowDiagnostic = language === 'fr'
     ? `Débits image utilisés : OA ${formatNumber(imageOutdoorAirPercent, 1)}% / ${displayFlow(imageOutdoorAirCFM).toLocaleString('fr-CA')} ${flowUnit} | RA ${formatNumber(imageReturnAirPercent, 1)}% / ${displayFlow(imageReturnAirCFM).toLocaleString('fr-CA')} ${flowUnit} | Exhaust ${displayFlow(imageExhaustAirCFM).toLocaleString('fr-CA')} ${flowUnit} | Supply ${displayFlow(imageSupplyAirCFM).toLocaleString('fr-CA')} ${flowUnit}`
     : `Image airflow used: OA ${formatNumber(imageOutdoorAirPercent, 1)}% / ${displayFlow(imageOutdoorAirCFM).toLocaleString('en-CA')} ${flowUnit} | RA ${formatNumber(imageReturnAirPercent, 1)}% / ${displayFlow(imageReturnAirCFM).toLocaleString('en-CA')} ${flowUnit} | Exhaust ${displayFlow(imageExhaustAirCFM).toLocaleString('en-CA')} ${flowUnit} | Supply ${displayFlow(imageSupplyAirCFM).toLocaleString('en-CA')} ${flowUnit}`
@@ -6838,7 +6904,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                       <td className="p-4 font-semibold text-slate-800">
                         {language === 'fr' ? 'Debit CTA total confirme' : 'Confirmed total AHU airflow'}
                       </td>
-                      <td className="p-4 text-center font-bold text-slate-800">{displayFlow(outsideAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} {flowUnit}</td>
+                      <td className="p-4 text-center font-bold text-slate-800">{displayFlow(outsideAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)} {flowUnit}</td>
                       <td className="p-4">
                         <input
                           type="number"
@@ -6940,8 +7006,83 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
             </div>
             )}
 
+            <section className="order-2 mb-8 w-full border-y border-slate-300 bg-white px-5 py-6">
+              <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-xl font-bold text-slate-900">United States Project Location</h2>
+                <div className="text-sm font-semibold text-slate-600">
+                  {HESA_USA_REGION.locale} · {HESA_USA_REGION.currency} · Imperial
+                </div>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                <label className="text-sm font-semibold text-slate-700">
+                  Country
+                  <input
+                    type="text"
+                    value={HESA_USA_REGION.countryName}
+                    readOnly
+                    className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-slate-800"
+                  />
+                </label>
+                <label className="text-sm font-semibold text-slate-700">
+                  State
+                  <select
+                    value={regionStateCode}
+                    onChange={(event) => selectRegionState(event.target.value)}
+                    className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-800"
+                  >
+                    {HESA_USA_REGION.states.map((state) => (
+                      <option key={state.code} value={state.code}>{state.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-sm font-semibold text-slate-700">
+                  City
+                  <select
+                    value={regionCityId}
+                    onChange={(event) => selectRegionCity(event.target.value)}
+                    disabled={regionCities.length === 0}
+                    className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-800 disabled:bg-slate-100"
+                  >
+                    {regionCities.length === 0 && <option value="">Not assigned</option>}
+                    {regionCities.map((city) => (
+                      <option key={city.id} value={city.id}>{city.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-sm font-semibold text-slate-700">
+                  Weather Station
+                  <input
+                    type="text"
+                    value={regionWeatherManifest?.stationName || regionCity?.weatherStation || 'Not assigned'}
+                    readOnly
+                    className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-slate-800"
+                  />
+                </label>
+                <label className="text-sm font-semibold text-slate-700">
+                  ASHRAE Climate Zone
+                  <input
+                    type="text"
+                    value={regionWeatherManifest?.ashraeClimateZone || regionCity?.climateZone || 'Not assigned'}
+                    readOnly
+                    className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-slate-800"
+                  />
+                </label>
+              </div>
+              <div className="mt-4 text-sm text-slate-600">
+                {regionState?.name || 'No state selected'}{regionCity ? ` · ${regionCity.name}` : ''}
+              </div>
+              {regionWeatherManifest && (
+                <dl className="mt-4 grid gap-x-6 gap-y-2 border-t border-slate-200 pt-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                  <div><dt className="font-semibold text-slate-700">Station ID</dt><dd>{regionWeatherManifest.stationId}</dd></div>
+                  <div><dt className="font-semibold text-slate-700">Dataset</dt><dd>{regionWeatherManifest.weatherDataset}</dd></div>
+                  <div><dt className="font-semibold text-slate-700">Coordinates</dt><dd>{regionWeatherManifest.latitude}, {regionWeatherManifest.longitude}</dd></div>
+                  <div><dt className="font-semibold text-slate-700">Elevation / Timezone</dt><dd>{regionWeatherManifest.elevation} m / UTC{regionWeatherManifest.timezone}</dd></div>
+                </dl>
+              )}
+            </section>
+
             <div className="order-2 grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
-              {climateCities.map((item, index) => (
+              {!regionWeatherManifest && climateCities.map((item, index) => (
                 <div
                   key={index}
                   onClick={() => {
@@ -7180,17 +7321,17 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                   <div className="bg-white rounded-2xl p-4 border border-cyan-100">
                     <div className="text-sm text-slate-500">{language === 'fr' ? 'Débit total confirmé' : 'Confirmed total airflow'}</div>
-                    <div className="text-4xl font-bold text-slate-800 mt-2">{displayFlow(outsideAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')}</div>
+                    <div className="text-4xl font-bold text-slate-800 mt-2">{displayFlow(outsideAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)}</div>
                     <div className="text-sm text-slate-500 mt-1">{flowUnit}</div>
                   </div>
                   <div className="bg-white rounded-2xl p-4 border border-cyan-100">
                     <div className="text-sm text-slate-500">{language === 'fr' ? 'Débit OA minimum calculé' : 'Calculated minimum OA flow'}</div>
-                    <div className="text-4xl font-bold text-cyan-700 mt-2">{displayFlow(displayedOutdoorAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')}</div>
+                    <div className="text-4xl font-bold text-cyan-700 mt-2">{displayFlow(displayedOutdoorAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)}</div>
                     <div className="text-sm text-slate-500 mt-1">{flowUnit}</div>
                   </div>
                   <div className="bg-white rounded-2xl p-4 border border-cyan-100">
                     <div className="text-sm text-slate-500">{language === 'fr' ? 'Débit air de retour calculé' : 'Calculated return air flow'}</div>
-                    <div className="text-4xl font-bold text-orange-700 mt-2">{displayFlow(displayedReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')}</div>
+                    <div className="text-4xl font-bold text-orange-700 mt-2">{displayFlow(displayedReturnAirCFM).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)}</div>
                     <div className="text-sm text-slate-500 mt-1">{flowUnit}</div>
                   </div>
                 </div>
@@ -7390,7 +7531,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                 ? (language === 'fr' ? 'Aucune récupération thermique' : 'No heat recovery')
                 : selectedSystemDiagramLabel}
               reheatLabel={selectedReheatSystemDisplayName}
-              location={`${selectedCity?.nom} - ${selectedCity?.zone}`}
+              location={calculationMethod === 'hourly'
+                ? `${hourlyWeatherLocationName}, ${regionStateCode}`
+                : `${selectedCity?.nom} - ${selectedCity?.zone}`}
               systemDescription={isFreeCoolingMode
                 ? (language === 'fr'
                   ? `CTA - Free Cooling + retour air - Humifog - ${selectedReheatSystemDisplayName}`
@@ -8142,13 +8285,13 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                 >
                   <XAxis dataKey="nom" />
                   <YAxis />
-                  <Tooltip formatter={(value) => [`${Number(value).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} kW`, t.energySavings]} />
+                  <Tooltip formatter={(value) => [`${Number(value).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)} kW`, t.energySavings]} />
                   <Bar dataKey="valeur" fill="#0284c7" radius={[8, 8, 0, 0]}>
                     <LabelList
                       dataKey="valeur"
                       position="top"
                       className="fill-slate-800 text-sm font-bold"
-                      formatter={(value) => `${Number(value).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} kW`}
+                      formatter={(value) => `${Number(value).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)} kW`}
                     />
                   </Bar>
                 </BarChart>
@@ -8161,18 +8304,24 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
             <div className="flex justify-between items-center mb-6">
               <div>
                 <h2 className="text-2xl font-bold text-slate-800">
-                  {t.binHoursAnalysis} - {selectedCity.nom}
+                  {calculationMethod === 'hourly'
+                    ? `${language === 'fr' ? 'Analyse météo horaire' : 'Hourly Weather Analysis'} - ${hourlyWeatherLocationName}`
+                    : `${t.binHoursAnalysis} - ${selectedCity.nom}`}
                 </h2>
                 <p className="text-slate-500 mt-1">{t.binHoursDescription}</p>
                 <div className="mt-3 text-sm font-semibold text-indigo-700">
-                  {t.climateCity} : {selectedCity.nom}
+                  {calculationMethod === 'hourly'
+                    ? `${language === 'fr' ? 'Lieu météo' : 'Weather location'}: ${hourlyWeatherLocationName}`
+                    : `${t.climateCity}: ${selectedCity.nom}`}
                 </div>
-                <div className="text-sm text-slate-600">
-                  {t.designTemperature} : {displayTemp(selectedCity.hiver)}{tempUnit}
-                </div>
-                <div className="text-sm text-slate-600">
-                  {selectedCity.zone}
-                </div>
+                {calculationMethod === 'bin' ? (
+                  <>
+                    <div className="text-sm text-slate-600">{t.designTemperature} : {displayTemp(selectedCity.hiver)}{tempUnit}</div>
+                    <div className="text-sm text-slate-600">{selectedCity.zone}</div>
+                  </>
+                ) : (
+                  <div className="text-sm text-slate-600">{regionWeatherManifest?.stationName || hourlyWeatherFileLocation}</div>
+                )}
               </div>
               <div className="bg-indigo-100 text-indigo-700 px-4 py-2 rounded-full text-sm font-semibold">
                 {t.binHours}
@@ -8240,9 +8389,17 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     <div className="mt-4 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
                       <div>
                         {language === 'fr'
-                          ? `La simulation horaire charge automatiquement le fichier EPW intégré pour ${selectedCity.nom} lorsque disponible. Un fichier EPW personnalisé peut remplacer ce fichier en mode avancé.`
-                          : `Hourly simulation automatically loads the built-in EPW file for ${selectedCity.nom} when available. A custom EPW file can replace this file in advanced mode.`}
+                          ? `La simulation horaire charge automatiquement le fichier EPW intégré pour ${hourlyWeatherLocationName} lorsque disponible. Un fichier EPW personnalisé peut remplacer ce fichier en mode avancé.`
+                          : `Hourly simulation automatically loads the built-in EPW file for ${hourlyWeatherLocationName} when available. A custom EPW file can replace this file in advanced mode.`}
                       </div>
+                      {regionWeatherManifest && (
+                        <div className="mt-3 grid gap-1 rounded-xl border border-amber-200 bg-white p-3 text-xs font-bold text-amber-950 sm:grid-cols-2">
+                          <div>{language === 'fr' ? 'Données météo horaires' : 'Hourly Weather Data'}</div>
+                          <div>{hourlyWeatherLocationName} / {regionWeatherManifest.stationId}</div>
+                          <div>{regionWeatherManifest.weatherDataset}</div>
+                          <div>{language === 'fr' ? '8 760 heures' : '8,760 hours'}</div>
+                        </div>
+                      )}
                       <label className="mt-3 block text-sm font-semibold text-slate-800">{t.optionalHourlyWeatherFileLabel}</label>
                       <input
                         ref={hourlyWeatherFileInputRef}
@@ -8267,7 +8424,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                         {t.weatherSource}: {hourlyWeatherSourceType === 'custom'
                           ? t.customUploadedWeatherFile
                           : (builtInHourlyWeatherFilePath
-                            ? `${t.builtInWeatherFile} — ${selectedCity.nom}`
+                            ? `${t.builtInWeatherFile} — ${hourlyWeatherLocationName}`
                                 : t.noBuiltInWeatherAvailable)}
                       </div>
                       {calculationMethod === 'hourly' && (
@@ -8328,7 +8485,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                             <div className="overflow-x-auto">
                               <table className="w-full text-sm">
                                 <tbody>
-                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Ville sélectionnée' : 'Selected city'}</td><td className="py-1">{selectedCity.nom}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Lieu météo' : 'Weather location'}</td><td className="py-1">{hourlyWeatherLocationName}</td></tr>
                                   <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Source météo' : 'Weather source'}</td><td className="py-1">{localizeWeatherMetadataValue('dataSource', hourlyWeatherMetadata?.dataSource || '', language) || '-'}</td></tr>
                                   <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Organisation' : 'Organization'}</td><td className="py-1">{localizeWeatherMetadataValue('sourceOrganization', hourlyWeatherMetadata?.sourceOrganization || '', language) || '-'}</td></tr>
                                   <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Type de fichier' : 'File type'}</td><td className="py-1">{localizeWeatherMetadataValue('climateFileType', hourlyWeatherMetadata?.climateFileType || '', language) || '-'}</td></tr>
@@ -8336,9 +8493,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                                   <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Validation' : 'Validation'}</td><td className="py-1">{(isOfficialBuiltInHourlyFileLoaded || effectiveWeatherValidationStatus === 'official') ? validationDisplayLabel : formatWeatherValidationStatus(effectiveWeatherValidationStatus, language)}</td></tr>
                                   <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Nombre d’enregistrements horaires' : 'Number of hourly records'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.recordsLoaded, 0)}</td></tr>
                                   <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Heures d’exploitation utilisées' : 'Operating hours used'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.operatingHoursUsed, 0)}</td></tr>
-                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Température extérieure moyenne pendant les heures d’exploitation' : 'Average outdoor temperature during operating hours'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.averageOutdoorTemp, 1)} °C</td></tr>
-                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Température extérieure minimale pendant les heures d’exploitation' : 'Minimum outdoor temperature during operating hours'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.minOutdoorTemp, 1)} °C</td></tr>
-                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Température extérieure maximale pendant les heures d’exploitation' : 'Maximum outdoor temperature during operating hours'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.maxOutdoorTemp, 1)} °C</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Température extérieure moyenne pendant les heures d’exploitation' : 'Average outdoor temperature during operating hours'}</td><td className="py-1">{displayTemp(hourlyWeatherSummary.averageOutdoorTemp)}{tempUnit}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Température extérieure minimale pendant les heures d’exploitation' : 'Minimum outdoor temperature during operating hours'}</td><td className="py-1">{displayTemp(hourlyWeatherSummary.minOutdoorTemp)}{tempUnit}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Température extérieure maximale pendant les heures d’exploitation' : 'Maximum outdoor temperature during operating hours'}</td><td className="py-1">{displayTemp(hourlyWeatherSummary.maxOutdoorTemp)}{tempUnit}</td></tr>
                                   <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Humidité relative extérieure moyenne pendant les heures d’exploitation' : 'Average outdoor relative humidity during operating hours'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.averageOutdoorRh, 1)}%</td></tr>
                                 </tbody>
                               </table>
@@ -8351,9 +8508,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                               <table className="w-full text-sm">
                                 <tbody>
                                   <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Heures d’exploitation utilisées' : 'Operating hours used'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.operatingHoursUsed, 0)}</td></tr>
-                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Heures sous 0°C' : 'Hours below 0°C'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.hoursBelowZero, 0)}</td></tr>
-                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Heures sous -10°C' : 'Hours below -10°C'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.hoursBelowMinusTen, 0)}</td></tr>
-                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Heures sous -20°C' : 'Hours below -20°C'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.hoursBelowMinusTwenty, 0)}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? `Heures sous ${displayTemp(0)}${tempUnit}` : `Hours below ${displayTemp(0)}${tempUnit}`}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.hoursBelowZero, 0)}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? `Heures sous ${displayTemp(-10)}${tempUnit}` : `Hours below ${displayTemp(-10)}${tempUnit}`}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.hoursBelowMinusTen, 0)}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? `Heures sous ${displayTemp(-20)}${tempUnit}` : `Hours below ${displayTemp(-20)}${tempUnit}`}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.hoursBelowMinusTwenty, 0)}</td></tr>
                                   <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Heures avec humidification requise' : 'Hours requiring humidification'}</td><td className="py-1">{formatNumber(hourlyWeatherSummary.hoursWithHumidificationRequired, 0)}</td></tr>
                                 </tbody>
                               </table>
@@ -8365,9 +8522,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                               <div>{language === 'fr' ? 'Enregistrements chargés' : 'Hourly records loaded'}: <strong>{formatNumber(hourlyWeatherSummary.recordsLoaded, 0)}</strong></div>
                               <div>{language === 'fr' ? 'Heures d exploitation utilisées' : 'Operating hours used'}: <strong>{formatNumber(hourlyWeatherSummary.operatingHoursUsed, 0)}</strong></div>
-                              <div>{language === 'fr' ? 'Température extérieure moyenne' : 'Average outdoor temperature'}: <strong>{formatNumber(hourlyWeatherSummary.averageOutdoorTemp, 1)} °C</strong></div>
-                              <div>{language === 'fr' ? 'Température extérieure minimale' : 'Minimum outdoor temperature'}: <strong>{formatNumber(hourlyWeatherSummary.minOutdoorTemp, 1)} °C</strong></div>
-                              <div>{language === 'fr' ? 'Température extérieure maximale' : 'Maximum outdoor temperature'}: <strong>{formatNumber(hourlyWeatherSummary.maxOutdoorTemp, 1)} °C</strong></div>
+                              <div>{language === 'fr' ? 'Température extérieure moyenne' : 'Average outdoor temperature'}: <strong>{displayTemp(hourlyWeatherSummary.averageOutdoorTemp)}{tempUnit}</strong></div>
+                              <div>{language === 'fr' ? 'Température extérieure minimale' : 'Minimum outdoor temperature'}: <strong>{displayTemp(hourlyWeatherSummary.minOutdoorTemp)}{tempUnit}</strong></div>
+                              <div>{language === 'fr' ? 'Température extérieure maximale' : 'Maximum outdoor temperature'}: <strong>{displayTemp(hourlyWeatherSummary.maxOutdoorTemp)}{tempUnit}</strong></div>
                               <div>{language === 'fr' ? 'Humidité relative extérieure moyenne' : 'Average outdoor RH'}: <strong>{formatNumber(hourlyWeatherSummary.averageOutdoorRh, 1)}%</strong></div>
                               <div>{language === 'fr' ? 'Énergie annuelle vapeur' : 'Annual steam kWh'}: <strong>{formatNumber(hourlyWeatherSummary.annualSteamKwh, 0)} kWh</strong></div>
                               <div>{language === 'fr' ? 'Énergie annuelle gaz' : 'Annual gas kWh'}: <strong>{formatNumber(hourlyWeatherSummary.annualGasKwh, 0)} kWh</strong></div>
@@ -8604,7 +8761,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
               </h3>
               <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
                 <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-indigo-700">
-                  {language === 'fr' ? `Ville : ${selectedCity.nom}` : `City: ${selectedCity.nom}`}
+                  {language === 'fr'
+                    ? `${calculationMethod === 'hourly' ? 'Lieu météo' : 'Ville'} : ${calculationMethod === 'hourly' ? hourlyWeatherLocationName : selectedCity.nom}`
+                    : `${calculationMethod === 'hourly' ? 'Weather location' : 'City'}: ${calculationMethod === 'hourly' ? hourlyWeatherLocationName : selectedCity.nom}`}
                 </span>
                 <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-slate-700">
                   {language === 'fr'
@@ -8727,11 +8886,23 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                 <div className="space-y-1">
                   <div>
                     <strong>{language === 'fr' ? 'Source des données' : 'Data source'}:</strong>{' '}
-                    {language === 'fr' ? 'Gouvernement du Canada CWEC_FMCCE' : 'Government of Canada CWEC_FMCCE'}
+                    {regionWeatherManifest?.weatherDataset || (language === 'fr' ? 'Gouvernement du Canada CWEC_FMCCE' : 'Government of Canada CWEC_FMCCE')}
                   </div>
                   <div>
                     <strong>{language === 'fr' ? 'Organisation' : 'Organization'}:</strong>{' '}
-                    {language === 'fr' ? 'Environnement et Changement climatique Canada' : 'Environment and Climate Change Canada'}
+                    {regionWeatherManifest?.sourceName || (language === 'fr' ? 'Environnement et Changement climatique Canada' : 'Environment and Climate Change Canada')}
+                  </div>
+                  <div>
+                    <strong>{language === 'fr' ? 'Lieu météo' : 'Weather location'}:</strong>{' '}
+                    {hourlyWeatherLocationName}
+                  </div>
+                  <div>
+                    <strong>{language === 'fr' ? 'Station' : 'Weather station'}:</strong>{' '}
+                    {regionWeatherManifest?.stationName || hourlyWeatherMetadata?.stationName || '-'}
+                  </div>
+                  <div>
+                    <strong>{language === 'fr' ? 'Identifiant station' : 'Station ID'}:</strong>{' '}
+                    {regionWeatherManifest?.stationId || '-'}
                   </div>
                   <div>
                     <strong>{language === 'fr' ? 'Fichier météo' : 'Weather file'}:</strong>{' '}
@@ -8757,7 +8928,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
               )}
             </div>
 
-            <div className="overflow-x-auto mt-6">
+            <div className={`overflow-x-auto mt-6 ${calculationMethod === 'hourly' ? 'hidden' : ''}`}>
               <table className="w-full border-collapse overflow-hidden rounded-2xl">
                 <thead>
                   <tr className="bg-slate-800 text-white">
@@ -8782,10 +8953,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                         <td className="p-4 text-center font-semibold text-slate-800">{item.originalHours} h</td>
                         <td className="p-4 text-center font-bold text-slate-800">{item.heures} h</td>
                         <td className="p-4 text-center text-red-700 font-bold">
-                          {Math.round(binEnergyRow?.steamBinEnergyKwh || 0).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} kWh
+                          {Math.round(binEnergyRow?.steamBinEnergyKwh || 0).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)} kWh
                         </td>
                         <td className="p-4 text-center text-cyan-700 font-bold">
-                          {Math.round(binEnergyRow?.adiabaticBinEnergyKwh || 0).toLocaleString(language === 'fr' ? 'fr-CA' : 'en-CA')} kWh
+                          {Math.round(binEnergyRow?.adiabaticBinEnergyKwh || 0).toLocaleString(language === 'fr' ? 'fr-CA' : HESA_USA_REGION.locale)} kWh
                         </td>
                       </tr>
                     )
