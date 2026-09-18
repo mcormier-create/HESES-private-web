@@ -20,6 +20,8 @@
     "test:epw-chicago": "node scripts/chicago-epw-certification.mjs",
     "test:annual-chicago": "node scripts/chicago-first-annual-simulation.mjs",
     "test:usa-weather-catalog": "node scripts/usa-weather-catalog-regression.mjs",
+    "test:first-lot-certification": "node scripts/first-lot-weather-certification.mjs",
+    "test:first-lot-annual": "node scripts/first-lot-annual-simulations.mjs",
     "test:pdf-browsers": "node scripts/pdf-browser-regression.mjs",
     "test:economic-reheat": "node scripts/economic-reheat-regression.mjs",
     "test:epw-audit": "node scripts/epw-performance-audit.mjs",
