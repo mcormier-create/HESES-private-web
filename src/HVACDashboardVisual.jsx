@@ -2715,6 +2715,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const printInProgressRef = useRef(false)
   const hourlyWeatherFileInputRef = useRef(null)
   const initialProjectSettings = systemSettings || getInitialProjectSettings()
+  const isUsaRegion = HESA_USA_REGION.countryCode === 'US'
   const [language, setLanguage] = useState(initialProjectSettings.language || HESA_USA_REGION.defaultLanguage)
   const [units, setUnits] = useState(initialProjectSettings.units || HESA_USA_REGION.defaultUnits)
   const initialRegionState = getUnitedStatesState(initialProjectSettings.regionStateCode) || getUnitedStatesState('NY')
@@ -2756,10 +2757,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const regionWeatherManifest = WEATHER_STATION_MANIFEST_BY_CITY_ID[regionCityId] || null
 
   useEffect(() => {
-    if (regionWeatherManifest?.epwFile) {
+    if (isUsaRegion) {
       setCalculationMethod('hourly')
     }
-  }, [regionWeatherManifest?.epwFile])
+  }, [isUsaRegion, regionWeatherManifest?.epwFile])
 
   const selectRegionState = (stateCode) => {
     const cities = getUnitedStatesCities(stateCode)
@@ -2770,7 +2771,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
 
   const selectRegionCity = (cityId) => {
     setRegionCityId(cityId)
-    if (WEATHER_STATION_MANIFEST_BY_CITY_ID[cityId]?.epwFile) {
+    if (isUsaRegion && WEATHER_STATION_MANIFEST_BY_CITY_ID[cityId]?.epwFile) {
       setCalculationMethod('hourly')
     }
   }
@@ -3459,6 +3460,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   })
   const [calculationMethod, setCalculationMethod] = useState(() => {
     const saved = initialProjectSettings.calculationMethod
+    if (isUsaRegion) return 'hourly'
     return saved === 'hourly' ? 'hourly' : 'bin'
   })
   const [hourlyWeatherFileName, setHourlyWeatherFileName] = useState(() => initialProjectSettings.hourlyWeatherFileName || '')
@@ -4516,7 +4518,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     ],
   }
 
-  const selectedBinData = binDataByCity[selectedCity.nom] || binDataByCity['Montr\u00E9al']
+  const selectedBinData = isUsaRegion ? [] : (binDataByCity[selectedCity.nom] || binDataByCity['Montr\u00E9al'])
   const binOperatingDaysPerWeek = scheduleMode === '24-7'
     ? 7
     : getScheduleDaysPerWeek(scheduleDaysOption, scheduleCustomDays)
@@ -4548,7 +4550,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   }
   const effectiveBinData = selectedBinData.map(([tempC, hours]) => [tempC, Number((hours * binScheduleFactor).toFixed(3))])
   const totalBinHours = Math.round(effectiveBinData.reduce((total, item) => total + item[1], 0))
-  const dominantBin = effectiveBinData.reduce((max, item) => (item[1] > max[1] ? item : max), effectiveBinData[0])
+  const dominantBin = effectiveBinData.length
+    ? effectiveBinData.reduce((max, item) => (item[1] > max[1] ? item : max), effectiveBinData[0])
+    : [0, 0]
   // Convert BIN temperature labels to the active unit system for display.
   const displayedBinData = effectiveBinData.map(([tempC, hours], index) => ({
     tempC,
@@ -8333,6 +8337,13 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
             </div>
 
             <div className="grid grid-cols-1 gap-3 mb-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              {isUsaRegion && (
+                <div className="rounded-xl border border-cyan-200 bg-cyan-50 p-4">
+                  <div className="font-bold text-slate-900">Building Operating Schedule</div>
+                  <div className="mt-1 text-xs text-slate-600">The selected days and times filter the certified EPW hourly records directly.</div>
+                  <div className="mt-2 font-semibold text-cyan-900">Annual Scheduled Operating Hours: {formatNumber(annualOperatingHours, 0)} h</div>
+                </div>
+              )}
               <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                 <div>
                   <div className="font-semibold text-slate-800 mb-1">{t.operatingSchedule}</div>
@@ -8362,13 +8373,15 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                 <div>
                   <div className="font-semibold text-slate-800 mb-1">{t.methodSelection}</div>
                   <div className="flex flex-wrap items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setCalculationMethod('bin')}
-                      className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${calculationMethod === 'bin' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
-                    >
-                      {t.binHoursMethod}
-                    </button>
+                    {!isUsaRegion && (
+                      <button
+                        type="button"
+                        onClick={() => setCalculationMethod('bin')}
+                        className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${calculationMethod === 'bin' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
+                      >
+                        {t.binHoursMethod}
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => setCalculationMethod('hourly')}
@@ -8378,12 +8391,19 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     </button>
                   </div>
                   <div className="mt-4 text-sm font-semibold text-slate-700">
-                    {calculationMethod === 'bin'
+                    {isUsaRegion
+                      ? (language === 'fr' ? 'Données météo horaires EPW' : 'Hourly EPW Weather Data')
+                      : calculationMethod === 'bin'
                       ? (language === 'fr' ? 'Heures BIN sélectionnées' : 'Selected BIN hours')
                       : (language === 'fr'
                         ? `Heures spécifiques sélectionnées : ${formatNumber(annualOperatingHours, 0)} h/an`
                         : `Selected specific hours: ${formatNumber(annualOperatingHours, 0)} h/year`)}
                   </div>
+                  {isUsaRegion && !regionWeatherManifest && (
+                    <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
+                      Certified hourly weather data is not available for this location.
+                    </div>
+                  )}
                   {calculationMethod === 'bin' && (
                     <div className="mt-4 text-sm font-semibold text-slate-700">
                       {t.weatherSource}: {language === 'fr' ? 'Méthode heures BIN active' : 'BIN hours method active'}
@@ -8732,7 +8752,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                 </div>
                 <div className="rounded-2xl bg-white p-4 shadow-sm">
                   <div className="text-sm text-slate-500">
-                    {language === 'fr' ? 'Heures d’exploitation annuelles' : 'Annual operating hours'}
+                    {isUsaRegion
+                      ? 'Annual Scheduled Operating Hours'
+                      : (language === 'fr' ? 'Heures d’exploitation annuelles' : 'Annual operating hours')}
                   </div>
                   <div className="text-2xl font-bold text-slate-800">{annualOperatingHours.toLocaleString()} h/year</div>
                 </div>

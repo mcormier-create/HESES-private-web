@@ -20,6 +20,7 @@
     "test:epw-chicago": "node scripts/chicago-epw-certification.mjs",
     "test:annual-chicago": "node scripts/chicago-first-annual-simulation.mjs",
     "test:usa-weather-catalog": "node scripts/usa-weather-catalog-regression.mjs",
+    "test:usa-hourly-only": "node scripts/usa-hourly-only-regression.mjs",
     "test:first-lot-certification": "node scripts/first-lot-weather-certification.mjs",
     "test:first-lot-annual": "node scripts/first-lot-annual-simulations.mjs",
     "test:pdf-browsers": "node scripts/pdf-browser-regression.mjs",
