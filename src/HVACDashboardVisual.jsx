@@ -7051,12 +7051,16 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                 </label>
                 <label className="text-sm font-semibold text-slate-700">
                   Weather Station
-                  <input
-                    type="text"
-                    value={regionWeatherManifest?.stationName || regionCity?.weatherStation || 'Not assigned'}
-                    readOnly
-                    className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-slate-800"
-                  />
+                  <select
+                    value={regionWeatherManifest?.locationKey || ''}
+                    disabled={!regionWeatherManifest}
+                    aria-label="Weather Station"
+                    className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-slate-800 disabled:bg-slate-100"
+                  >
+                    {regionWeatherManifest
+                      ? <option value={regionWeatherManifest.locationKey}>{regionWeatherManifest.stationName}</option>
+                      : <option value="">Not assigned</option>}
+                  </select>
                 </label>
                 <label className="text-sm font-semibold text-slate-700">
                   ASHRAE Climate Zone
