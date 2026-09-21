@@ -1282,7 +1282,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
     if (value === 'Custom operating hours - EPW hourly simulation') {
       return tr('Heures d’exploitation personnalisées - simulation EPW horaire', 'Custom operating hours - EPW hourly simulation')
     }
-    if (value === 'EPW hourly simulation 8760') return tr('Simulation EPW horaire 8760', 'EPW hourly simulation 8760')
+    if (value === 'EPW hourly simulation 8760' || value === 'EPW hourly simulation') return tr('Simulation EPW horaire', 'EPW hourly simulation')
     if (value === 'BIN hours adjusted to custom schedule') {
       return tr('Heures BIN ajustées selon l’horaire personnalisé', 'BIN hours adjusted to custom schedule')
     }
@@ -1295,7 +1295,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
     [tr('Mode du rapport', 'Report mode'), includesFreeCoolingAnalysis ? tr('Free Cooling', 'Free Cooling') : tr('100% air extérieur', '100% Outdoor Air')],
     [tr('Mode de ventilation sélectionné', 'Ventilation mode selected'), mode.ventilationModeName || '-'],
     [tr('Base horaire utilisée', 'Operating-hour basis used'), localizeOperatingHourBasis(mode.operatingHourBasis) || (mode.selectedCalculationMethod?.toLowerCase().includes('hourly')
-      ? tr('Simulation météo horaire 8760', 'Hourly weather simulation 8760')
+      ? tr('Simulation météo horaire', 'Hourly weather simulation')
       : mode.isCustomOperatingHours
         ? tr('Heures d’exploitation personnalisées', 'Custom operating hours')
         : tr('Heures BIN', 'BIN hours'))],

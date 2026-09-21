@@ -5522,7 +5522,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       operatingHourBasis: calculationMethod === 'hourly'
         ? (scheduleMode === 'custom'
           ? (language === 'fr' ? 'Horaire personnalisé - simulation EPW horaire' : 'Custom operating hours - EPW hourly simulation')
-          : (language === 'fr' ? 'Simulation EPW horaire 8760' : 'EPW hourly simulation 8760'))
+          : (language === 'fr' ? 'Simulation EPW horaire' : 'EPW hourly simulation'))
         : (scheduleMode === 'custom'
           ? (language === 'fr' ? 'Heures BIN ajustées selon l’horaire personnalisé' : 'BIN hours adjusted to custom schedule')
           : (language === 'fr' ? 'Heures BIN' : 'BIN hours')),
@@ -6062,8 +6062,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     return {
         name: system.name,
         mode: {
+          calculationMethod: system.settings?.calculationMethod === 'hourly' ? 'hourly' : 'bin',
           selectedCalculationMethod: system.settings?.calculationMethod === 'hourly'
-            ? (language === 'fr' ? 'Simulation météo horaire 8760' : 'Hourly weather simulation 8760')
+            ? (language === 'fr' ? 'Simulation météo horaire' : 'Hourly weather simulation')
             : system.settings?.scheduleMode === '24-7'
               ? (language === 'fr' ? 'Heures BIN' : 'BIN Hours')
               : (language === 'fr' ? 'Heures personnalisées' : 'Custom Operating Hours'),
@@ -7691,7 +7692,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                 ? (language === 'fr' ? 'Aucune récupération thermique' : 'No heat recovery')
                 : selectedSystemDiagramLabel}
               reheatLabel={selectedReheatSystemDisplayName}
-              location={`${selectedCity?.nom} - ${selectedCity?.zone}`}
+              location={regionWeatherManifest
+                ? `${regionWeatherManifest.servesCity || regionCity?.name || regionWeatherManifest.city} \u2014 ${regionWeatherManifest.stationName}`
+                : (regionState?.name || (isUsaRegion ? HESA_USA_REGION.countryName : CANADA_REGION.countryName))}
               systemDescription={isFreeCoolingMode
                 ? (language === 'fr'
                   ? `CTA - Free Cooling + retour air - Humifog - ${selectedReheatSystemDisplayName}`
@@ -9040,7 +9043,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                   </div>
                   <div>
                     <strong>{language === 'fr' ? 'Type' : 'Type'}:</strong>{' '}
-                    {language === 'fr' ? 'fichier météo horaire EPW 8760' : 'hourly EPW weather file 8760'}
+                    {language === 'fr' ? 'fichier météo horaire EPW' : 'hourly EPW weather file'}
                   </div>
                   <div>
                     <strong>{language === 'fr' ? 'Validation' : 'Validation'}:</strong>{' '}
