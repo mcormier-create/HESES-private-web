@@ -7,8 +7,13 @@ import { BASELINE_TECHNOLOGIES, humifogReheatLabel, selectedHumifogTechnology } 
 import { calculateFreeCoolingHumifogComparison } from './services/freeCoolingHumifogService'
 import { calculateHvacDashboardMetrics } from './services/hvacEngineeringService'
 import { epwTextToRecords as parseHourlyEpwText, calculateHourlySimulation as simulateHourlyWeather, isEpwRecordOperating } from './services/hourlyWeatherSimulation'
+import { parseAndValidateEpw, toHesaWeatherContract } from './services/epwImportService'
 import { dryBulbFromEnthalpyHumidityRatio, mixAirStates, psychrometricState, sensibleHeatingKw, stateFromDbW } from './calculations/psychrometrics'
 import { getSystemSchematic, resolveSystemSchematicId, systemImages } from './utils/systemImages'
+import { HESA_USA_REGION } from './regions/regionRegistry'
+import { getUnitedStatesCities, getUnitedStatesCity, getUnitedStatesState } from './regions/unitedStatesRegion'
+import { getCanadaCities, getCanadaCity, getCanadaProvince, CANADA_REGION } from './regions/canadaRegion'
+import { WEATHER_STATION_MANIFEST_BY_CITY_ID, CANADA_WEATHER_STATION_MANIFEST_BY_CITY_ID } from './regions/weatherStationManifest'
 import {
   ResponsiveContainer,
   BarChart,
@@ -23,6 +28,12 @@ import {
 } from 'recharts'
 
 const WEATHER_PRODUCTION_MODE = false
+// Product decision: Canada and USA are now Hourly-weather-only. The legacy BIN/Climate Cities
+// UI and calculation code are kept intact (untouched) for safety and are only hidden visually.
+const HESA_LEGACY_BIN_UI_VISIBLE = false
+// Diagnostic-only fields (EPW URL, fetch status, parse/simulation timings, cache hits) are for
+// development troubleshooting only and must never appear in the normal engineer-facing UI.
+const HESA_SHOW_WEATHER_DEBUG_PANEL = Boolean(typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.DEV)
 const BIN_WEEKS_PER_YEAR = 52.142857
 
 const monthlyFactors = [1, 0.95, 0.83, 0.64, 0.44, 0.28, 0.18, 0.2, 0.36, 0.58, 0.82, 0.96]
@@ -2035,7 +2046,7 @@ const translations = {
     economizerOAReductionLabel: 'Réduction air extérieur',
     perYear: 'h/an',
     operatingSchedule: 'Plan d exploitation',
-    operationMode24_7: 'Heures BIN complètes / 24/7',
+    operationMode24_7: 'Fonctionnement 24/7',
     operationModeOffice: 'Horaire bureau',
     operationModeCustom: 'Horaire personnalisé',
     startTime: 'Heure de début',
@@ -2055,7 +2066,7 @@ const translations = {
     calculationMode: 'Mode de calcul',
     methodSelection: 'Méthode de calcul',
     binHoursMethod: 'Méthode heures BIN',
-    hourlyWeatherMethod: 'Simulation météo horaire 8760',
+    hourlyWeatherMethod: 'Simulation météo horaire',
     hourlyWeatherPlaceholder: 'La simulation horaire charge automatiquement le fichier EPW intégré pour [ville] lorsque disponible. Un fichier EPW personnalisé peut remplacer ce fichier en mode avancé.',
     optionalHourlyWeatherFileLabel: 'Fichier météo EPW personnalisé optionnel',
     chooseFile: 'Choisir un fichier',
@@ -2063,11 +2074,11 @@ const translations = {
     weatherSource: 'Source météo',
     customUploadedWeatherFile: 'Fichier météo téléchargé personnalisé',
     builtInWeatherFile: 'Fichier météo intégré',
-    noBuiltInWeatherAvailable: 'Le fichier météo horaire intégré pour cette ville est introuvable. HESA continue avec la méthode des heures BIN.',
-    builtInWeatherLoadFailed: 'Le fichier météo horaire intégré pour cette ville est introuvable. HESA continue avec la méthode des heures BIN.',
+    noBuiltInWeatherAvailable: 'Simulation impossible : veuillez sélectionner une station météo horaire certifiée.',
+    builtInWeatherLoadFailed: "Le fichier météo de la station sélectionnée n'est pas disponible. La simulation annuelle n'a pas été exécutée.",
     hourlyWeatherFileLabel: 'Fichier météo horaire',
     loadedFile: 'Fichier chargé',
-    scheduleNote: 'HESA utilise les heures BIN annuelles. En mode BIN complet, les heures BIN originales sont utilisées. En mode horaire personnalisé, les heures BIN sont ajustées selon l horaire sélectionné. Le filtrage exact heure par heure nécessite un fichier météo horaire 8760.',
+    scheduleNote: 'HESA utilise un fichier météo horaire réel (CWEC/TMY3) pour la station certifiée sélectionnée. Le filtrage heure par heure (jours et plage horaire) est appliqué directement sur ses enregistrements horaires réels.',
     mon: 'Lun',
     tue: 'Mar',
     wed: 'Mer',
@@ -2210,6 +2221,8 @@ const translations = {
     effectiveBinHours: 'Effective BIN hours',
     perYear: 'h/yr',
     operatingSchedule: 'Operating schedule',
+    operationMode24_7: '24/7 Operation',
+    operationModeCustom: 'Custom schedule',
     startTime: 'Start time',
     endTime: 'End time',
     operatingDays: 'Operating days',
@@ -2222,7 +2235,7 @@ const translations = {
     annualOperatingHours: 'Annual operating hours',
     scheduleFactor: 'Operating factor',
     actualAnnualPercentage: 'Actual annual percentage',
-    scheduleNote: 'HESA uses annual BIN hours. In full BIN mode, original BIN hours are used. In custom schedule mode, BIN hours are adjusted to the selected schedule. Exact hour-by-hour filtering requires an 8760 hourly weather file.',
+    scheduleNote: 'HESA uses a real hourly weather file (CWEC/TMY3) for the selected certified station. Hour-by-hour filtering (days and time range) is applied directly to its real hourly records.',
     mon: 'Mon',
     tue: 'Tue',
     wed: 'Wed',
@@ -2233,7 +2246,7 @@ const translations = {
     calculationMode: 'Calculation mode',
     methodSelection: 'Calculation method',
     binHoursMethod: 'BIN hours method',
-    hourlyWeatherMethod: 'Hourly weather simulation 8760',
+    hourlyWeatherMethod: 'Hourly weather simulation',
     hourlyWeatherPlaceholder: 'Hourly weather simulation automatically loads the built-in Montréal EPW file when available. An advanced custom EPW upload can override it.',
     optionalHourlyWeatherFileLabel: 'Optional custom EPW weather file',
     chooseFile: 'Choose File',
@@ -2241,8 +2254,8 @@ const translations = {
     weatherSource: 'Weather source',
     customUploadedWeatherFile: 'Custom uploaded weather file',
     builtInWeatherFile: 'Built-in weather file',
-    noBuiltInWeatherAvailable: 'Built-in hourly weather file for this city was not found. HESA is continuing with the BIN hours method.',
-    builtInWeatherLoadFailed: 'Built-in hourly weather file for this city was not found. HESA is continuing with the BIN hours method.',
+    noBuiltInWeatherAvailable: 'Simulation unavailable: please select a certified hourly weather station.',
+    builtInWeatherLoadFailed: "The selected station's weather file is not available. The annual simulation was not run.",
     hourlyWeatherFileLabel: 'Hourly weather file',
     loadedFile: 'Loaded file',
     schOA: 'Volet OA',
@@ -2711,8 +2724,21 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const printInProgressRef = useRef(false)
   const hourlyWeatherFileInputRef = useRef(null)
   const initialProjectSettings = systemSettings || getInitialProjectSettings()
-  const [language, setLanguage] = useState(initialProjectSettings.language || 'fr')
-  const [units, setUnits] = useState(initialProjectSettings.units || 'metric')
+  // Legacy projects saved before Project Country existed are interpreted as Canada.
+  const [country, setCountry] = useState(initialProjectSettings.country || 'CA')
+  const isUsaRegion = country === 'US'
+  const [language, setLanguage] = useState(initialProjectSettings.language || (isUsaRegion ? HESA_USA_REGION.defaultLanguage : 'fr'))
+  const [units, setUnits] = useState(initialProjectSettings.units || (isUsaRegion ? HESA_USA_REGION.defaultUnits : 'metric'))
+  const initialRegionState = isUsaRegion
+    ? (getUnitedStatesState(initialProjectSettings.regionStateCode) || getUnitedStatesState('NY'))
+    : (getCanadaProvince(initialProjectSettings.regionStateCode) || getCanadaProvince('QC'))
+  const initialRegionCities = isUsaRegion ? getUnitedStatesCities(initialRegionState?.code) : getCanadaCities(initialRegionState?.code)
+  const initialRegionCity = (isUsaRegion
+    ? getUnitedStatesCity(initialRegionState?.code, initialProjectSettings.regionCityId)
+    : getCanadaCity(initialRegionState?.code, initialProjectSettings.regionCityId)) || initialRegionCities[0] || null
+  const [regionStateCode, setRegionStateCode] = useState(initialRegionState?.code || '')
+  const [regionCityId, setRegionCityId] = useState(initialRegionCity?.id || '')
+  const [regionCitySearch, setRegionCitySearch] = useState('')
   const [assistantQuestion, setAssistantQuestion] = useState('')
   const [assistantAnswer, setAssistantAnswer] = useState('')
   const [assistantError, setAssistantError] = useState('')
@@ -2741,6 +2767,33 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       typeof value === 'string' ? repairFrenchEncoding(value) : value,
     ])
   )
+  const regionState = isUsaRegion ? getUnitedStatesState(regionStateCode) : getCanadaProvince(regionStateCode)
+  const regionCities = isUsaRegion ? getUnitedStatesCities(regionStateCode) : getCanadaCities(regionStateCode)
+  const regionCity = isUsaRegion ? getUnitedStatesCity(regionStateCode, regionCityId) : getCanadaCity(regionStateCode, regionCityId)
+  const regionWeatherManifest = isUsaRegion
+    ? (WEATHER_STATION_MANIFEST_BY_CITY_ID[regionCityId] || null)
+    : (CANADA_WEATHER_STATION_MANIFEST_BY_CITY_ID[regionCityId] || null)
+
+  useEffect(() => {
+    if (isUsaRegion) {
+      setCalculationMethod('hourly')
+    }
+  }, [isUsaRegion, regionWeatherManifest?.epwFile])
+
+  const selectRegionState = (stateCode) => {
+    const cities = isUsaRegion ? getUnitedStatesCities(stateCode) : getCanadaCities(stateCode)
+    const nextCityId = cities[0]?.id || ''
+    setRegionStateCode(stateCode)
+    setRegionCityId(nextCityId)
+  }
+
+  const selectRegionCity = (cityId) => {
+    setRegionCityId(cityId)
+    const manifest = isUsaRegion ? WEATHER_STATION_MANIFEST_BY_CITY_ID[cityId] : CANADA_WEATHER_STATION_MANIFEST_BY_CITY_ID[cityId]
+    if (isUsaRegion && manifest?.epwFile) {
+      setCalculationMethod('hourly')
+    }
+  }
 
   useEffect(() => {
     repairDisplayEncodingInDom()
@@ -3426,6 +3479,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   })
   const [calculationMethod, setCalculationMethod] = useState(() => {
     const saved = initialProjectSettings.calculationMethod
+    if (!HESA_LEGACY_BIN_UI_VISIBLE) return 'hourly'
+    if (isUsaRegion) return 'hourly'
     return saved === 'hourly' ? 'hourly' : 'bin'
   })
   const [hourlyWeatherFileName, setHourlyWeatherFileName] = useState(() => initialProjectSettings.hourlyWeatherFileName || '')
@@ -3532,8 +3587,13 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   }
 
   const buildProjectSettingsSnapshot = () => ({
+    country,
     language,
     units,
+    regionStateCode: isUsaRegion ? regionStateCode : '',
+    regionCityId: isUsaRegion ? regionCityId : '',
+    regionWeatherStation: isUsaRegion ? (regionWeatherManifest?.stationName || null) : null,
+    regionClimateZone: isUsaRegion ? (regionWeatherManifest?.ashraeClimateZone || null) : null,
     outsideAirCFM,
     roomTemperature,
     roomRelativeHumidity,
@@ -3594,8 +3654,11 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     persistProjectLocally()
   }, [
     onSettingsChange,
+    country,
     language,
     units,
+    regionStateCode,
+    regionCityId,
     projectProfile,
     outsideAirCFM,
     roomTemperature,
@@ -3746,7 +3809,11 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     reader.readAsText(file)
   }
 
-  const outsideWinterTemp = selectedCity.hiver
+  const epwHeatingDesignTemp = Number(hourlyWeatherMetadata?.designConditions?.heatingDryBulb99_6C)
+  // No certified EPW loaded => no synthetic legacy design temperature may feed the calculation.
+  const outsideWinterTemp = Number.isFinite(epwHeatingDesignTemp)
+    ? epwHeatingDesignTemp
+    : (HESA_LEGACY_BIN_UI_VISIBLE ? selectedCity.hiver : NaN)
 
   // Free Cooling is only available with the evaporative/atomization mode.
   const isFreeCoolingMode = ventilationMode.type === 'free-cooling-evaporative'
@@ -3779,8 +3846,24 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     .toLowerCase()
   const usesHeatPumpReheat = selectedReheatEnergySource.includes('thermopompe') ||
     selectedReheatEnergySource.includes('heat pump')
-  const builtInHourlyWeatherFilePath = getBuiltInHourlyWeatherFilePath(selectedCity.nom)
-  const builtInHourlyWeatherFileName = getBuiltInHourlyWeatherFileName(selectedCity.nom)
+  const regionalHourlyWeatherFileName = regionWeatherManifest?.epwFile?.split('/').pop() || ''
+  const hourlyWeatherLocationName = regionWeatherManifest?.city || (HESA_LEGACY_BIN_UI_VISIBLE ? selectedCity.nom : '')
+  const builtInHourlyWeatherFilePath = regionWeatherManifest?.epwFile
+    ? `/${regionWeatherManifest.epwFile.replace(/^public\//, '')}`
+    : (HESA_LEGACY_BIN_UI_VISIBLE ? getBuiltInHourlyWeatherFilePath(selectedCity.nom) : '')
+  const builtInHourlyWeatherFileName = regionalHourlyWeatherFileName || (HESA_LEGACY_BIN_UI_VISIBLE ? getBuiltInHourlyWeatherFileName(selectedCity.nom) : '')
+  // Single source of truth for "which weather station is actually driving this simulation".
+  // Never mixes the legacy climateCities selection with the certified regional manifest.
+  const activeWeatherStationDisplayName = regionWeatherManifest?.stationName
+    || (HESA_LEGACY_BIN_UI_VISIBLE ? selectedCity.nom : (language === 'fr' ? 'Aucune station sélectionnée' : 'No station selected'))
+  const activeWeatherStationSourceLabel = regionWeatherManifest
+    ? `${regionWeatherManifest.stationName} \u2014 ${regionWeatherManifest.weatherDataset || 'CWEC'}`
+    : activeWeatherStationDisplayName
+  // Identifies the exact certified station target; the EPW-loading effect keys off this value
+  // (not off the legacy selectedCity state) so weather reloads whenever the real selection changes.
+  const regionWeatherTargetKey = regionWeatherManifest
+    ? `${country}|${regionWeatherManifest.locationKey}|${regionWeatherManifest.stationId}|${regionWeatherManifest.epwFile || ''}`
+    : `${country}|none|${regionStateCode}|${regionCityId}`
   const isHourlyMode = calculationMethod === 'hourly'
   const hasLoadedHourlyEpw =
     isHourlyMode &&
@@ -3904,8 +3987,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     }
     if (hourlyWeatherSourceType === 'custom') return
 
-    if (!builtInHourlyWeatherFilePath) {
-      const fallbackMessage = getBuiltInHourlyFallbackMessage(selectedCity.nom, t)
+    const clearHourlyWeatherState = () => {
       setHourlyWeatherSourceType('none')
       setHourlyWeatherFileName('')
       setHourlyWeatherFileLocation('')
@@ -3918,45 +4000,69 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       setHourlyWeatherResolvedUrl('')
       setHourlyWeatherFetchStatus(0)
       setHourlyWeatherDebugRecordCount(0)
+    }
+
+    // Absolute rule: NO valid certified weather station => NO annual simulation.
+    // There is no fallback to a default station, a previous selection, or legacy climate-city data.
+    if (!regionWeatherManifest && !HESA_LEGACY_BIN_UI_VISIBLE) {
+      clearHourlyWeatherState()
+      setHourlyWeatherBuiltInMissing(false)
+      setHourlyWeatherLoading(false)
+      setHourlyWeatherParseError(t.noBuiltInWeatherAvailable)
+      return
+    }
+
+    if (regionWeatherManifest && regionWeatherManifest.certificationStatus === 'UNCERTIFIED') {
+      clearHourlyWeatherState()
+      setHourlyWeatherBuiltInMissing(false)
+      setHourlyWeatherLoading(false)
+      setHourlyWeatherParseError(language === 'fr'
+        ? "Cette station m\u00e9t\u00e9o n'est pas certifi\u00e9e. S\u00e9lectionnez une station certifi\u00e9e pour lancer le calcul annuel."
+        : 'This weather station is not certified. Select a certified station to run the annual calculation.')
+      return
+    }
+
+    if (!builtInHourlyWeatherFilePath) {
+      const fallbackMessage = HESA_LEGACY_BIN_UI_VISIBLE
+        ? getBuiltInHourlyFallbackMessage(selectedCity.nom, t)
+        : t.noBuiltInWeatherAvailable
+      clearHourlyWeatherState()
       setHourlyWeatherBuiltInMissing(true)
       setHourlyWeatherParseError(fallbackMessage)
       return
     }
 
     let isCancelled = false
-    setHourlyWeatherSourceType('none')
-    setHourlyWeatherFileName('')
-    setHourlyWeatherFileLocation('')
-    setHourlyWeatherRecords([])
-    setHourlyWeatherMetadata(null)
-    setHourlyWeatherValidationWarning('')
-    setHourlyWeatherSummary(null)
-    setHourlyWeatherRecordsLoaded(0)
-    setHourlyWeatherOperatingHoursUsed(0)
-    setHourlyWeatherResolvedUrl('')
-    setHourlyWeatherFetchStatus(0)
-    setHourlyWeatherDebugRecordCount(0)
+    clearHourlyWeatherState()
     setHourlyWeatherBuiltInMissing(false)
     setHourlyWeatherLoading(true)
     setHourlyWeatherParseError('')
 
-    const fileName = getBuiltInEpwFileName(selectedCity?.nom || '')
+    const fileName = builtInHourlyWeatherFileName
     if (!fileName) {
-      const fallbackMessage = getBuiltInHourlyFallbackMessage(selectedCity.nom, t)
+      const fallbackMessage = HESA_LEGACY_BIN_UI_VISIBLE
+        ? getBuiltInHourlyFallbackMessage(selectedCity.nom, t)
+        : t.noBuiltInWeatherAvailable
       setHourlyWeatherLoading(false)
       setHourlyWeatherBuiltInMissing(true)
       setHourlyWeatherParseError(fallbackMessage)
       return
     }
 
-    const epwUrl = buildEpwUrl(fileName)
+    const epwUrl = regionWeatherManifest?.epwFile
+      ? `${window.location.origin}${builtInHourlyWeatherFilePath}`
+      : buildEpwUrl(fileName)
     setHourlyWeatherResolvedUrl(epwUrl)
 
-    const builtInCacheKey = `${normalizeCityKey(selectedCity?.nom || '')}|${fileName}`
+    // Cache key is the exact certified station identity, never the legacy free-text city name,
+    // so two different stations can never collide or serve each other's cached weather data.
+    const builtInCacheKey = regionWeatherManifest
+      ? `${regionWeatherManifest.locationKey}|${regionWeatherManifest.stationId}`
+      : `${normalizeCityKey(selectedCity?.nom || '')}|${fileName}`
     const cachedBuiltInWeather = builtInWeatherCacheRef.current.get(builtInCacheKey)
     if (cachedBuiltInWeather) {
       setHourlyWeatherFileName(fileName)
-      setHourlyWeatherFileLocation(cachedBuiltInWeather.weatherLocation || selectedCity.nom)
+      setHourlyWeatherFileLocation(cachedBuiltInWeather.weatherLocation || activeWeatherStationDisplayName)
       setHourlyWeatherRecords(cachedBuiltInWeather.records)
       setHourlyWeatherMetadata(cachedBuiltInWeather.metadata)
       setHourlyWeatherValidationWarning('')
@@ -4001,8 +4107,33 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
           throw new Error('BUILT_IN_ZERO_RECORDS')
         }
 
-        const { weatherLocation, records } = parseHourlyEpwText(text)
-        const metadata = getWeatherMetadataForCity(selectedCity.nom)
+        const regionalImport = regionWeatherManifest
+          ? parseAndValidateEpw(text, { fileName: regionWeatherManifest.epwFile })
+          : null
+
+        // Cross-station guard: the EPW actually fetched must be the exact station the user
+        // selected. Any mismatch blocks the simulation instead of silently displaying wrong data.
+        if (regionWeatherManifest) {
+          const expectedStationId = String(regionWeatherManifest.stationId || '').trim()
+          const parsedStationId = String(regionalImport?.metadata?.stationId || '').trim()
+          if (expectedStationId && parsedStationId && expectedStationId !== parsedStationId) {
+            throw new Error(`CROSS_STATION_MISMATCH::expected ${expectedStationId} got ${parsedStationId}`)
+          }
+        }
+
+        const { weatherLocation, records } = regionalImport
+          ? toHesaWeatherContract(regionalImport)
+          : parseHourlyEpwText(text)
+        const metadata = regionalImport
+          ? {
+              ...regionWeatherManifest,
+              ...regionalImport.metadata,
+              dataSource: regionWeatherManifest.weatherDataset,
+              sourceOrganization: regionWeatherManifest.sourceName,
+              climateFileType: `${regionWeatherManifest.weatherDataset} EPW`,
+              validationStatus: 'official',
+            }
+          : getWeatherMetadataForCity(selectedCity.nom)
 
         if (!Array.isArray(records) || records.length === 0) {
           throw new Error('EPW weather file validation failed: unable to parse hourly records.')
@@ -4024,7 +4155,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         }
 
         setHourlyWeatherFileName(fileName)
-        setHourlyWeatherFileLocation(weatherLocation || selectedCity.nom)
+        setHourlyWeatherFileLocation(weatherLocation || activeWeatherStationDisplayName)
         setHourlyWeatherRecords(records)
         setHourlyWeatherMetadata(resolvedMetadata)
         setHourlyWeatherValidationWarning('')
@@ -4045,13 +4176,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
       })
       .catch((error) => {
         if (isCancelled) return
-        setHourlyWeatherSourceType('none')
-        setHourlyWeatherRecords([])
-        setHourlyWeatherMetadata(null)
-        setHourlyWeatherValidationWarning('')
-        setHourlyWeatherSummary(null)
-        setHourlyWeatherRecordsLoaded(0)
-        setHourlyWeatherOperatingHoursUsed(0)
+        clearHourlyWeatherState()
         setHourlyWeatherDebugRecordCount(0)
 
         const errorMessage = String(error?.message || '')
@@ -4061,13 +4186,20 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
           errorMessage === 'BUILT_IN_ZERO_RECORDS'
         setHourlyWeatherBuiltInMissing(shouldShowBuiltInFallbackMessage)
 
+        if (errorMessage.startsWith('CROSS_STATION_MISMATCH')) {
+          setHourlyWeatherParseError(language === 'fr'
+            ? `Erreur critique : le fichier m\u00e9t\u00e9o charg\u00e9 ne correspond pas \u00e0 la station s\u00e9lectionn\u00e9e (${errorMessage.split('::')[1] || ''}). Simulation bloqu\u00e9e.`
+            : `Critical error: the loaded weather file does not match the selected station (${errorMessage.split('::')[1] || ''}). Simulation blocked.`)
+          return
+        }
+
         const fetchStatusFromError = errorMessage.startsWith('BUILT_IN_FETCH_NOT_OK::')
           ? errorMessage.split('::')[1]
           : ''
 
         setHourlyWeatherParseError(
           shouldShowBuiltInFallbackMessage
-            ? `${getBuiltInHourlyFallbackMessage(selectedCity.nom, t)}${errorMessage.startsWith('BUILT_IN_FETCH_NOT_OK')
+            ? `${HESA_LEGACY_BIN_UI_VISIBLE ? getBuiltInHourlyFallbackMessage(selectedCity.nom, t) : (language === 'fr' ? 'Fichier m\u00e9t\u00e9o introuvable pour la station s\u00e9lectionn\u00e9e.' : 'Weather file not found for the selected station.')}${errorMessage.startsWith('BUILT_IN_FETCH_NOT_OK')
               ? ` (${language === 'fr' ? 'EPW introuvable' : 'EPW not found'}: ${epwUrl}; Status: ${fetchStatusFromError || hourlyWeatherFetchStatus || '-'})`
               : ''}`
             : (error?.message || t.builtInWeatherLoadFailed)
@@ -4083,7 +4215,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   }, [
     calculationMethod,
     hourlyWeatherSourceType,
-    selectedCity.nom,
+    regionWeatherTargetKey,
+    language,
     t.noBuiltInWeatherAvailable,
     t.builtInWeatherLoadFailed,
   ])
@@ -4450,7 +4583,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     ],
   }
 
-  const selectedBinData = binDataByCity[selectedCity.nom] || binDataByCity['Montr\u00E9al']
+  const selectedBinData = isUsaRegion ? [] : (binDataByCity[selectedCity.nom] || binDataByCity['Montr\u00E9al'])
   const binOperatingDaysPerWeek = scheduleMode === '24-7'
     ? 7
     : getScheduleDaysPerWeek(scheduleDaysOption, scheduleCustomDays)
@@ -4462,9 +4595,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
     : scheduleMode === '24-7'
     ? 1
     : Number((binWeeklyOperatingHours / 168).toFixed(4))
-  const annualOperatingHours = isHourlySimulationActive
-    ? filteredHourlyRecords.length
-    : Math.round(weeklyOperatingHours * BIN_WEEKS_PER_YEAR)
+  // Single source of truth: annual operating hours always equal the actually filtered hourly
+  // weather records. No parallel BIN-weeks formula may substitute for a missing weather file.
+  const annualOperatingHours = filteredHourlyRecords.length
   const annualOperatingPercent = Number(((annualOperatingHours / 8760) * 100).toFixed(1))
   const activeScheduleDays = resolveScheduleActiveDays(scheduleDaysOption, scheduleCustomDays)
   const setQuickScheduleDays = (option) => {
@@ -4482,7 +4615,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   }
   const effectiveBinData = selectedBinData.map(([tempC, hours]) => [tempC, Number((hours * binScheduleFactor).toFixed(3))])
   const totalBinHours = Math.round(effectiveBinData.reduce((total, item) => total + item[1], 0))
-  const dominantBin = effectiveBinData.reduce((max, item) => (item[1] > max[1] ? item : max), effectiveBinData[0])
+  const dominantBin = effectiveBinData.length
+    ? effectiveBinData.reduce((max, item) => (item[1] > max[1] ? item : max), effectiveBinData[0])
+    : [0, 0]
   // Convert BIN temperature labels to the active unit system for display.
   const displayedBinData = effectiveBinData.map(([tempC, hours], index) => ({
     tempC,
@@ -5382,7 +5517,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         : calculationMethod === 'hourly'
         ? (hourlyWeatherSourceType === 'custom'
           ? (language === 'fr' ? 'Fichier météo téléchargé personnalisé' : 'Custom uploaded weather file')
-          : `${t.builtInWeatherFile} — ${selectedCity.nom}`)
+          : activeWeatherStationSourceLabel)
         : (language === 'fr' ? 'Méthode heures BIN active' : 'BIN hours method active'),
       weatherSourceOrganization: calculationMethod === 'hourly'
         ? localizeWeatherMetadataValue('sourceOrganization', hourlyWeatherMetadata?.sourceOrganization || '', language)
@@ -6547,6 +6682,23 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
           </div>
           <div className="flex flex-wrap gap-2">
           <button
+            onClick={() => setCountry('CA')}
+            className={`px-4 py-2 rounded-xl font-semibold transition ${
+              country === 'CA' ? 'bg-cyan-600 text-white shadow' : 'bg-slate-200 text-slate-700'
+            }`}
+          >
+            Canada
+          </button>
+          <button
+            onClick={() => setCountry('US')}
+            className={`px-4 py-2 rounded-xl font-semibold transition ${
+              country === 'US' ? 'bg-cyan-600 text-white shadow' : 'bg-slate-200 text-slate-700'
+            }`}
+          >
+            United States
+          </button>
+          <div className="w-px bg-slate-300 mx-1 self-stretch" />
+          <button
             onClick={() => setLanguage('fr')}
             className={`px-4 py-2 rounded-xl font-semibold transition ${
               language === 'fr' ? 'bg-cyan-600 text-white shadow' : 'bg-slate-200 text-slate-700'
@@ -6760,6 +6912,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
 
 
           {/* Climate Cities */}
+          {HESA_LEGACY_BIN_UI_VISIBLE && !isUsaRegion && (
           <div className="w-full bg-white rounded-3xl shadow-xl p-6 flex flex-col">
             <div className="flex justify-between items-center mb-6">
               <div>
@@ -6969,6 +7122,128 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
             </div>
 
           </div>
+          )}
+
+          <section className="order-2 mb-8 w-full border-y border-slate-300 bg-white px-5 py-6">
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-xl font-bold text-slate-900">{isUsaRegion ? 'United States Project Location' : 'Canada Project Location'}</h2>
+              <div className="text-sm font-semibold text-slate-600">
+                {isUsaRegion ? `${HESA_USA_REGION.locale} \u00b7 ${HESA_USA_REGION.currency} \u00b7 Imperial` : `${CANADA_REGION.locale} \u00b7 ${CANADA_REGION.currency} \u00b7 Metric`}
+              </div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+              <label className="text-sm font-semibold text-slate-700">
+                Country
+                <input
+                  type="text"
+                  value={isUsaRegion ? HESA_USA_REGION.countryName : CANADA_REGION.countryName}
+                  readOnly
+                  className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-slate-800"
+                />
+              </label>
+              <label className="text-sm font-semibold text-slate-700">
+                {isUsaRegion ? 'State' : 'Province / Territory'}
+                <select
+                  value={regionStateCode}
+                  onChange={(event) => selectRegionState(event.target.value)}
+                  className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-800"
+                >
+                  {(isUsaRegion ? HESA_USA_REGION.states : CANADA_REGION.provinces).map((state) => (
+                    <option key={state.code} value={state.code}>{state.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm font-semibold text-slate-700 md:col-span-2">
+                City / Location search
+                <input
+                  type="text"
+                  value={regionCitySearch}
+                  onChange={(event) => setRegionCitySearch(event.target.value)}
+                  placeholder={isUsaRegion ? 'Search city...' : 'Rechercher une ville / Search city...'}
+                  className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-800"
+                />
+              </label>
+              <label className="text-sm font-semibold text-slate-700">
+                City / Location
+                <select
+                  value={regionCityId}
+                  onChange={(event) => selectRegionCity(event.target.value)}
+                  disabled={regionCities.length === 0}
+                  className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-800 disabled:bg-slate-100"
+                >
+                  {regionCities.length === 0 && <option value="">Not assigned</option>}
+                  {regionCities
+                    .filter((city) => normalizeCityKey(city.name).includes(normalizeCityKey(regionCitySearch)))
+                    .map((city) => (
+                      <option key={city.id} value={city.id}>{city.name}</option>
+                    ))}
+                </select>
+              </label>
+              <label className="text-sm font-semibold text-slate-700">
+                Weather Station
+                <select
+                  value={regionWeatherManifest?.locationKey || ''}
+                  disabled={!regionWeatherManifest}
+                  aria-label="Weather Station"
+                  className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-slate-800 disabled:bg-slate-100"
+                >
+                  {regionWeatherManifest
+                    ? <option value={regionWeatherManifest.locationKey}>{regionWeatherManifest.stationName}</option>
+                    : <option value="">Not certified / not assigned</option>}
+                </select>
+              </label>
+              <label className="text-sm font-semibold text-slate-700">
+                Weather Status
+                <input
+                  type="text"
+                  value={regionWeatherManifest ? (regionWeatherManifest.certificationStatus || 'CERTIFIED') : 'UNCERTIFIED'}
+                  readOnly
+                  className={`mt-2 w-full rounded-lg border px-3 py-2 font-semibold ${regionWeatherManifest ? (regionWeatherManifest.warningCount > 0 ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-emerald-300 bg-emerald-50 text-emerald-800') : 'border-red-300 bg-red-50 text-red-800'}`}
+                />
+              </label>
+              <label className="text-sm font-semibold text-slate-700">
+                Weather Dataset
+                <input
+                  type="text"
+                  value={regionWeatherManifest?.weatherDataset || 'Not assigned'}
+                  readOnly
+                  className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-slate-800"
+                />
+              </label>
+              <label className="text-sm font-semibold text-slate-700">
+                Climate Zone
+                <input
+                  type="text"
+                  value={regionWeatherManifest?.ashraeClimateZone || regionCity?.climateZone || 'Not assigned'}
+                  readOnly
+                  className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-slate-800"
+                />
+              </label>
+            </div>
+            <div className="mt-4 text-sm text-slate-600">
+              {regionState?.name || 'No state/province selected'}{regionCity ? ` \u00b7 ${regionCity.name}` : ''}
+              {regionWeatherManifest?.servesCity && (
+                <span className="ml-2 font-semibold text-cyan-700">
+                  {`Also serves: ${regionWeatherManifest.servesCity} (\u2248 ${regionWeatherManifest.servesCityDistanceKm} km)`}
+                </span>
+              )}
+              {!regionWeatherManifest && regionCity && (
+                <span className="ml-2 font-semibold text-amber-700">
+                  {isUsaRegion
+                    ? 'This location is not yet a certified weather station. Select a certified City / Location.'
+                    : "Cette localisation n'est pas encore une station météo certifiée. Sélectionnez une ville certifiée."}
+                </span>
+              )}
+            </div>
+            {regionWeatherManifest && (
+              <dl className="mt-4 grid gap-x-6 gap-y-2 border-t border-slate-200 pt-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                <div><dt className="font-semibold text-slate-700">Station ID</dt><dd>{regionWeatherManifest.stationId}</dd></div>
+                <div><dt className="font-semibold text-slate-700">Dataset</dt><dd>{regionWeatherManifest.weatherDataset}</dd></div>
+                <div><dt className="font-semibold text-slate-700">Coordinates</dt><dd>{regionWeatherManifest.latitude}, {regionWeatherManifest.longitude}</dd></div>
+                <div><dt className="font-semibold text-slate-700">Elevation / Timezone</dt><dd>{regionWeatherManifest.elevation} m / UTC{regionWeatherManifest.timezone}</dd></div>
+              </dl>
+            )}
+          </section>
             {/* Heat Recovery Systems */}
             {!isFreeCoolingMode && (
               <div className="w-full bg-orange-50 border border-orange-200 rounded-3xl p-6 mb-8">
@@ -8156,26 +8431,35 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
             </div>
           </div>
 
-          {/* BIN Hours */}
+          {/* Annual Energy Analysis */}
           <div className="w-full bg-white rounded-3xl shadow-xl p-6 border border-slate-200">
             <div className="flex justify-between items-center mb-6">
               <div>
                 <h2 className="text-2xl font-bold text-slate-800">
-                  {t.binHoursAnalysis} - {selectedCity.nom}
+                  {language === 'fr' ? 'Analyse \u00e9nerg\u00e9tique annuelle' : 'Annual Energy Analysis'}
                 </h2>
-                <p className="text-slate-500 mt-1">{t.binHoursDescription}</p>
-                <div className="mt-3 text-sm font-semibold text-indigo-700">
-                  {t.climateCity} : {selectedCity.nom}
-                </div>
-                <div className="text-sm text-slate-600">
-                  {t.designTemperature} : {displayTemp(selectedCity.hiver)}{tempUnit}
-                </div>
-                <div className="text-sm text-slate-600">
-                  {selectedCity.zone}
-                </div>
+                {regionWeatherManifest ? (
+                  <>
+                    <div className="mt-3 text-sm font-semibold text-indigo-700">
+                      {(regionCity?.name || regionWeatherManifest.city)}{regionState?.name ? `, ${regionState.name}` : ''}
+                    </div>
+                    <div className="text-sm text-slate-600">
+                      {language === 'fr' ? 'Station m\u00e9t\u00e9o' : 'Weather station'}: {regionWeatherManifest.stationName} ({regionWeatherManifest.stationId})
+                    </div>
+                    <div className="text-sm text-slate-600">
+                      {regionWeatherManifest.weatherDataset}
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-slate-500 mt-1">
+                    {language === 'fr'
+                      ? 'Veuillez s\u00e9lectionner une station m\u00e9t\u00e9o certifi\u00e9e ci-dessus.'
+                      : 'Please select a certified weather station above.'}
+                  </p>
+                )}
               </div>
               <div className="bg-indigo-100 text-indigo-700 px-4 py-2 rounded-full text-sm font-semibold">
-                {t.binHours}
+                {language === 'fr' ? 'M\u00e9t\u00e9o horaire' : 'Hourly weather'}
               </div>
             </div>
 
@@ -8187,7 +8471,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     {t.calculationMode}: {scheduleMode === '24-7' ? t.operationMode24_7 : t.operationModeCustom}
                   </div>
                   <div className="mb-3 text-sm text-slate-500">
-                    {t.methodSelection}: {calculationMethod === 'bin' ? t.binHoursMethod : t.hourlyWeatherMethod}
+                    {language === 'fr' ? 'M\u00e9thode' : 'Method'}: {t.hourlyWeatherMethod}
                   </div>
                   <div className="flex flex-wrap items-center gap-3">
                     <button
@@ -8207,41 +8491,26 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                   </div>
                 </div>
                 <div>
-                  <div className="font-semibold text-slate-800 mb-1">{t.methodSelection}</div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setCalculationMethod('bin')}
-                      className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${calculationMethod === 'bin' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
-                    >
-                      {t.binHoursMethod}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setCalculationMethod('hourly')}
-                      className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${calculationMethod === 'hourly' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'}`}
-                    >
-                      {t.hourlyWeatherMethod}
-                    </button>
+                  <div className="font-semibold text-slate-800 mb-1">{language === 'fr' ? 'M\u00e9thode de calcul' : 'Calculation method'}</div>
+                  {/* A single weather method now exists; this is informational only, not a selectable control. */}
+                  <div className="rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800">
+                    {t.hourlyWeatherMethod}
                   </div>
                   <div className="mt-4 text-sm font-semibold text-slate-700">
-                    {calculationMethod === 'bin'
-                      ? (language === 'fr' ? 'Heures BIN sélectionnées' : 'Selected BIN hours')
+                    {hasLoadedHourlyEpw
+                      ? (language === 'fr'
+                        ? `Heures d\u2019exploitation annuelles : ${formatNumber(annualOperatingHours, 0)} h/an`
+                        : `Annual operating hours: ${formatNumber(annualOperatingHours, 0)} h/year`)
                       : (language === 'fr'
-                        ? `Heures spécifiques sélectionnées : ${formatNumber(annualOperatingHours, 0)} h/an`
-                        : `Selected specific hours: ${formatNumber(annualOperatingHours, 0)} h/year`)}
+                        ? 'Heures d\u2019exploitation annuelles : non disponibles'
+                        : 'Annual operating hours: unavailable')}
                   </div>
-                  {calculationMethod === 'bin' && (
-                    <div className="mt-4 text-sm font-semibold text-slate-700">
-                      {t.weatherSource}: {language === 'fr' ? 'Méthode heures BIN active' : 'BIN hours method active'}
-                    </div>
-                  )}
                   {calculationMethod === 'hourly' && (
                     <div className="mt-4 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
                       <div>
                         {language === 'fr'
-                          ? `La simulation horaire charge automatiquement le fichier EPW intégré pour ${selectedCity.nom} lorsque disponible. Un fichier EPW personnalisé peut remplacer ce fichier en mode avancé.`
-                          : `Hourly simulation automatically loads the built-in EPW file for ${selectedCity.nom} when available. A custom EPW file can replace this file in advanced mode.`}
+                          ? `La simulation horaire charge automatiquement le fichier EPW de la station certifiée sélectionnée (${activeWeatherStationDisplayName}) lorsque disponible. Un fichier EPW personnalisé peut remplacer ce fichier en mode avancé.`
+                          : `Hourly simulation automatically loads the built-in EPW file for the selected certified station (${activeWeatherStationDisplayName}) when available. A custom EPW file can replace this file in advanced mode.`}
                       </div>
                       <label className="mt-3 block text-sm font-semibold text-slate-800">{t.optionalHourlyWeatherFileLabel}</label>
                       <input
@@ -8267,10 +8536,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                         {t.weatherSource}: {hourlyWeatherSourceType === 'custom'
                           ? t.customUploadedWeatherFile
                           : (builtInHourlyWeatherFilePath
-                            ? `${t.builtInWeatherFile} — ${selectedCity.nom}`
+                            ? activeWeatherStationSourceLabel
                                 : t.noBuiltInWeatherAvailable)}
                       </div>
-                      {calculationMethod === 'hourly' && (
+                      {HESA_SHOW_WEATHER_DEBUG_PANEL && calculationMethod === 'hourly' && (
                         <div className="mt-2 rounded-2xl border border-cyan-200 bg-cyan-50 p-3 text-xs font-semibold text-cyan-800">
                           <div>{language === 'fr' ? `EPW URL utilisée : ${hourlyWeatherResolvedUrl || buildEpwUrl(builtInHourlyWeatherFileName)}` : `EPW URL used: ${hourlyWeatherResolvedUrl || buildEpwUrl(builtInHourlyWeatherFileName)}`}</div>
                           <div>{language === 'fr' ? `Fetch status : ${hourlyWeatherFetchStatus || '-'}` : `Fetch status: ${hourlyWeatherFetchStatus || '-'}`}</div>
@@ -8328,7 +8597,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                             <div className="overflow-x-auto">
                               <table className="w-full text-sm">
                                 <tbody>
-                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Ville sélectionnée' : 'Selected city'}</td><td className="py-1">{selectedCity.nom}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Ville sélectionnée' : 'Selected city'}</td><td className="py-1">{regionCity?.name || regionWeatherManifest?.city || '-'}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Station météo' : 'Weather station'}</td><td className="py-1">{regionWeatherManifest?.stationName || '-'}</td></tr>
+                                  <tr><td className="py-1 pr-4 font-medium">Station ID</td><td className="py-1">{regionWeatherManifest?.stationId || '-'}</td></tr>
                                   <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Source météo' : 'Weather source'}</td><td className="py-1">{localizeWeatherMetadataValue('dataSource', hourlyWeatherMetadata?.dataSource || '', language) || '-'}</td></tr>
                                   <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Organisation' : 'Organization'}</td><td className="py-1">{localizeWeatherMetadataValue('sourceOrganization', hourlyWeatherMetadata?.sourceOrganization || '', language) || '-'}</td></tr>
                                   <tr><td className="py-1 pr-4 font-medium">{language === 'fr' ? 'Type de fichier' : 'File type'}</td><td className="py-1">{localizeWeatherMetadataValue('climateFileType', hourlyWeatherMetadata?.climateFileType || '', language) || '-'}</td></tr>
@@ -8400,9 +8671,11 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                     </div>
                   )}
                 </div>
-                <div className="mb-3 rounded-xl border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-bold text-cyan-900">
-                  VERSION DASHBOARD : schedule-visible-days-v2
-                </div>
+                {HESA_SHOW_WEATHER_DEBUG_PANEL && (
+                  <div className="mb-3 rounded-xl border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-bold text-cyan-900">
+                    VERSION DASHBOARD : schedule-visible-days-v2
+                  </div>
+                )}
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className="block">
                     <div className="mb-2 text-sm font-semibold text-slate-800">{t.startTime}</div>
@@ -8604,12 +8877,12 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
               </h3>
               <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
                 <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-indigo-700">
-                  {language === 'fr' ? `Ville : ${selectedCity.nom}` : `City: ${selectedCity.nom}`}
+                  {language === 'fr' ? `Ville : ${activeWeatherStationDisplayName}` : `City: ${activeWeatherStationDisplayName}`}
                 </span>
                 <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-slate-700">
                   {language === 'fr'
-                    ? `Méthode : ${calculationMethod === 'bin' ? t.binHoursMethod : t.hourlyWeatherMethod}`
-                    : `Method: ${calculationMethod === 'bin' ? t.binHoursMethod : t.hourlyWeatherMethod}`}
+                    ? `Méthode : ${t.hourlyWeatherMethod}`
+                    : `Method: ${t.hourlyWeatherMethod}`}
                 </span>
                 <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">
                   {calculationMethod === 'bin'
