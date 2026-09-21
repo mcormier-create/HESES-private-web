@@ -12,7 +12,7 @@ import { dryBulbFromEnthalpyHumidityRatio, mixAirStates, psychrometricState, sen
 import { getSystemSchematic, resolveSystemSchematicId, systemImages } from './utils/systemImages'
 import { HESA_USA_REGION } from './regions/regionRegistry'
 import { getUnitedStatesCities, getUnitedStatesCity, getUnitedStatesState } from './regions/unitedStatesRegion'
-import { getCanadaCities, getCanadaCity, getCanadaProvince, CANADA_REGION } from './regions/canadaRegion'
+import { getCanadaCities, getCanadaCity, getCanadaProvince, CANADA_REGION, migrateLegacyCanadaCityName } from './regions/canadaRegion'
 import { WEATHER_STATION_MANIFEST_BY_CITY_ID, CANADA_WEATHER_STATION_MANIFEST_BY_CITY_ID } from './regions/weatherStationManifest'
 import {
   ResponsiveContainer,
@@ -181,6 +181,20 @@ function normalizeCityKey(cityName) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
+}
+
+// Also treats hyphens/spaces as equivalent so "Trois-Rivières" and "Trois Rivieres" both match.
+function normalizeRegionSearchKey(value) {
+  return normalizeCityKey(value).replace(/[-\s]+/g, ' ').trim()
+}
+
+// The City/Location search must find a location by its display name, its real weather station
+// name, its station ID, or an explicit served-city alias (e.g. Sherbrooke -> LENNOXVILLE).
+function regionCityMatchesSearch(city, manifest, searchTerm) {
+  const term = normalizeRegionSearchKey(searchTerm)
+  if (!term) return true
+  const candidates = [city?.name, city?.weatherStation, manifest?.stationId, manifest?.servesCity]
+  return candidates.some((candidate) => candidate && normalizeRegionSearchKey(candidate).includes(term))
 }
 
 function getBuiltInHourlyWeatherFilePath(cityName) {
@@ -1992,7 +2006,7 @@ const translations = {
     binHours: 'BIN Hours',
     climateCity: 'Ville climatique',
     designTemperature: 'Température de conception',
-    binTemperature: 'Température BIN',
+    binTemperature: 'Plage de température',
     annualHours: 'Heures annuelles',
     correctedRecoveryLoad: 'Énergie vapeur après récupération',
     adiabaticLoad: 'Énergie électrique adiabatique',
@@ -2027,7 +2041,7 @@ const translations = {
     metric: 'Métrique',
     imperial: 'Impérial',
     economizerBinAnalysis: 'Économiseur HVAC',
-    economizerBinDesc: 'Fraction d\'air extérieur requise à chaque température BIN pour atteindre la consigne',
+    economizerBinDesc: 'Fraction d\'air extérieur requise à chaque plage de température pour atteindre la consigne',
     oaPercent: '% AE',
     oaFlow: 'Débit AE',
     economizerTotalHours: 'Heures économiseur actif',
@@ -2035,7 +2049,7 @@ const translations = {
     economizerOAReduction: 'Réduction débit OA',
     economizerPotential: 'Potentiel récupération',
     economizerCard: 'Économiseur HVAC',
-    economizerCardDesc: 'Calcul dynamique selon les heures BIN',
+    economizerCardDesc: 'Calcul dynamique selon les heures météo horaires',
     evaporativeLeavingAir: 'Air sortie évaporatif',
     wetBulbEstimate: 'Bulbe humide estimé',
     evaporativeHours: 'Heures évaporatives',
@@ -2056,8 +2070,8 @@ const translations = {
     mondayToSaturday: 'Lundi à samedi',
     sevenDaysWeek: '7 jours/semaine',
     customDays: 'Personnalisé',
-    originalBinHours: 'Heures BIN originales',
-    effectiveBinHours: 'Heures BIN effectives',
+    originalBinHours: 'Heures originales',
+    effectiveBinHours: 'Heures effectives',
     dailyOperatingHours: 'Heures d exploitation par jour',
     weeklyOperatingHours: 'Heures d exploitation par semaine',
     annualOperatingHours: 'Heures d exploitation annuelles',
@@ -2165,7 +2179,7 @@ const translations = {
     binHours: 'BIN Hours',
     climateCity: 'Climate City',
     designTemperature: 'Design Temperature',
-    binTemperature: 'BIN Temperature',
+    binTemperature: 'Temperature range',
     annualHours: 'Annual Hours',
     correctedRecoveryLoad: 'Steam Energy After Recovery',
     adiabaticLoad: 'Adiabatic Electric Energy',
@@ -2200,7 +2214,7 @@ const translations = {
     metric: 'Metric',
     imperial: 'Imperial',
     economizerBinAnalysis: 'HVAC Economizer',
-    economizerBinDesc: 'Outside air fraction required at each BIN temperature to reach the setpoint',
+    economizerBinDesc: 'Outside air fraction required at each temperature range to reach the setpoint',
     oaPercent: 'OA %',
     oaFlow: 'OA Flow',
     economizerTotalHours: 'Economizer active hours',
@@ -2208,7 +2222,7 @@ const translations = {
     economizerOAReduction: 'OA flow reduction',
     economizerPotential: 'Recovery potential',
     economizerCard: 'HVAC Economizer',
-    economizerCardDesc: 'Dynamic calculation based on BIN hours',
+    economizerCardDesc: 'Dynamic calculation based on hourly weather records',
     evaporativeLeavingAir: 'Evaporative leaving air',
     wetBulbEstimate: 'Estimated wet bulb',
     evaporativeHours: 'Evaporative hours',
@@ -2217,8 +2231,8 @@ const translations = {
     economizerHoursLabel: 'Economizer hours',
     economizerAvgOutsideAir: 'Average outside air',
     economizerOAReductionLabel: 'Outside air reduction',
-    originalBinHours: 'Original BIN hours',
-    effectiveBinHours: 'Effective BIN hours',
+    originalBinHours: 'Original hours',
+    effectiveBinHours: 'Effective hours',
     perYear: 'h/yr',
     operatingSchedule: 'Operating schedule',
     operationMode24_7: '24/7 Operation',
@@ -2533,7 +2547,7 @@ function HesesLandingPage({ language, setLanguage, onStartAnalysis }) {
       ['Humidification adiabatique haute pression', 'Performance Humifog'],
       ['Récupération de chaleur', 'Effet de la récupération thermique'],
       ['Réchauffage thermopompe', 'Impact du réchauffage HP'],
-      ['Analyse météo BIN', 'Base horaire climatique BIN'],
+      ['Simulation météo horaire', 'Base horaire climatique CWEC/TMY certifiée'],
       ['Énergie et coût annuels', 'Résultats annuels consolidés'],
       ['Réduction des GES', 'Comparaison des émissions'],
       ['Rapport PDF d\'ingénierie', 'Sortie de rapport professionnelle'],
@@ -2561,7 +2575,7 @@ function HesesLandingPage({ language, setLanguage, onStartAnalysis }) {
       ['High-Pressure Adiabatic Humidification', 'Humifog performance'],
       ['Heat Recovery', 'Thermal recovery impact'],
       ['Heat Pump Reheat', 'HP reheat impact'],
-      ['BIN Weather Analysis', 'Hourly climate BIN foundation'],
+      ['Hourly Weather Simulation', 'Certified CWEC/TMY hourly climate foundation'],
       ['Annual Energy & Cost', 'Annual energy and cost results'],
       ['GHG Reduction', 'Emissions comparison'],
       ['Engineering PDF Report', 'Professional report output'],
@@ -2732,11 +2746,18 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   const initialRegionState = isUsaRegion
     ? (getUnitedStatesState(initialProjectSettings.regionStateCode) || getUnitedStatesState('NY'))
     : (getCanadaProvince(initialProjectSettings.regionStateCode) || getCanadaProvince('QC'))
-  const initialRegionCities = isUsaRegion ? getUnitedStatesCities(initialRegionState?.code) : getCanadaCities(initialRegionState?.code)
-  const initialRegionCity = (isUsaRegion
-    ? getUnitedStatesCity(initialRegionState?.code, initialProjectSettings.regionCityId)
-    : getCanadaCity(initialRegionState?.code, initialProjectSettings.regionCityId)) || initialRegionCities[0] || null
-  const [regionStateCode, setRegionStateCode] = useState(initialRegionState?.code || '')
+  // No first-station fallback: a saved regionCityId is used as-is; a legacy climateCities name
+  // (selectedCityName) is migrated only via the explicit, unambiguous mapping table; otherwise
+  // the city/station stays unselected and the annual simulation remains blocked until the user picks one.
+  const legacyCanadaMigration = (!isUsaRegion && !initialProjectSettings.regionCityId)
+    ? migrateLegacyCanadaCityName(initialProjectSettings.selectedCityName)
+    : null
+  const initialRegionStateCode = legacyCanadaMigration?.provinceCode || initialRegionState?.code || ''
+  const initialRegionCityIdSetting = legacyCanadaMigration?.cityId || initialProjectSettings.regionCityId
+  const initialRegionCity = isUsaRegion
+    ? getUnitedStatesCity(initialRegionState?.code, initialRegionCityIdSetting)
+    : getCanadaCity(initialRegionStateCode, initialRegionCityIdSetting)
+  const [regionStateCode, setRegionStateCode] = useState(legacyCanadaMigration?.provinceCode || initialRegionState?.code || '')
   const [regionCityId, setRegionCityId] = useState(initialRegionCity?.id || '')
   const [regionCitySearch, setRegionCitySearch] = useState('')
   const [assistantQuestion, setAssistantQuestion] = useState('')
@@ -2781,10 +2802,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
   }, [isUsaRegion, regionWeatherManifest?.epwFile])
 
   const selectRegionState = (stateCode) => {
-    const cities = isUsaRegion ? getUnitedStatesCities(stateCode) : getCanadaCities(stateCode)
-    const nextCityId = cities[0]?.id || ''
+    // Changing province/state must never auto-select a city (no first-station fallback).
+    // The weather-loading effect blocks the simulation until the user picks a new valid city.
     setRegionStateCode(stateCode)
-    setRegionCityId(nextCityId)
+    setRegionCityId('')
   }
 
   const selectRegionCity = (cityId) => {
@@ -4115,7 +4136,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
         // selected. Any mismatch blocks the simulation instead of silently displaying wrong data.
         if (regionWeatherManifest) {
           const expectedStationId = String(regionWeatherManifest.stationId || '').trim()
-          const parsedStationId = String(regionalImport?.metadata?.stationId || '').trim()
+          const parsedStationId = String(regionalImport?.metadata?.location?.stationId || '').trim()
           if (expectedStationId && parsedStationId && expectedStationId !== parsedStationId) {
             throw new Error(`CROSS_STATION_MISMATCH::expected ${expectedStationId} got ${parsedStationId}`)
           }
@@ -7128,7 +7149,8 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-xl font-bold text-slate-900">{isUsaRegion ? 'United States Project Location' : 'Canada Project Location'}</h2>
               <div className="text-sm font-semibold text-slate-600">
-                {isUsaRegion ? `${HESA_USA_REGION.locale} \u00b7 ${HESA_USA_REGION.currency} \u00b7 Imperial` : `${CANADA_REGION.locale} \u00b7 ${CANADA_REGION.currency} \u00b7 Metric`}
+                {/* Currency follows the project country; locale/units follow the user's actual language/unit selection. */}
+                {`${language}-${isUsaRegion ? 'US' : 'CA'} \u00b7 ${isUsaRegion ? HESA_USA_REGION.currency : CANADA_REGION.currency} \u00b7 ${units === 'imperial' ? 'Imperial' : 'Metric'}`}
               </div>
             </div>
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
@@ -7171,9 +7193,13 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                   disabled={regionCities.length === 0}
                   className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-800 disabled:bg-slate-100"
                 >
-                  {regionCities.length === 0 && <option value="">Not assigned</option>}
+                  {(regionCities.length === 0 || !regionCityId) && <option value="">Not assigned</option>}
                   {regionCities
-                    .filter((city) => normalizeCityKey(city.name).includes(normalizeCityKey(regionCitySearch)))
+                    .filter((city) => regionCityMatchesSearch(
+                      city,
+                      (isUsaRegion ? WEATHER_STATION_MANIFEST_BY_CITY_ID : CANADA_WEATHER_STATION_MANIFEST_BY_CITY_ID)[city.id],
+                      regionCitySearch
+                    ))
                     .map((city) => (
                       <option key={city.id} value={city.id}>{city.name}</option>
                     ))}
@@ -8953,7 +8979,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                   {showOriginalBinHoursInChart && (
                     <Bar dataKey="originalHours" fill="#94a3b8" radius={[8, 8, 0, 0]} name={language === 'fr' ? 'Heures BIN originales' : 'Original BIN hours'} />
                   )}
-                  <Bar dataKey="hoursUsed" fill="#4f46e5" radius={[8, 8, 0, 0]} name={language === 'fr' ? 'Heures BIN ajustées' : 'Adjusted BIN hours'} />
+                  <Bar dataKey="hoursUsed" fill="#4f46e5" radius={[8, 8, 0, 0]} name={calculationMethod === 'bin'
+                    ? (language === 'fr' ? 'Heures BIN ajustées' : 'Adjusted BIN hours')
+                    : (language === 'fr' ? 'Nombre d\u2019heures' : 'Number of hours')} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -9093,7 +9121,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                 <p className="mt-2 text-sm font-semibold text-cyan-800">
                   {isCustomOperatingHoursMode
                     ? (language === 'fr' ? 'Base annuelle : Heures personnalisées' : 'Annual basis: Custom Operating Hours')
-                    : (language === 'fr' ? 'Base annuelle : Heures BIN' : 'Annual basis: BIN Hours')}
+                    : (language === 'fr' ? 'Base annuelle : Simulation météo horaire' : 'Annual basis: Hourly Weather Simulation')}
                 </p>
               </div>
               <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
@@ -9207,7 +9235,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                 <p className="mb-3 text-sm font-semibold text-cyan-800">
                   {isCustomOperatingHoursMode
                     ? (language === 'fr' ? 'Base annuelle : Heures personnalisées' : 'Annual basis: Custom Operating Hours')
-                    : (language === 'fr' ? 'Base annuelle : Heures BIN' : 'Annual basis: BIN Hours')}
+                    : (language === 'fr' ? 'Base annuelle : Simulation météo horaire' : 'Annual basis: Hourly Weather Simulation')}
                 </p>
                 <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
                   <table className="w-full text-sm">
@@ -9394,7 +9422,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
 
               <div className="overflow-x-auto mb-8">
                 <h3 className="text-xl font-bold text-slate-800 mb-3">
-                  {language === 'fr' ? 'Points psychrometriques - BIN dominant' : 'Psychrometric points - dominant BIN'}
+                  {language === 'fr' ? 'Points psychrometriques - plage dominante' : 'Psychrometric points - dominant temperature range'}
                 </h3>
                 <table className="w-full text-sm">
                   <thead>
@@ -9428,10 +9456,10 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                   {language === 'fr'
                     ? (isHourlySimulationActive
                       ? 'Les heures EPW sont regroupées par tranches de température pour garder l’affichage fluide. Les totaux annuels utilisent toutes les heures EPW sélectionnées.'
-                      : 'Chaque ligne correspond à un BIN actif. Les heures affichées reflètent le mode de calcul choisi, y compris les heures effectives du calendrier personnalisé.')
+                      : 'Chaque ligne correspond à une plage de température active. Les heures affichées reflètent le mode de calcul choisi, y compris les heures effectives du calendrier personnalisé.')
                     : (isHourlySimulationActive
                       ? 'EPW hours are grouped by temperature range for a responsive display. Annual totals still use all selected EPW hours.'
-                      : 'Each row corresponds to an active weather BIN. The displayed hours reflect the selected calculation mode, including effective custom operating hours.')}
+                      : 'Each row corresponds to an active weather temperature range. The displayed hours reflect the selected calculation mode, including effective custom operating hours.')}
                 </p>
                 <table className="w-full text-sm min-w-[1400px]">
                   <thead>
@@ -9480,12 +9508,12 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
 
               <div className="overflow-x-auto mb-8">
                 <h3 className="text-xl font-bold text-slate-800 mb-3">
-                  {language === 'fr' ? '1. Validation annuelle BIN par BIN' : '1. Annual BIN-by-BIN validation'}
+                  {language === 'fr' ? '1. Validation annuelle par plage de température' : '1. Annual validation by temperature range'}
                 </h3>
                 <p className="text-sm text-slate-600 mb-3">
                   {language === 'fr'
-                    ? 'Le total annuel est la somme de tous les BIN climatiques ci-dessous; il ne provient pas seulement du BIN affiche dans le graphique.'
-                    : 'The annual total is the sum of every climate BIN below; it is not calculated from only the BIN shown in the chart.'}
+                    ? 'Le total annuel est la somme de toutes les plages de température climatiques ci-dessous; il ne provient pas seulement de la plage affiche dans le graphique.'
+                    : 'The annual total is the sum of every climate temperature range below; it is not calculated from only the range shown in the chart.'}
                 </p>
                 <p className="text-sm text-cyan-800 mb-3 font-semibold">
                   {language === 'fr'
@@ -9503,7 +9531,7 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                   <thead>
                     <tr className="bg-slate-100">
                       {[
-                        language === 'fr' ? 'Temperature BIN' : 'BIN Temperature',
+                        language === 'fr' ? 'Plage de température' : 'Temperature range',
                         language === 'fr' ? 'Heures' : 'Hours',
                         language === 'fr' ? 'Vapeur OA théorique / appliqué' : 'Steam theoretical / applied OA',
                         language === 'fr' ? 'Humifog OA théorique / appliqué' : 'Humifog theoretical / applied OA',
@@ -9518,9 +9546,9 @@ function HvacDashboardApp({ showLandingPage: controlledShowLandingPage, onStartA
                         language === 'fr' ? 'Réchauffage Humifog requis' : 'Humifog reheat required',
                         language === 'fr' ? 'Énergie réchauffage Humifog' : 'Humifog reheat kWh',
                         language === 'fr' ? 'Chauffage commun' : 'Common heating',
-                        language === 'fr' ? 'Energie vapeur BIN' : 'Steam BIN energy',
-                        language === 'fr' ? 'Energie Humifog BIN' : 'Humifog BIN energy',
-                        language === 'fr' ? 'Économies BIN' : 'BIN savings',
+                        language === 'fr' ? 'Energie vapeur (plage)' : 'Steam energy (range)',
+                        language === 'fr' ? 'Energie Humifog (plage)' : 'Humifog energy (range)',
+                        language === 'fr' ? 'Économies (plage)' : 'Savings (range)',
                         language === 'fr' ? 'Contribution annuel Humifog' : 'Humifog annual contribution',
                       ].map((heading) => (
                         <th key={heading} className="p-3 text-center font-semibold text-slate-700 first:text-left">{heading}</th>
