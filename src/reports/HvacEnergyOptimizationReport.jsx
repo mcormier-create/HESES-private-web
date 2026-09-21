@@ -2630,7 +2630,7 @@ export default function HvacEnergyOptimizationReport({ data }) {
                 xDomain={usesHourlyAppliedOaGraphs ? hourlyAppliedOaDomain : undefined}
               />
             </>}
-            {graph3SavingsRows.length > 0 && <BarGraph title="Graph 3 - Annual Savings by BIN" data={graph3SavingsRows} color="#22c55e" />}
+            {graph3SavingsRows.length > 0 && <BarGraph title={tr('Graphique 3 - Économies annuelles selon la température extérieure', 'Graph 3 - Annual Savings by Outdoor Temperature')} data={graph3SavingsRows} color="#22c55e" />}
             {displayedHeatMapRows.length > 0 && <HeatMap title="Graph 4 - OA / Temperature Heat Map" rows={displayedHeatMapRows} units={data.units} />}
             {displayedHeatMapRows.length === 0 && <div className="graph-card"><h3>Graph 4 - OA / Temperature Heat Map</h3><p className="report-text">{isHourlyCalculation ? tr("La carte thermique OA / température n'est pas disponible pour l'analyse horaire.", 'OA/Temperature heat map is not available for hourly analysis.') : 'No chart data available for this report.'}</p></div>}
             <EnergyBreakdownGraph title="Graph 5 - Annual Energy Breakdown" data={annualBreakdown} />
