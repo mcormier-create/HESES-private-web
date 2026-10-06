@@ -4,12 +4,14 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { performance } from 'node:perf_hooks'
 import { chromium } from 'playwright'
 
 const REPORTS = new Map()
 const REPORT_TTL_MS = 60 * 60 * 1000
 let latestReportId = ''
 let latestRenderedPdf = null
+let reportBrowserPromise = null
 const execFileAsync = promisify(execFile)
 const GENERATED_REPORT_DIR = path.resolve(process.cwd(), 'generated')
 const GENERATED_REPORT_PDF_PATH = path.join(GENERATED_REPORT_DIR, 'HESA_Energy_Analysis_Report.pdf')
@@ -82,11 +84,42 @@ async function findBrowserExecutable() {
   }
 }
 
-async function createChromePdfBufferFromHtml(html, id) {
-  const browserExecutable = await findBrowserExecutable()
-  console.info(`PDF engine: ${browserExecutable.engine}`)
-  console.info(`Browser executable: ${browserExecutable.executablePath}`)
+async function getReportBrowser() {
+  if (reportBrowserPromise) {
+    const pendingBrowser = reportBrowserPromise
+    const readyBrowser = await pendingBrowser
+    if (readyBrowser.browser.isConnected()) return readyBrowser
+    if (reportBrowserPromise === pendingBrowser) reportBrowserPromise = null
+  }
 
+  if (!reportBrowserPromise) {
+    const startupStarted = performance.now()
+    const pendingBrowser = (async () => {
+      const browserExecutable = await findBrowserExecutable()
+      console.info(`PDF engine: ${browserExecutable.engine}`)
+      console.info(`Browser executable: ${browserExecutable.executablePath}`)
+      const browser = await chromium.launch({
+        executablePath: browserExecutable.executablePath,
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--allow-file-access-from-files'],
+      })
+      browser.on('disconnected', () => {
+        if (reportBrowserPromise === pendingBrowser) reportBrowserPromise = null
+        console.info('PDF Chromium disconnected; browser will restart on demand.')
+      })
+      console.info(`[PDF performance] Chromium startup: ${(performance.now() - startupStarted).toFixed(1)} ms`)
+      return { browser, browserExecutable }
+    })()
+    reportBrowserPromise = pendingBrowser
+    pendingBrowser.catch(() => {
+      if (reportBrowserPromise === pendingBrowser) reportBrowserPromise = null
+    })
+  }
+
+  return reportBrowserPromise
+}
+
+async function createChromePdfBufferFromHtml(html, id) {
   const workDir = path.join(os.tmpdir(), 'heses-report-pdf')
   await fs.mkdir(workDir, { recursive: true })
 
@@ -130,17 +163,20 @@ async function createChromePdfBufferFromHtml(html, id) {
   await fs.rm(pdfPath, { force: true }).catch(() => {})
 
   const fileUrl = `file:///${htmlPath.replace(/\\/g, '/')}`
-  let browser
+  let browserExecutable
   let page
   try {
-    browser = await chromium.launch({
-      executablePath: browserExecutable.executablePath,
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--allow-file-access-from-files'],
-    })
+    const browserReadyStarted = performance.now()
+    const readyBrowser = await getReportBrowser()
+    const browser = readyBrowser.browser
+    browserExecutable = readyBrowser.browserExecutable
+    console.info(`[PDF performance] ${id} browser ready: ${(performance.now() - browserReadyStarted).toFixed(1)} ms`)
     page = await browser.newPage({ viewport: { width: 1060, height: 1372 } })
+    const pageLoadStarted = performance.now()
     await page.goto(fileUrl, { waitUntil: 'load', timeout: 30000 })
-    await page.emulateMediaType('print')
+    console.info(`[PDF performance] ${id} page load: ${(performance.now() - pageLoadStarted).toFixed(1)} ms`)
+    await page.emulateMedia({ media: 'print' })
+    const pdfRenderStarted = performance.now()
     await page.pdf({
       path: pdfPath,
       format: 'Letter',
@@ -148,16 +184,16 @@ async function createChromePdfBufferFromHtml(html, id) {
       preferCSSPageSize: true,
       margin: { top: '12mm', right: '12mm', bottom: '12mm', left: '12mm' },
     })
+    console.info(`[PDF performance] ${id} PDF render: ${(performance.now() - pdfRenderStarted).toFixed(1)} ms`)
     const pdfBuffer = await fs.readFile(pdfPath)
     if (!isLikelyValidPdf(pdfBuffer)) throw new Error('Chromium a genere un PDF invalide.')
     console.info(`PDF generated: ${pdfPath} (${pdfBuffer.length} bytes)`)
     return pdfBuffer
   } catch (error) {
-    console.error(`PDF generation failed: engine=${browserExecutable.engine}; executable=${browserExecutable.executablePath}; ${error.message}`)
+    console.error(`PDF generation failed: engine=${browserExecutable?.engine || 'unavailable'}; executable=${browserExecutable?.executablePath || 'unavailable'}; ${error.message}`)
     throw error
   } finally {
     if (page) await page.close().catch(() => {})
-    if (browser) await browser.close().catch(() => {})
     fs.rm(htmlPath, { force: true }).catch(() => {})
     fs.rm(pdfPath, { force: true }).catch(() => {})
     fs.rm(profilePath, { recursive: true, force: true }).catch(() => {})
@@ -444,6 +480,8 @@ export function createHesesReportPdfMiddleware() {
     }
 
     if (request.method === 'POST' && request.url === '/api/heses-report-pdf') {
+      const generationStarted = performance.now()
+      let generationId = 'pending'
       try {
         const rawBody = await readBody(request)
         const payload = JSON.parse(rawBody || '{}')
@@ -461,6 +499,7 @@ export function createHesesReportPdfMiddleware() {
         }
 
         const id = createReportId()
+        generationId = id
         const report = {
           html,
           title,
@@ -500,6 +539,8 @@ export function createHesesReportPdfMiddleware() {
         })
       } catch (error) {
         sendJson(response, 500, { error: error instanceof Error ? error.message : 'Erreur rapport PDF.' })
+      } finally {
+        console.info(`[PDF performance] ${generationId} total generation time: ${(performance.now() - generationStarted).toFixed(1)} ms`)
       }
       return
     }
